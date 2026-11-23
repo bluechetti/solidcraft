@@ -40,10 +40,7 @@ pub mod undo_redo;
 pub mod widget_gallery;
 pub mod window_options;
 
-pub use {
-    about::About, demo_app_windows::DemoWindows, misc_demo_window::MiscDemoWindow,
-    widget_gallery::WidgetGallery,
-};
+pub use {about::About, demo_app_windows::DemoWindows, misc_demo_window::MiscDemoWindow, widget_gallery::WidgetGallery};
 
 // ----------------------------------------------------------------------------
 

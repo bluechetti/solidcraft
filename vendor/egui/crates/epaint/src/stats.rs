@@ -81,9 +81,7 @@ impl AllocInfo {
     // }
 
     pub fn from_galley(galley: &Galley) -> Self {
-        Self::from_slice(galley.text().as_bytes())
-            + Self::from_slice(&galley.rows)
-            + galley.rows.iter().map(Self::from_galley_row).sum()
+        Self::from_slice(galley.text().as_bytes()) + Self::from_slice(&galley.rows) + galley.rows.iter().map(Self::from_galley_row).sum()
     }
 
     fn from_galley_row(row: &crate::text::PlacedRow) -> Self {
@@ -106,10 +104,7 @@ impl AllocInfo {
     }
 
     pub fn num_elements(&self) -> usize {
-        assert!(
-            self.element_size != ElementSize::Heterogenous,
-            "Heterogenous element size"
-        );
+        assert!(self.element_size != ElementSize::Heterogenous, "Heterogenous element size");
         self.num_elements
     }
 
@@ -129,28 +124,11 @@ impl AllocInfo {
         if self.num_allocs() == 0 {
             format!("{:6} {:16}", 0, what)
         } else if self.num_allocs() == 1 {
-            format!(
-                "{:6} {:16}  {}       1 allocation",
-                self.num_elements,
-                what,
-                self.megabytes()
-            )
+            format!("{:6} {:16}  {}       1 allocation", self.num_elements, what, self.megabytes())
         } else if self.element_size == ElementSize::Heterogenous {
-            format!(
-                "{:6} {:16}  {}     {:3} allocations",
-                "",
-                what,
-                self.megabytes(),
-                self.num_allocs()
-            )
+            format!("{:6} {:16}  {}     {:3} allocations", "", what, self.megabytes(), self.num_allocs())
         } else {
-            format!(
-                "{:6} {:16}  {}     {:3} allocations",
-                self.num_elements(),
-                what,
-                self.megabytes(),
-                self.num_allocs()
-            )
+            format!("{:6} {:16}  {}     {:3} allocations", self.num_elements(), what, self.megabytes(), self.num_allocs())
         }
     }
 }
@@ -229,10 +207,7 @@ impl PaintStats {
         }
     }
 
-    pub fn with_clipped_primitives(
-        mut self,
-        clipped_primitives: &[crate::ClippedPrimitive],
-    ) -> Self {
+    pub fn with_clipped_primitives(mut self, clipped_primitives: &[crate::ClippedPrimitive]) -> Self {
         self.clipped_primitives += AllocInfo::from_slice(clipped_primitives);
         for clipped_primitive in clipped_primitives {
             if let Primitive::Mesh(mesh) = &clipped_primitive.primitive {

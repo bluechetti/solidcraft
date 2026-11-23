@@ -1,6 +1,4 @@
-use crate::{
-    ContainerAtom, FontSelection, Image, ImageSource, SizedAtomKind, Ui, WidgetAtom, WidgetText,
-};
+use crate::{ContainerAtom, FontSelection, Image, ImageSource, SizedAtomKind, Ui, WidgetAtom, WidgetText};
 use alloc::sync::Arc;
 use core::fmt::Debug;
 use emath::{Rect, Vec2};
@@ -169,63 +167,27 @@ impl<'a> AtomKind<'a> {
     ///
     /// This converts [`WidgetText`] into [`crate::Galley`] and tries to load and size [`Image`].
     /// The first returned argument is the preferred size.
-    pub fn into_sized(
-        self,
-        ui: &Ui,
-        IntoSizedArgs {
-            available_size,
-            wrap_mode,
-            fallback_font,
-        }: IntoSizedArgs,
-    ) -> IntoSizedResult<'a> {
+    pub fn into_sized(self, ui: &Ui, IntoSizedArgs { available_size, wrap_mode, fallback_font }: IntoSizedArgs) -> IntoSizedResult<'a> {
         match self {
             AtomKind::Text(text) => {
                 let galley = text.into_galley(ui, Some(wrap_mode), available_size.x, fallback_font);
-                IntoSizedResult {
-                    intrinsic_size: galley.intrinsic_size(),
-                    sized: SizedAtomKind::Text(galley),
-                }
+                IntoSizedResult { intrinsic_size: galley.intrinsic_size(), sized: SizedAtomKind::Text(galley) }
             }
             AtomKind::Image(image) => {
                 let size = image.load_and_calc_size(ui, available_size);
                 let size = size.unwrap_or(Vec2::ZERO);
-                IntoSizedResult {
-                    intrinsic_size: size,
-                    sized: SizedAtomKind::Image { image, size },
-                }
+                IntoSizedResult { intrinsic_size: size, sized: SizedAtomKind::Image { image, size } }
             }
-            AtomKind::Empty => IntoSizedResult {
-                intrinsic_size: Vec2::ZERO,
-                sized: SizedAtomKind::Empty { size: None },
-            },
-            AtomKind::Closure(func) => func(
-                ui,
-                IntoSizedArgs {
-                    available_size,
-                    wrap_mode,
-                    fallback_font,
-                },
-            ),
-            AtomKind::Paint(paint) => IntoSizedResult {
-                intrinsic_size: Vec2::ZERO,
-                sized: SizedAtomKind::Paint {
-                    paint,
-                    size: Vec2::ZERO,
-                },
-            },
+            AtomKind::Empty => IntoSizedResult { intrinsic_size: Vec2::ZERO, sized: SizedAtomKind::Empty { size: None } },
+            AtomKind::Closure(func) => func(ui, IntoSizedArgs { available_size, wrap_mode, fallback_font }),
+            AtomKind::Paint(paint) => IntoSizedResult { intrinsic_size: Vec2::ZERO, sized: SizedAtomKind::Paint { paint, size: Vec2::ZERO } },
             AtomKind::Widget(layout) => {
                 let sized = layout.measure(ui, available_size);
-                IntoSizedResult {
-                    intrinsic_size: sized.intrinsic_size,
-                    sized: SizedAtomKind::Widget(Box::new(sized)),
-                }
+                IntoSizedResult { intrinsic_size: sized.intrinsic_size, sized: SizedAtomKind::Widget(Box::new(sized)) }
             }
             AtomKind::Container(layout) => {
                 let sized = layout.measure(ui, available_size);
-                IntoSizedResult {
-                    intrinsic_size: sized.intrinsic_size,
-                    sized: SizedAtomKind::Container(Box::new(sized)),
-                }
+                IntoSizedResult { intrinsic_size: sized.intrinsic_size, sized: SizedAtomKind::Container(Box::new(sized)) }
             }
         }
     }

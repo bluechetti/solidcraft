@@ -4,9 +4,7 @@ pub struct ClipboardTest {
 
 impl Default for ClipboardTest {
     fn default() -> Self {
-        Self {
-            text: "Example text you can copy-and-paste".to_owned(),
-        }
+        Self { text: "Example text you can copy-and-paste".to_owned() }
     }
 }
 
@@ -16,13 +14,10 @@ impl crate::Demo for ClipboardTest {
     }
 
     fn show(&mut self, ui: &mut egui::Ui, open: &mut bool) {
-        egui::Window::new(self.name())
-            .open(open)
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| {
-                use crate::View as _;
-                self.ui(ui);
-            });
+        egui::Window::new(self.name()).open(open).constrain_to(ui.available_rect_before_wrap()).show(ui, |ui| {
+            use crate::View as _;
+            self.ui(ui);
+        });
     }
 }
 
@@ -33,8 +28,7 @@ impl crate::View for ClipboardTest {
 
         let text_edit_response = ui
             .horizontal(|ui| {
-                let text_edit_response =
-                    ui.add(egui::TextEdit::singleline(&mut self.text).hint_text("Text to copy"));
+                let text_edit_response = ui.add(egui::TextEdit::singleline(&mut self.text).hint_text("Text to copy"));
                 if ui.button("📋").clicked() {
                     ui.copy_text(self.text.clone());
                 }
@@ -69,8 +63,7 @@ impl crate::View for ClipboardTest {
             let uri = image_source.uri().unwrap().to_owned();
             ui.image(image_source);
 
-            if let Ok(egui::load::ImagePoll::Ready { image }) =
-                ui.ctx().try_load_image(&uri, Default::default())
+            if let Ok(egui::load::ImagePoll::Ready { image }) = ui.ctx().try_load_image(&uri, Default::default())
                 && ui.button("📋").clicked()
             {
                 ui.copy_image((*image).clone());

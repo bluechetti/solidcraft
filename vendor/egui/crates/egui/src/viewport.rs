@@ -206,21 +206,14 @@ impl IconData {
 
 impl core::fmt::Debug for IconData {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("IconData")
-            .field("width", &self.width)
-            .field("height", &self.height)
-            .finish_non_exhaustive()
+        f.debug_struct("IconData").field("width", &self.width).field("height", &self.height).finish_non_exhaustive()
     }
 }
 
 impl From<IconData> for epaint::ColorImage {
     fn from(icon: IconData) -> Self {
         profiling::function_scope!();
-        let IconData {
-            rgba,
-            width,
-            height,
-        } = icon;
+        let IconData { rgba, width, height } = icon;
         Self::from_rgba_premultiplied([width as usize, height as usize], &rgba)
     }
 }
@@ -228,11 +221,7 @@ impl From<IconData> for epaint::ColorImage {
 impl From<&IconData> for epaint::ColorImage {
     fn from(icon: &IconData) -> Self {
         profiling::function_scope!();
-        let IconData {
-            rgba,
-            width,
-            height,
-        } = icon;
+        let IconData { rgba, width, height } = icon;
         Self::from_rgba_premultiplied([*width as usize, *height as usize], rgba)
     }
 }
@@ -256,10 +245,7 @@ impl Default for ViewportIdPair {
 
 impl ViewportIdPair {
     /// The `ViewportIdPair` of the root viewport, which is its own parent.
-    pub const ROOT: Self = Self {
-        this: ViewportId::ROOT,
-        parent: ViewportId::ROOT,
-    };
+    pub const ROOT: Self = Self { this: ViewportId::ROOT, parent: ViewportId::ROOT };
 
     #[inline]
     pub fn from_self_and_parent(this: ViewportId, parent: ViewportId) -> Self {
@@ -864,9 +850,7 @@ impl ViewportBuilder {
 
         let mut recreate_window = false;
 
-        if new_clamp_size_to_monitor_size.is_some()
-            && self.clamp_size_to_monitor_size != new_clamp_size_to_monitor_size
-        {
+        if new_clamp_size_to_monitor_size.is_some() && self.clamp_size_to_monitor_size != new_clamp_size_to_monitor_size {
             self.clamp_size_to_monitor_size = new_clamp_size_to_monitor_size;
             recreate_window = true;
         }
@@ -901,9 +885,7 @@ impl ViewportBuilder {
             recreate_window = true;
         }
 
-        if new_titlebar_buttons_shown.is_some()
-            && self.titlebar_buttons_shown != new_titlebar_buttons_shown
-        {
+        if new_titlebar_buttons_shown.is_some() && self.titlebar_buttons_shown != new_titlebar_buttons_shown {
             self.titlebar_buttons_shown = new_titlebar_buttons_shown;
             recreate_window = true;
         }
@@ -923,16 +905,12 @@ impl ViewportBuilder {
             recreate_window = true;
         }
 
-        if new_fullsize_content_view.is_some()
-            && self.fullsize_content_view != new_fullsize_content_view
-        {
+        if new_fullsize_content_view.is_some() && self.fullsize_content_view != new_fullsize_content_view {
             self.fullsize_content_view = new_fullsize_content_view;
             recreate_window = true;
         }
 
-        if new_movable_by_window_background.is_some()
-            && self.movable_by_window_background != new_movable_by_window_background
-        {
+        if new_movable_by_window_background.is_some() && self.movable_by_window_background != new_movable_by_window_background {
             self.movable_by_window_background = new_movable_by_window_background;
             recreate_window = true;
         }
@@ -1306,14 +1284,7 @@ pub struct ViewportOutput {
 impl ViewportOutput {
     /// Add on new output.
     pub fn append(&mut self, newer: Self) {
-        let Self {
-            parent,
-            class,
-            builder,
-            viewport_ui_cb,
-            mut commands,
-            repaint_delay,
-        } = newer;
+        let Self { parent, class, builder, viewport_ui_cb, mut commands, repaint_delay } = newer;
 
         self.parent = parent;
         self.class = class;

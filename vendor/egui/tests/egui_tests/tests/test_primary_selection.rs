@@ -28,15 +28,10 @@ fn text_edit_harness(text: &str) -> Harness<'static, String> {
 
 /// The text reported as a settled selection in the last pass, if any.
 fn reported_selection(harness: &Harness<'_, String>) -> Option<String> {
-    harness
-        .output()
-        .platform_output
-        .commands
-        .iter()
-        .find_map(|command| match command {
-            OutputCommand::TextSelectionSettled(text) => Some(text.clone()),
-            _ => None,
-        })
+    harness.output().platform_output.commands.iter().find_map(|command| match command {
+        OutputCommand::TextSelectionSettled(text) => Some(text.clone()),
+        _ => None,
+    })
 }
 
 /// Press at `from`, drag to `to`, and release there.
@@ -54,21 +49,13 @@ fn press_and_release(harness: &mut Harness<'_, String>, from: Pos2, to: Pos2) {
         harness.step();
     }
 
-    harness.event(Event::PointerButton {
-        pos: to,
-        button: PointerButton::Primary,
-        pressed: false,
-        modifiers: Modifiers::NONE,
-    });
+    harness.event(Event::PointerButton { pos: to, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
     harness.step();
 }
 
 /// The horizontal ends of `rect`, a pixel inside it.
 fn ends(rect: Rect) -> (Pos2, Pos2) {
-    (
-        Pos2::new(rect.left() + 1.0, rect.center().y),
-        Pos2::new(rect.right() - 1.0, rect.center().y),
-    )
+    (Pos2::new(rect.left() + 1.0, rect.center().y), Pos2::new(rect.right() - 1.0, rect.center().y))
 }
 
 /// Middle-click at `pos` with `text` in the PRIMARY selection.
@@ -76,10 +63,7 @@ fn middle_click_paste(harness: &mut Harness<'_, String>, pos: Pos2, text: &str) 
     // A real middle-click has the pointer where it clicked.
     harness.hover_at(pos);
     harness.step();
-    harness.event(Event::MiddleClickPaste {
-        pos,
-        text: text.to_owned(),
-    });
+    harness.event(Event::MiddleClickPaste { pos, text: text.to_owned() });
     harness.run();
 }
 
@@ -106,10 +90,7 @@ fn drag_selecting_in_a_text_edit_reports_the_selection() {
 /// A password is never copied to the clipboard, and PRIMARY is no different.
 #[test]
 fn a_password_is_never_reported() {
-    let mut harness = harness(
-        |ui, text| _ = ui.add(egui::TextEdit::singleline(text).password(true)),
-        TEXT,
-    );
+    let mut harness = harness(|ui, text| _ = ui.add(egui::TextEdit::singleline(text).password(true)), TEXT);
     let (from, to) = ends(harness.get_by_role(Role::PasswordInput).rect());
 
     press_and_release(&mut harness, from, to);
@@ -164,11 +145,7 @@ fn middle_click_does_not_paste_into_a_non_interactive_or_disabled_text_edit() {
         harness.state().clone()
     };
 
-    assert_eq!(
-        paste_into(|ui, text| _ = ui.add(egui::TextEdit::singleline(text))),
-        "bac",
-        "sanity check: an ordinary TextEdit accepts the paste"
-    );
+    assert_eq!(paste_into(|ui, text| _ = ui.add(egui::TextEdit::singleline(text))), "bac", "sanity check: an ordinary TextEdit accepts the paste");
     assert_eq!(
         paste_into(|ui, text| _ = ui.add(egui::TextEdit::singleline(text).interactive(false))),
         "ac",

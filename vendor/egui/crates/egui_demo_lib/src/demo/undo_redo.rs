@@ -10,10 +10,7 @@ pub struct State {
 
 impl Default for State {
     fn default() -> Self {
-        Self {
-            toggle_value: Default::default(),
-            text: "Text with undo/redo".to_owned(),
-        }
+        Self { toggle_value: Default::default(), text: "Text with undo/redo".to_owned() }
     }
 }
 
@@ -32,14 +29,10 @@ impl crate::Demo for UndoRedoDemo {
     }
 
     fn show(&mut self, ui: &mut egui::Ui, open: &mut bool) {
-        egui::Window::new(self.name())
-            .open(open)
-            .resizable(false)
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| {
-                use crate::View as _;
-                self.ui(ui);
-            });
+        egui::Window::new(self.name()).open(open).resizable(false).constrain_to(ui.available_rect_before_wrap()).show(ui, |ui| {
+            use crate::View as _;
+            self.ui(ui);
+        });
     }
 }
 
@@ -69,7 +62,6 @@ impl crate::View for UndoRedoDemo {
             }
         });
 
-        self.undoer
-            .feed_state(ui.input(|input| input.time), &self.state);
+        self.undoer.feed_state(ui.input(|input| input.time), &self.state);
     }
 }

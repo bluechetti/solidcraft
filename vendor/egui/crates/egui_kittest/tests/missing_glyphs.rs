@@ -46,8 +46,7 @@ fn font_changes_before_any_text_apply_to_the_same_pass() {
     let _harness = Harness::new_ui(|ui| {
         ui.ctx().set_fonts(FontDefinitions::empty());
         assert!(
-            ui.ctx()
-                .fonts(|fonts| fonts.definitions().font_data.is_empty()),
+            ui.ctx().fonts(|fonts| fonts.definitions().font_data.is_empty()),
             "Nothing was laid out yet, so the new fonts should be in use already"
         );
     });
@@ -63,8 +62,7 @@ fn font_changes_after_text_wait_for_the_next_pass() {
             ui.label("Laid out with the bundled fonts");
             ui.ctx().set_fonts(FontDefinitions::empty());
             assert!(
-                !ui.ctx()
-                    .fonts(|fonts| fonts.definitions().font_data.is_empty()),
+                !ui.ctx().fonts(|fonts| fonts.definitions().font_data.is_empty()),
                 "Text was laid out with the current fonts, so they must stay for this pass"
             );
         }

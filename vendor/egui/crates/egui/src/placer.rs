@@ -14,11 +14,7 @@ pub(crate) struct Placer {
 impl Placer {
     pub(crate) fn new(max_rect: Rect, layout: Layout) -> Self {
         let region = layout.region_from_max_rect(max_rect);
-        Self {
-            grid: None,
-            layout,
-            region,
-        }
+        Self { grid: None, layout, region }
     }
 
     #[inline(always)]
@@ -80,30 +76,17 @@ impl Placer {
 
 impl Placer {
     pub(crate) fn align_size_within_rect(&self, size: Vec2, outer: Rect) -> Rect {
-        if let Some(grid) = &self.grid {
-            grid.align_size_within_rect(size, outer)
-        } else {
-            self.layout.align_size_within_rect(size, outer)
-        }
+        if let Some(grid) = &self.grid { grid.align_size_within_rect(size, outer) } else { self.layout.align_size_within_rect(size, outer) }
     }
 
     pub(crate) fn available_rect_before_wrap(&self) -> Rect {
-        if let Some(grid) = &self.grid {
-            grid.available_rect(&self.region)
-        } else {
-            self.layout.available_rect_before_wrap(&self.region)
-        }
-        .round_ui()
+        if let Some(grid) = &self.grid { grid.available_rect(&self.region) } else { self.layout.available_rect_before_wrap(&self.region) }.round_ui()
     }
 
     /// Amount of space available for a widget.
     /// For wrapping layouts, this is the maximum (after wrap).
     pub(crate) fn available_size(&self) -> Vec2 {
-        if let Some(grid) = &self.grid {
-            grid.available_rect(&self.region).size()
-        } else {
-            self.layout.available_size(&self.region)
-        }
+        if let Some(grid) = &self.grid { grid.available_rect(&self.region).size() } else { self.layout.available_size(&self.region) }
     }
 
     /// Returns where to put the next widget that is of the given size.
@@ -111,16 +94,12 @@ impl Placer {
     /// This is what you then pass to `advance_after_rects`.
     /// Use `justify_and_align` to get the inner `widget_rect`.
     pub(crate) fn next_space(&self, child_size: Vec2, item_spacing: Vec2) -> Rect {
-        debug_assert!(
-            0.0 <= child_size.x && 0.0 <= child_size.y,
-            "Negative child size: {child_size:?}"
-        );
+        debug_assert!(0.0 <= child_size.x && 0.0 <= child_size.y, "Negative child size: {child_size:?}");
         self.region.sanity_check();
         if let Some(grid) = &self.grid {
             grid.next_cell(self.region.cursor, child_size)
         } else {
-            self.layout
-                .next_frame(&self.region, child_size, item_spacing)
+            self.layout.next_frame(&self.region, child_size, item_spacing)
         }
     }
 
@@ -138,11 +117,7 @@ impl Placer {
         debug_assert!(!rect.any_nan(), "rect: {rect:?}");
         debug_assert!(!child_size.any_nan(), "child_size is NaN: {child_size:?}");
 
-        if let Some(grid) = &self.grid {
-            grid.justify_and_align(rect, child_size)
-        } else {
-            self.layout.justify_and_align(rect, child_size)
-        }
+        if let Some(grid) = &self.grid { grid.justify_and_align(rect, child_size) } else { self.layout.justify_and_align(rect, child_size) }
     }
 
     /// Advance the cursor by this many points.
@@ -150,10 +125,7 @@ impl Placer {
     ///
     /// Note that `advance_cursor` isn't supported when in a grid layout.
     pub(crate) fn advance_cursor(&mut self, amount: f32) {
-        debug_assert!(
-            self.grid.is_none(),
-            "You cannot advance the cursor when in a grid layout"
-        );
+        debug_assert!(self.grid.is_none(), "You cannot advance the cursor when in a grid layout");
         self.layout.advance_cursor(&mut self.region, amount);
     }
 
@@ -162,28 +134,15 @@ impl Placer {
     ///
     /// * `frame_rect`: the frame inside which a widget was e.g. centered
     /// * `widget_rect`: the actual rect used by the widget
-    pub(crate) fn advance_after_rects(
-        &mut self,
-        frame_rect: Rect,
-        widget_rect: Rect,
-        item_spacing: Vec2,
-    ) {
+    pub(crate) fn advance_after_rects(&mut self, frame_rect: Rect, widget_rect: Rect, item_spacing: Vec2) {
         debug_assert!(!frame_rect.any_nan(), "frame_rect: {frame_rect:?}");
-        debug_assert!(
-            !widget_rect.any_nan(),
-            "widget_rect is NaN: {widget_rect:?}"
-        );
+        debug_assert!(!widget_rect.any_nan(), "widget_rect is NaN: {widget_rect:?}");
         self.region.sanity_check();
 
         if let Some(grid) = &mut self.grid {
             grid.advance(&mut self.region.cursor, frame_rect, widget_rect);
         } else {
-            self.layout.advance_after_rects(
-                &mut self.region.cursor,
-                frame_rect,
-                widget_rect,
-                item_spacing,
-            );
+            self.layout.advance_after_rects(&mut self.region.cursor, frame_rect, widget_rect, item_spacing);
         }
 
         self.expand_to_include_rect(frame_rect); // e.g. for centered layouts: pretend we used whole frame
@@ -224,8 +183,7 @@ impl Placer {
     }
 
     fn next_widget_space_ignore_wrap_justify(&self, size: Vec2) -> Rect {
-        self.layout
-            .next_widget_space_ignore_wrap_justify(&self.region, size)
+        self.layout.next_widget_space_ignore_wrap_justify(&self.region, size)
     }
 
     /// Set the maximum width of the ui.
@@ -292,8 +250,7 @@ impl Placer {
             let align = Align2::CENTER_CENTER;
             painter.debug_text(align.pos_in_rect(&rect), align, stroke.color, text);
         } else {
-            self.layout
-                .paint_text_at_cursor(painter, &self.region, stroke, text);
+            self.layout.paint_text_at_cursor(painter, &self.region, stroke, text);
         }
     }
 }

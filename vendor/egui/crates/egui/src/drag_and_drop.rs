@@ -37,8 +37,7 @@ impl Plugin for DragAndDrop {
         let has_any_payload = self.payload.is_some();
 
         if has_any_payload {
-            let abort_dnd_due_to_escape_key =
-                ui.input_mut(|i| i.consume_key(crate::Modifiers::NONE, crate::Key::Escape));
+            let abort_dnd_due_to_escape_key = ui.input_mut(|i| i.consume_key(crate::Modifiers::NONE, crate::Key::Escape));
 
             if abort_dnd_due_to_escape_key {
                 self.payload = None;
@@ -98,9 +97,7 @@ impl DragAndDrop {
     where
         Payload: Any + Send + Sync,
     {
-        Arc::clone(ctx.plugin::<Self>().lock().payload.as_ref()?)
-            .downcast()
-            .ok()
+        Arc::clone(ctx.plugin::<Self>().lock().payload.as_ref()?).downcast().ok()
     }
 
     /// Retrieve and clear the payload, if any.

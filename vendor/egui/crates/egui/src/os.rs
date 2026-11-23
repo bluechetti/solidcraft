@@ -62,10 +62,7 @@ impl OperatingSystem {
             Self::Windows
         } else if user_agent.contains("Mac") {
             Self::Mac
-        } else if user_agent.contains("Linux")
-            || user_agent.contains("X11")
-            || user_agent.contains("Unix")
-        {
+        } else if user_agent.contains("Linux") || user_agent.contains("X11") || user_agent.contains("Unix") {
             Self::Nix
         } else {
             log::warn!(

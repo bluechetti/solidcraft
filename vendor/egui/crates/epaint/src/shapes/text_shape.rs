@@ -47,24 +47,13 @@ impl TextShape {
     /// Any non-placeholder color in the galley takes precedence over this fallback color.
     #[inline]
     pub fn new(pos: Pos2, galley: Arc<Galley>, fallback_color: Color32) -> Self {
-        Self {
-            pos,
-            galley,
-            underline: Stroke::NONE,
-            fallback_color,
-            override_text_color: None,
-            opacity_factor: 1.0,
-            angle: 0.0,
-        }
+        Self { pos, galley, underline: Stroke::NONE, fallback_color, override_text_color: None, opacity_factor: 1.0, angle: 0.0 }
     }
 
     /// The visual bounding rectangle
     #[inline]
     pub fn visual_bounding_rect(&self) -> Rect {
-        self.galley
-            .mesh_bounds
-            .rotate_bb(emath::Rot2::from_angle(self.angle))
-            .translate(self.pos.to_vec2())
+        self.galley.mesh_bounds.rotate_bb(emath::Rot2::from_angle(self.angle)).translate(self.pos.to_vec2())
     }
 
     #[inline]
@@ -108,41 +97,19 @@ impl TextShape {
 
     /// Move the shape by this many points, in-place.
     pub fn transform(&mut self, transform: emath::TSTransform) {
-        let Self {
-            pos,
-            galley,
-            underline,
-            fallback_color: _,
-            override_text_color: _,
-            opacity_factor: _,
-            angle: _,
-        } = self;
+        let Self { pos, galley, underline, fallback_color: _, override_text_color: _, opacity_factor: _, angle: _ } = self;
 
         *pos = transform * *pos;
         underline.width *= transform.scaling;
 
-        let Galley {
-            job: _,
-            rows,
-            elided: _,
-            rect,
-            mesh_bounds,
-            num_vertices: _,
-            num_indices: _,
-            pixels_per_point: _,
-            intrinsic_size,
-        } = Arc::make_mut(galley);
+        let Galley { job: _, rows, elided: _, rect, mesh_bounds, num_vertices: _, num_indices: _, pixels_per_point: _, intrinsic_size } =
+            Arc::make_mut(galley);
 
         *rect = transform.scaling * *rect;
         *mesh_bounds = transform.scaling * *mesh_bounds;
         *intrinsic_size = transform.scaling * *intrinsic_size;
 
-        for text::PlacedRow {
-            pos,
-            row,
-            ends_with_newline: _,
-        } in rows
-        {
+        for text::PlacedRow { pos, row, ends_with_newline: _ } in rows {
             *pos *= transform.scaling;
 
             let text::Row {
@@ -154,12 +121,7 @@ impl TextShape {
 
             *size *= transform.scaling;
 
-            let text::RowVisuals {
-                mesh,
-                mesh_bounds,
-                glyph_index_start: _,
-                glyph_vertex_range: _,
-            } = visuals;
+            let text::RowVisuals { mesh, mesh_bounds, glyph_index_start: _, glyph_vertex_range: _ } = visuals;
 
             *mesh_bounds = transform.scaling * *mesh_bounds;
 
@@ -188,14 +150,8 @@ mod tests {
         let mut fonts = Fonts::new(TextOptions::default(), FontDefinitions::default());
         let font = FontId::monospace(12.0);
 
-        let mut t = crate::Shape::text(
-            &mut fonts.with_pixels_per_point(1.0),
-            Pos2::ZERO,
-            emath::Align2::CENTER_CENTER,
-            "testing123",
-            font,
-            Color32::BLACK,
-        );
+        let mut t =
+            crate::Shape::text(&mut fonts.with_pixels_per_point(1.0), Pos2::ZERO, emath::Align2::CENTER_CENTER, "testing123", font, Color32::BLACK);
 
         let size_orig = t.visual_bounding_rect().size();
 

@@ -867,25 +867,13 @@ impl Key {
 
 #[test]
 fn test_key_from_name() {
-    assert_eq!(
-        Key::ALL.len(),
-        Key::Clear as usize + 1,
-        "Some keys are missing in Key::ALL"
-    );
+    assert_eq!(Key::ALL.len(), Key::Clear as usize + 1, "Some keys are missing in Key::ALL");
 
     for &key in Key::ALL {
         let name = key.name();
-        assert_eq!(
-            Key::from_name(name),
-            Some(key),
-            "Failed to roundtrip {key:?} from name {name:?}"
-        );
+        assert_eq!(Key::from_name(name), Some(key), "Failed to roundtrip {key:?} from name {name:?}");
 
         let symbol = key.symbol_or_name();
-        assert_eq!(
-            Key::from_name(symbol),
-            Some(key),
-            "Failed to roundtrip {key:?} from symbol {symbol:?}"
-        );
+        assert_eq!(Key::from_name(symbol), Some(key), "Failed to roundtrip {key:?} from symbol {symbol:?}");
     }
 }

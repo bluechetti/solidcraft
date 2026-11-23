@@ -110,9 +110,11 @@ pub(super) enum Healed {
 /// A part whose check fails, healed of its tolerance-scale defects
 /// ([`crate::heal_tolerance_defects`]) when that can be proved and leaves the check failing
 /// fewer tests: a new part, with its body and its faces' file faces (the heal only removes
-/// faces) replaced. Otherwise [`Healed`] says why not.
-pub(super) fn heal(part: &Part, item: u64) -> Healed {
-    let (body, heal) = match crate::tolerance_heal::heal_tolerance_defects(&part.body) {
+/// faces) replaced. Otherwise [`Healed`] says why not. `own` is SMLib's check of `part.body`
+/// when the import already ran it ([`crate::tolerance_heal::heal_given_check`]; `None`: the heal
+/// runs it when it needs it).
+pub(super) fn heal(part: &Part, item: u64, own: Option<&crate::CheckFailure>) -> Healed {
+    let (body, heal) = match crate::tolerance_heal::heal_given_check(&part.body, own) {
         Ok(Some(healed)) => healed,
         Ok(None) => return Healed::NotKept,
         Err(KernelError::Heal(crate::HealFailure::Stopped)) => return Healed::Stopped,
@@ -141,7 +143,7 @@ pub(super) fn placed(body: &Body, m: &M4) -> crate::Result<Body> {
 /// refuses fails with the reason ([`surface_part`] then imports what it can of it).
 pub(super) fn smlib_part(ex: &Exchange, item: u64, units: Units) -> std::result::Result<(Part, Vec<Note>), Failure> {
     let solid = solidcraft_profile::scope("import", "step.read_solid", || {
-        solidcore_step::topology::read_solid_with(ex, item, units, &solidcraft_smlib::pcurves::SmlibTrims)
+        solidcore_step::topology::read_solid_with(ex, item, units, &solidcraft_smlib::pcurves::SmlibImportTrims)
     })
     .map_err(|msg| Failure { read: true, msg })?;
     let part = solid_part(&solid)?;
@@ -210,10 +212,14 @@ fn renumbered() -> Failure {
 fn smlib_body(record: &solidcore_record::brep::Brep) -> std::result::Result<(Body, Vec<usize>), Failure> {
     let failed = |e: KernelError| Failure { read: false, msg: e.to_string().trim_start_matches("the operation failed: ").to_string() };
     let (brep, smlib_order) = crate::native::smlib_record_ordered(record).map_err(failed)?;
-    let (body, body_order) = crate::native::body_from_smlib_ordered(&brep).map_err(failed)?;
+    let (canonical, body_order, prepared) = brep.to_native_prepared().map_err(|e| failed(KernelError::Failed(e.to_string())))?;
+    let body = Body::from_smlib_record(canonical).map_err(failed)?;
+    if let Some(prepared) = prepared {
+        // Kept as the body's SMLib form, as its first use would make it.
+        body.smlib.keep(prepared, body.smlib.releases());
+    }
     // SMLib's face i is the record's `smlib_order` face and the body's `body_order` face (an
     // empty order is the same one).
-    let Some(body_order) = body_order else { return Err(renumbered()) };
     // SMLib's export may number the edges and vertices otherwise than the record (a surface model
     // whose open shell uses faces against their surfaces beside closed shells: SMLib walks those
     // faces as their surfaces face). An import still lists SMLib's faces in the record's order;
@@ -309,7 +315,7 @@ const MAX_LEFT_OUT_ROUNDS: usize = 8;
 /// with the reason it was: a B-rep SMLib refuses is never kept as a mesh of its faces.
 fn surface_part(ex: &Exchange, item: u64, units: Units, refused: Failure) -> std::result::Result<(Part, Vec<Note>), Failure> {
     let _span = solidcraft_profile::span("import", "step.refused_surfaces");
-    let trims = &solidcraft_smlib::pcurves::SmlibTrims;
+    let trims = &solidcraft_smlib::pcurves::SmlibImportTrims;
     let Ok(faces) = solidcore_step::topology::read_faces_with(ex, item, units, trims) else { return Err(refused) };
     let of_solid: std::collections::HashSet<u64> = faces.iter().map(|f| f.face).collect();
     // The faces left out, each with the refusal that names it, in the order they were found.

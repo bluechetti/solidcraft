@@ -5,6 +5,29 @@ use solidcraft_engine::geom::prelude::*;
 use crate::SolveApp;
 use crate::viewport::{Hit, pick, pick_all, projection};
 
+#[test]
+fn only_an_outline_pick_builds_the_display_outline_index() {
+    use solidcore_record::Vec3;
+    let mesh = std::sync::Arc::new(solidcraft_engine::geom::Mesh {
+        positions: vec![Vec3::ZERO, Vec3::X, Vec3::Y],
+        triangles: vec![[0, 1, 2]],
+        edges: vec![vec![Vec3::ZERO, Vec3::X]],
+        display_only_edges: true,
+        ..Default::default()
+    });
+    let indexes = super::PickIndexes::default();
+    let faces = indexes.of(&mesh).unwrap();
+    let o = Vec3::new(0.25, 0.25, 1.0);
+    assert_eq!(faces.raycast(&mesh, o, -Vec3::Z), Some((1.0, 0)));
+    assert!(super::segments_near(Some(&faces), &mesh, o, -Vec3::Z, (0.3, 0.0)).is_empty());
+    assert_eq!(indexes.len(), 1);
+
+    let outlines = indexes.for_edges(&mesh).unwrap();
+    assert_eq!(super::segments_near(Some(&outlines), &mesh, o, -Vec3::Z, (0.3, 0.0)), vec![(0, 0)]);
+    assert_eq!(indexes.len(), 2);
+    assert!(std::sync::Arc::ptr_eq(&outlines, &indexes.for_edges(&mesh).unwrap()));
+}
+
 /// Overlapping bodies with flat and curved faces, filleted edges and seams.
 fn assembly() -> SolveApp {
     let mut s = solidcraft_engine::Session::default();
@@ -48,6 +71,38 @@ fn indexed_picks_match_the_full_scan() {
     // The grid reaches every kind many times over.
     assert!(compared.0 > 2000 && compared.1 > 100 && compared.2 > 10, "{compared:?}");
     assert_eq!(app.viewport.pick_index.len(), 3, "one index per body mesh");
+}
+
+// A pending index can postpone cosmetic hover, but an explicit pick still gets the
+// face under the cursor. The gate makes both decisions happen before the index is ready.
+#[test]
+fn hover_yields_to_the_worker_but_a_click_can_pick_a_large_scan() {
+    use solidcore_record::Vec3;
+    use solidcraft_engine::doc::{Document, FeatureKind, MeshData};
+    let mut doc = Document::new("Large mesh");
+    let mesh = MeshData {
+        name: "Scan".into(),
+        positions: vec![0., 0., 0., 1., 0., 0., 0., 1., 0.].into(),
+        triangles: [0, 1, 2].repeat(525_000).into(),
+        color: None,
+        corner_normals: Default::default(),
+    };
+    doc.add_feature(FeatureKind::MeshImport { file: "scan.stl".into(), meshes: vec![mesh] }, Some("Scan")).unwrap();
+    let mut app = SolveApp::new(solidcraft_engine::Session::new(doc), crate::Services::default());
+    app.set_origin_shown(false);
+    let rect = Rect::from_min_size(pos2(0., 0.), vec2(640., 480.));
+    let proj = projection(&app, rect);
+    let at = proj.to_screen(Vec3::new(0.25, 0.25, 0.0)).unwrap();
+    let gate = app.viewport.pick_index.gate();
+    gate.set_closed(true);
+    let hover = crate::viewport::pick_hover(&mut app, &proj, at, &egui::Context::default());
+    let clicks = pick(&app, &proj, at);
+    let pending = app.viewport.pick_index.pending();
+    gate.set_closed(false);
+
+    assert_eq!(pending, 1);
+    assert!(hover.is_empty(), "a partial answer could light up a face behind the scan");
+    assert!(clicks.iter().any(|hit| matches!(hit, Hit::Face { .. })));
 }
 
 /// A new model state lets go of the indexes of meshes it no longer has.
@@ -257,56 +312,4 @@ fn sketch_hover_timing() {
     }
     let (median, p90) = stats(ms);
     eprintln!("Trim piece per cursor move: median {median:.4} ms, p90 {p90:.4} ms");
-}
-
-/// While a large scan's index is being made, what follows the pointer leaves it out instead of
-/// scanning every triangle each frame (a quarter of a second a frame on a 10-million-triangle
-/// scan); a click still finds it; once the index is in, the pointer finds it where it rests.
-#[test]
-fn the_pointer_waits_for_a_large_scans_index() {
-    let mut h = crate::scenario::Harness::new();
-    let n = 160u32;
-    let mut stl = vec![0u8; 80];
-    stl.extend_from_slice(&(2 * n * n).to_le_bytes());
-    let at = |i: u32, j: u32| [i as f32, j as f32, 0.0f32];
-    for j in 0..n {
-        for i in 0..n {
-            for tri in [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]] {
-                stl.extend_from_slice(&[0u8; 12]);
-                for p in tri {
-                    for v in p {
-                        stl.extend_from_slice(&v.to_le_bytes());
-                    }
-                }
-                stl.extend_from_slice(&[0u8; 2]);
-            }
-        }
-    }
-    let path = h.dir.join("sheet.stl");
-    std::fs::write(&path, stl).unwrap();
-    h.app.run("file.insert_mesh", json!({"path": path})).unwrap();
-    let app = &mut h.app;
-    app.set_origin_shown(false);
-    app.cam.target = solidcore_record::Vec3::new(80.0, 80.0, 0.0);
-    app.cam.pitch = 1.2;
-    app.cam.distance = 300.0;
-    let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(640.0, 480.0));
-    let proj = projection(app, rect);
-    let centre = proj.to_screen(solidcore_record::Vec3::new(80.0, 80.0, 0.0)).unwrap();
-    let face = |hits: &[Hit]| hits.iter().any(|h| matches!(h, Hit::Face { .. }));
-    // The sheet's 51 200 triangles stand for a scan too vast to scan each frame.
-    super::SCAN_EACH_FRAME.with(|s| s.set(Some(10_000)));
-    let gate = app.viewport.pick_index.gate();
-    gate.set_closed(true);
-    assert!(!face(&crate::viewport::pick_cached(app, &proj, centre)), "the pointer leaves the scan out while its index is made");
-    assert!(face(&pick(app, &proj, centre)), "a click still finds it");
-    gate.set_closed(false);
-    for _ in 0..2000 {
-        if app.viewport.pick_index.building() == 0 {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    assert!(face(&crate::viewport::pick_cached(app, &proj, centre)), "with the index in, the pointer finds it where it rests");
-    super::SCAN_EACH_FRAME.with(|s| s.set(None));
 }

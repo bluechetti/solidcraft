@@ -14,10 +14,7 @@ use core::any::Any;
 pub use crate::native::winit_integration::UserEvent;
 
 #[cfg(not(target_arch = "wasm32"))]
-use raw_window_handle::{
-    DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle,
-    RawWindowHandle, WindowHandle,
-};
+use raw_window_handle::{DisplayHandle, HandleError, HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle, WindowHandle};
 #[cfg(not(target_arch = "wasm32"))]
 use static_assertions::assert_not_impl_any;
 
@@ -46,8 +43,7 @@ type DynError = Box<dyn core::error::Error + Send + Sync>;
 /// This is how your app is created.
 ///
 /// You can use the [`CreationContext`] to setup egui, restore state, setup OpenGL things, etc.
-pub type AppCreator<'app> =
-    Box<dyn 'app + FnOnce(&CreationContext<'_>) -> Result<Box<dyn 'app + App>, DynError>>;
+pub type AppCreator<'app> = Box<dyn 'app + FnOnce(&CreationContext<'_>) -> Result<Box<dyn 'app + App>, DynError>>;
 
 /// Data that is passed to [`AppCreator`] that can be used to setup and initialize your app.
 pub struct CreationContext<'s> {
@@ -72,8 +68,7 @@ pub struct CreationContext<'s> {
 
     /// The `get_proc_address` wrapper of underlying GL context
     #[cfg(feature = "glow")]
-    pub get_proc_address:
-        Option<std::sync::Arc<dyn Fn(&core::ffi::CStr) -> *const core::ffi::c_void + Send + Sync>>,
+    pub get_proc_address: Option<std::sync::Arc<dyn Fn(&core::ffi::CStr) -> *const core::ffi::c_void + Send + Sync>>,
 
     /// The underlying WGPU render state.
     ///
@@ -520,8 +515,7 @@ impl Default for NativeOptions {
             glow_options: egui_glow::GlowConfiguration::default(),
 
             #[cfg(feature = "wgpu_no_default_features")]
-            wgpu_options: egui_wgpu::WgpuConfiguration::default()
-                .with_surface_config(egui_wgpu::SurfaceConfig::LOW_LATENCY),
+            wgpu_options: egui_wgpu::WgpuConfiguration::default().with_surface_config(egui_wgpu::SurfaceConfig::LOW_LATENCY),
 
             persist_window: true,
 
@@ -667,9 +661,7 @@ impl Default for Renderer {
     fn default() -> Self {
         #[cfg(not(feature = "glow"))]
         #[cfg(not(feature = "wgpu_no_default_features"))]
-        compile_error!(
-            "eframe: you must enable at least one of the rendering backend features: 'glow' or 'wgpu'"
-        );
+        compile_error!("eframe: you must enable at least one of the rendering backend features: 'glow' or 'wgpu'");
 
         #[cfg(feature = "glow")]
         #[cfg(not(feature = "wgpu_no_default_features"))]
@@ -712,9 +704,7 @@ impl core::str::FromStr for Renderer {
             #[cfg(feature = "wgpu_no_default_features")]
             "wgpu" => Ok(Self::Wgpu),
 
-            _ => Err(format!(
-                "eframe renderer {name:?} is not available. Make sure that the corresponding eframe feature is enabled."
-            )),
+            _ => Err(format!("eframe renderer {name:?} is not available. Make sure that the corresponding eframe feature is enabled.")),
         }
     }
 }
@@ -738,8 +728,7 @@ pub struct Frame {
 
     /// Used to convert user custom [`glow::Texture`] to [`egui::TextureId`]
     #[cfg(all(feature = "glow", not(target_arch = "wasm32")))]
-    pub(crate) glow_register_native_texture:
-        Option<Box<dyn FnMut(glow::Texture) -> egui::TextureId>>,
+    pub(crate) glow_register_native_texture: Option<Box<dyn FnMut(glow::Texture) -> egui::TextureId>>,
 
     /// Can be used to manage GPU resources for custom rendering with WGPU using [`egui::PaintCallback`]s.
     #[cfg(feature = "wgpu_no_default_features")]
@@ -868,12 +857,7 @@ impl Frame {
     /// This is meant to be used together with [`egui::ViewportBuilder::with_fullsize_content_view`].
     ///
     /// Does nothing on other platforms.
-    pub fn set_traffic_lights_position(
-        &self,
-        egui_ctx: &egui::Context,
-        title_bar_y: egui::Rangef,
-        left_margin: f32,
-    ) {
+    pub fn set_traffic_lights_position(&self, egui_ctx: &egui::Context, title_bar_y: egui::Rangef, left_margin: f32) {
         cfg_select! {
             all(
                 target_os = "macos",

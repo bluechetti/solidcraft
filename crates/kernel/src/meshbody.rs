@@ -559,6 +559,20 @@ impl Body {
         body_from(|i| positions.get(i).copied().map_or(Vec3::ZERO, Vec3::from), positions.len(), triangles, &normals)
     }
 
+    /// Make a flat imported body and the same source with shared vertex indices. The source
+    /// retains its facet order and winding, so it can be rebuilt or shaded the usual way.
+    pub fn from_packed_flat_mesh_indexed(positions: std::sync::Arc<[f64]>, triangles: std::sync::Arc<[u32]>) -> Result<(Self, Vec<f64>, Vec<u32>)> {
+        // Upstream's entry point on the fork's builder: the threaded weld first (the indexed
+        // source keeps the file's facet order and winding), then the body from the welded points,
+        // whose second weld finds nothing to merge.
+        let corners = positions.as_chunks::<3>().0;
+        let (points, facets) = weld(|i| corners.get(i).copied().map_or(Vec3::ZERO, Vec3::from), corners.len(), triangles.as_chunks::<3>().0)?;
+        drop(positions);
+        drop(triangles);
+        let body = body_from(|i| points.get(i).copied().unwrap_or(Vec3::ZERO), points.len(), &facets, &[])?;
+        Ok((body, points.iter().flat_map(|p| [p.x, p.y, p.z]).collect(), facets.iter().flatten().copied().collect()))
+    }
+
     /// Shared-vertex triangles of a mesh body.
     pub fn triangle_mesh(&self) -> Option<(&[Vec3], &[[u32; 3]])> {
         self.mesh.as_ref().map(|m| (m.positions.as_slice(), m.triangles.as_slice()))

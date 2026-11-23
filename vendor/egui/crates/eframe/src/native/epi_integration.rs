@@ -34,27 +34,19 @@ pub fn viewport_builder(
         // Restore pos/size from previous session
 
         if clamp_size_to_monitor_size {
-            window_settings.clamp_size_to_sane_values(largest_monitor_point_size(
-                egui_zoom_factor,
-                event_loop,
-            ));
+            window_settings.clamp_size_to_sane_values(largest_monitor_point_size(egui_zoom_factor, event_loop));
         }
         window_settings.clamp_position_to_monitors(egui_zoom_factor, event_loop);
 
-        viewport_builder =
-            window_settings.initialize_viewport_builder(egui_zoom_factor, viewport_builder);
+        viewport_builder = window_settings.initialize_viewport_builder(egui_zoom_factor, viewport_builder);
         Some(window_settings.inner_size_points())
     } else {
         if let Some(pos) = viewport_builder.position {
             viewport_builder = viewport_builder.with_position(pos);
         }
 
-        if clamp_size_to_monitor_size && let Some(initial_window_size) = viewport_builder.inner_size
-        {
-            let initial_window_size = egui::NumExt::at_most(
-                initial_window_size,
-                largest_monitor_point_size(egui_zoom_factor, event_loop),
-            );
+        if clamp_size_to_monitor_size && let Some(initial_window_size) = viewport_builder.inner_size {
+            let initial_window_size = egui::NumExt::at_most(initial_window_size, largest_monitor_point_size(egui_zoom_factor, event_loop));
             viewport_builder = viewport_builder.with_inner_size(initial_window_size);
         }
 
@@ -64,13 +56,8 @@ pub fn viewport_builder(
     #[cfg(not(target_os = "ios"))]
     if native_options.centered {
         profiling::scope!("center");
-        if let Some(monitor) = event_loop
-            .primary_monitor()
-            .or_else(|| event_loop.available_monitors().next())
-        {
-            let monitor_size = monitor
-                .size()
-                .to_logical::<f32>(egui_zoom_factor as f64 * monitor.scale_factor());
+        if let Some(monitor) = event_loop.primary_monitor().or_else(|| event_loop.available_monitors().next()) {
+            let monitor_size = monitor.size().to_logical::<f32>(egui_zoom_factor as f64 * monitor.scale_factor());
             let inner_size = inner_size_points.unwrap_or(egui::Vec2 { x: 800.0, y: 600.0 });
             if 0.0 < monitor_size.width && 0.0 < monitor_size.height {
                 let x = (monitor_size.width - inner_size.x) * 0.5;
@@ -86,10 +73,7 @@ pub fn viewport_builder(
     }
 }
 
-pub fn apply_window_settings(
-    window: &winit::window::Window,
-    window_settings: Option<WindowSettings>,
-) {
+pub fn apply_window_settings(window: &winit::window::Window, window_settings: Option<WindowSettings>) {
     profiling::function_scope!();
     if let Some(window_settings) = window_settings {
         window_settings.initialize_window(window);
@@ -107,18 +91,12 @@ fn largest_monitor_point_size(egui_zoom_factor: f32, event_loop: &ActiveEventLoo
     };
 
     for monitor in available_monitors {
-        let size = monitor
-            .size()
-            .to_logical::<f32>(egui_zoom_factor as f64 * monitor.scale_factor());
+        let size = monitor.size().to_logical::<f32>(egui_zoom_factor as f64 * monitor.scale_factor());
         let size = egui::vec2(size.width, size.height);
         max_size = max_size.max(size);
     }
 
-    if max_size == egui::Vec2::ZERO {
-        egui::Vec2::splat(16000.0)
-    } else {
-        max_size
-    }
+    if max_size == egui::Vec2::ZERO { egui::Vec2::splat(16000.0) } else { max_size }
 }
 
 // ----------------------------------------------------------------------------
@@ -135,9 +113,7 @@ pub fn create_storage(_app_name: &str) -> Option<Box<dyn epi::Storage>> {
 #[allow(clippy::allow_attributes, clippy::unnecessary_wraps)]
 pub fn create_storage_with_file(_file: impl Into<PathBuf>) -> Option<Box<dyn epi::Storage>> {
     #[cfg(feature = "persistence")]
-    return Some(Box::new(
-        super::file_storage::FileStorage::from_ron_filepath(_file),
-    ));
+    return Some(Box::new(super::file_storage::FileStorage::from_ron_filepath(_file)));
     #[cfg(not(feature = "persistence"))]
     None
 }
@@ -215,12 +191,8 @@ impl EpiIntegration {
         native_options: &crate::NativeOptions,
         storage: Option<Box<dyn epi::Storage>>,
         #[cfg(feature = "glow")] gl: Option<std::sync::Arc<glow::Context>>,
-        #[cfg(feature = "glow")] glow_register_native_texture: Option<
-            Box<dyn FnMut(glow::Texture) -> egui::TextureId>,
-        >,
-        #[cfg(feature = "wgpu_no_default_features")] wgpu_render_state: Option<
-            egui_wgpu::RenderState,
-        >,
+        #[cfg(feature = "glow")] glow_register_native_texture: Option<Box<dyn FnMut(glow::Texture) -> egui::TextureId>>,
+        #[cfg(feature = "wgpu_no_default_features")] wgpu_render_state: Option<egui_wgpu::RenderState>,
     ) -> Self {
         let frame = epi::Frame {
             info: epi::IntegrationInfo { cpu_usage: None },
@@ -242,20 +214,10 @@ impl EpiIntegration {
             activation_token: None,
         };
 
-        let icon = native_options
-            .viewport
-            .icon
-            .clone()
-            .unwrap_or_else(|| std::sync::Arc::new(load_default_egui_icon()));
+        let icon = native_options.viewport.icon.clone().unwrap_or_else(|| std::sync::Arc::new(load_default_egui_icon()));
 
-        let app_icon_setter = super::app_icon::AppTitleIconSetter::new(
-            native_options
-                .viewport
-                .title
-                .clone()
-                .unwrap_or_else(|| app_name.to_owned()),
-            Some(icon),
-        );
+        let app_icon_setter =
+            super::app_icon::AppTitleIconSetter::new(native_options.viewport.title.clone().unwrap_or_else(|| app_name.to_owned()), Some(icon));
 
         if native_options.system_font_fallback {
             egui_ctx.add_font_provider(cfg_select! {
@@ -266,14 +228,10 @@ impl EpiIntegration {
 
         let restored_window_settings = load_window_settings(frame.storage());
         #[cfg(feature = "persistence")]
-        let normal_geometry = restored_window_settings
-            .map(|settings| settings.normal_geometry())
-            .or_else(|| {
-                // Nothing saved yet, so use the window's own geometry, unless it starts maximized:
-                (!window.is_maximized() && window.fullscreen().is_none()).then(|| {
-                    egui_winit::WindowGeometry::from_window(egui_ctx.zoom_factor(), window)
-                })
-            });
+        let normal_geometry = restored_window_settings.map(|settings| settings.normal_geometry()).or_else(|| {
+            // Nothing saved yet, so use the window's own geometry, unless it starts maximized:
+            (!window.is_maximized() && window.fullscreen().is_none()).then(|| egui_winit::WindowGeometry::from_window(egui_ctx.zoom_factor(), window))
+        });
 
         Self {
             frame,
@@ -288,9 +246,7 @@ impl EpiIntegration {
             #[cfg(feature = "persistence")]
             normal_geometry,
             app_icon_setter,
-            beginning: Instant::now()
-                .checked_sub(web_time::Duration::from_secs_f64(egui_ctx.time()))
-                .unwrap_or_else(Instant::now),
+            beginning: Instant::now().checked_sub(web_time::Duration::from_secs_f64(egui_ctx.time())).unwrap_or_else(Instant::now),
             is_first_frame: true,
             egui_ctx,
         }
@@ -311,12 +267,7 @@ impl EpiIntegration {
 
         use winit::event::{ElementState, MouseButton, WindowEvent};
 
-        if let WindowEvent::MouseInput {
-            button: MouseButton::Left,
-            state: ElementState::Pressed,
-            ..
-        } = event
-        {
+        if let WindowEvent::MouseInput { button: MouseButton::Left, state: ElementState::Pressed, .. } = event {
             self.can_drag_window = true;
         }
 
@@ -364,9 +315,7 @@ impl EpiIntegration {
         });
 
         if is_root_viewport && close_requested {
-            let canceled = full_output.viewport_output[&ViewportId::ROOT]
-                .commands
-                .contains(&egui::ViewportCommand::CancelClose);
+            let canceled = full_output.viewport_output[&ViewportId::ROOT].commands.contains(&egui::ViewportCommand::CancelClose);
             self.handle_close_request(canceled);
         }
 
@@ -381,11 +330,7 @@ impl EpiIntegration {
     /// the app will find everything where it left it once the window is visible again.
     ///
     /// Only call this for the root viewport: only it has [`crate::App::logic`].
-    pub fn update_logic_only(
-        &mut self,
-        app: &mut dyn epi::App,
-        raw_input: egui::RawInput,
-    ) -> egui::LogicOutput {
+    pub fn update_logic_only(&mut self, app: &mut dyn epi::App, raw_input: egui::RawInput) -> egui::LogicOutput {
         let raw_input = self.prepare_raw_input(app, raw_input);
 
         let close_requested = raw_input.viewport().close_requested();
@@ -399,10 +344,8 @@ impl EpiIntegration {
         self.pending_raw_input = raw_input;
 
         if close_requested {
-            let canceled = logic_output
-                .viewport_commands
-                .get(&ViewportId::ROOT)
-                .is_some_and(|commands| commands.contains(&egui::ViewportCommand::CancelClose));
+            let canceled =
+                logic_output.viewport_commands.get(&ViewportId::ROOT).is_some_and(|commands| commands.contains(&egui::ViewportCommand::CancelClose));
             self.handle_close_request(canceled);
         }
 
@@ -410,11 +353,7 @@ impl EpiIntegration {
     }
 
     /// Prepend any input we couldn't give to egui earlier, set the time, and run the app hook.
-    fn prepare_raw_input(
-        &mut self,
-        app: &mut dyn epi::App,
-        new_input: egui::RawInput,
-    ) -> egui::RawInput {
+    fn prepare_raw_input(&mut self, app: &mut dyn epi::App, new_input: egui::RawInput) -> egui::RawInput {
         let mut raw_input = core::mem::take(&mut self.pending_raw_input);
         raw_input.append(new_input); // The new input wins where they overlap
 
@@ -455,11 +394,7 @@ impl EpiIntegration {
     // ------------------------------------------------------------------------
     // Persistence stuff:
 
-    pub fn maybe_autosave(
-        &mut self,
-        app: &mut dyn epi::App,
-        window: Option<&winit::window::Window>,
-    ) {
+    pub fn maybe_autosave(&mut self, app: &mut dyn epi::App, window: Option<&winit::window::Window>) {
         let now = Instant::now();
         if now - self.last_auto_save > app.auto_save_interval() {
             self.save(app, window);
@@ -479,18 +414,13 @@ impl EpiIntegration {
                 && self.persist_window
             {
                 profiling::scope!("native_window");
-                let window_settings = WindowSettings::from_window(
-                    self.egui_ctx.zoom_factor(),
-                    window,
-                    self.normal_geometry,
-                );
+                let window_settings = WindowSettings::from_window(self.egui_ctx.zoom_factor(), window, self.normal_geometry);
                 self.normal_geometry = Some(window_settings.normal_geometry());
                 epi::set_value(storage, STORAGE_WINDOW_KEY, &window_settings);
             }
             if app.persist_egui_memory() {
                 profiling::scope!("egui_memory");
-                self.egui_ctx
-                    .memory(|mem| epi::set_value(storage, STORAGE_EGUI_MEMORY_KEY, mem));
+                self.egui_ctx.memory(|mem| epi::set_value(storage, STORAGE_EGUI_MEMORY_KEY, mem));
             }
             {
                 profiling::scope!("App::save");

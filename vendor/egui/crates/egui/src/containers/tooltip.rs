@@ -1,8 +1,5 @@
 use crate::pass_state::PerWidgetTooltipState;
-use crate::{
-    AreaState, Context, Id, InnerResponse, LayerId, Layout, Order, Popup, PopupAnchor, PopupKind,
-    Response, Sense, WidgetRects,
-};
+use crate::{AreaState, Context, Id, InnerResponse, LayerId, Layout, Order, Popup, PopupAnchor, PopupKind, Response, Sense, WidgetRects};
 use emath::{Rect, Vec2};
 
 pub struct Tooltip<'a> {
@@ -17,12 +14,7 @@ pub struct Tooltip<'a> {
 
 impl Tooltip<'_> {
     /// Show a tooltip that is always open.
-    pub fn always_open(
-        ctx: Context,
-        parent_layer: LayerId,
-        parent_widget: Id,
-        anchor: impl Into<PopupAnchor>,
-    ) -> Self {
+    pub fn always_open(ctx: Context, parent_layer: LayerId, parent_widget: Id, anchor: impl Into<PopupAnchor>) -> Self {
         let width = ctx.global_style().spacing.tooltip_width;
         Self {
             popup: Popup::new(parent_widget, ctx, anchor.into(), parent_layer)
@@ -43,28 +35,20 @@ impl Tooltip<'_> {
             .gap(4.0)
             .width(response.ctx.global_style().spacing.tooltip_width)
             .sense(Sense::hover());
-        Self {
-            popup,
-            parent_layer: response.layer_id,
-            parent_widget: response.id,
-        }
+        Self { popup, parent_layer: response.layer_id, parent_widget: response.id }
     }
 
     /// Show a tooltip when hovering an enabled widget.
     pub fn for_enabled(response: &Response) -> Self {
         let mut tooltip = Self::for_widget(response);
-        tooltip.popup = tooltip
-            .popup
-            .open(response.enabled() && Self::should_show_tooltip(response, true));
+        tooltip.popup = tooltip.popup.open(response.enabled() && Self::should_show_tooltip(response, true));
         tooltip
     }
 
     /// Show a tooltip when hovering a disabled widget.
     pub fn for_disabled(response: &Response) -> Self {
         let mut tooltip = Self::for_widget(response);
-        tooltip.popup = tooltip
-            .popup
-            .open(!response.enabled() && Self::should_show_tooltip(response, true));
+        tooltip.popup = tooltip.popup.open(!response.enabled() && Self::should_show_tooltip(response, true));
         tooltip
     }
 
@@ -109,11 +93,7 @@ impl Tooltip<'_> {
 
     /// Show the tooltip
     pub fn show<R>(self, content: impl FnOnce(&mut crate::Ui) -> R) -> Option<InnerResponse<R>> {
-        let Self {
-            mut popup,
-            parent_layer,
-            parent_widget,
-        } = self;
+        let Self { mut popup, parent_layer, parent_widget } = self;
 
         if !popup.is_open() {
             return None;
@@ -138,19 +118,9 @@ impl Tooltip<'_> {
 
         let mut state = popup.ctx().pass_state_mut(|fs| {
             // Remember that this is the widget showing the tooltip:
-            fs.layers
-                .entry(parent_layer)
-                .or_default()
-                .widget_with_tooltip = Some(parent_widget);
+            fs.layers.entry(parent_layer).or_default().widget_with_tooltip = Some(parent_widget);
 
-            fs.tooltips
-                .widget_tooltips
-                .get(&parent_widget)
-                .copied()
-                .unwrap_or(PerWidgetTooltipState {
-                    bounding_rect: rect,
-                    tooltip_count: 0,
-                })
+            fs.tooltips.widget_tooltips.get(&parent_widget).copied().unwrap_or(PerWidgetTooltipState { bounding_rect: rect, tooltip_count: 0 })
         });
 
         let tooltip_area_id = Self::tooltip_id(parent_widget, state.tooltip_count);
@@ -159,13 +129,9 @@ impl Tooltip<'_> {
         // through to the widget below).
         // When inspecting widgets (all modifiers down), we make the tooltip interactable
         // so that the user can hover the widgets inside it.
-        let interactable =
-            Self::had_interactive_widgets(popup.ctx(), tooltip_area_id) || is_inspecting;
+        let interactable = Self::had_interactive_widgets(popup.ctx(), tooltip_area_id) || is_inspecting;
 
-        popup = popup
-            .anchor(state.bounding_rect)
-            .id(tooltip_area_id)
-            .interactable(interactable);
+        popup = popup.anchor(state.bounding_rect).id(tooltip_area_id).interactable(interactable);
 
         let response = popup.show(|ui| {
             // By default, the text in tooltips aren't selectable.
@@ -182,10 +148,7 @@ impl Tooltip<'_> {
         if let Some(response) = &response {
             state.tooltip_count += 1;
             state.bounding_rect |= response.response.rect;
-            response
-                .response
-                .ctx
-                .pass_state_mut(|fs| fs.tooltips.widget_tooltips.insert(parent_widget, state));
+            response.response.ctx.pass_state_mut(|fs| fs.tooltips.widget_tooltips.insert(parent_widget, state));
             Self::remember_that_tooltip_was_shown(&response.response.ctx);
         }
 
@@ -197,8 +160,7 @@ impl Tooltip<'_> {
     }
 
     pub fn seconds_since_last_tooltip(ctx: &Context) -> f32 {
-        let when_was_a_toolip_last_shown =
-            ctx.data(|d| d.get_temp::<f64>(Self::when_was_a_toolip_last_shown_id()));
+        let when_was_a_toolip_last_shown = ctx.data(|d| d.get_temp::<f64>(Self::when_was_a_toolip_last_shown_id()));
 
         if let Some(when_was_a_toolip_last_shown) = when_was_a_toolip_last_shown {
             let now = ctx.input(|i| i.time);
@@ -215,12 +177,7 @@ impl Tooltip<'_> {
 
     /// What is the id of the next tooltip for this widget?
     pub fn next_tooltip_id(ctx: &Context, widget_id: Id) -> Id {
-        let tooltip_count = ctx.pass_state(|fs| {
-            fs.tooltips
-                .widget_tooltips
-                .get(&widget_id)
-                .map_or(0, |state| state.tooltip_count)
-        });
+        let tooltip_count = ctx.pass_state(|fs| fs.tooltips.widget_tooltips.get(&widget_id).map_or(0, |state| state.tooltip_count));
         Self::tooltip_id(widget_id, tooltip_count)
     }
 
@@ -234,22 +191,12 @@ impl Tooltip<'_> {
     /// or they would steal the hover from the widget they belong to.
     fn had_interactive_widgets(ctx: &Context, tooltip_id: Id) -> bool {
         let tooltip_layer_id = LayerId::new(Order::Tooltip, tooltip_id);
-        ctx.viewport(|vp| {
-            vp.prev_pass
-                .widgets
-                .get_layer(tooltip_layer_id)
-                .any(|w| w.enabled && w.sense.interactive())
-        })
+        ctx.viewport(|vp| vp.prev_pass.widgets.get_layer(tooltip_layer_id).any(|w| w.enabled && w.sense.interactive()))
     }
 
     /// Is any widget inside of the [`crate::Ui`] with the id `container` hovered?
     fn is_child_hovered(ctx: &Context, container: Id) -> bool {
-        ctx.viewport(|vp| {
-            vp.interact_widgets
-                .hovered
-                .iter()
-                .any(|&id| is_descendant_of(&vp.this_pass.widgets, id, container))
-        })
+        ctx.viewport(|vp| vp.interact_widgets.hovered.iter().any(|&id| is_descendant_of(&vp.this_pass.widgets, id, container)))
     }
 
     /// Should we show a tooltip for this response?
@@ -266,23 +213,16 @@ impl Tooltip<'_> {
             return true;
         }
 
-        let is_other_tooltip_shown_this_pass = response.ctx.pass_state(|fs| {
-            fs.layers
-                .get(&response.layer_id)
-                .and_then(|layer| layer.widget_with_tooltip)
-                .is_some_and(|id| id != response.id)
-        });
+        let is_other_tooltip_shown_this_pass = response
+            .ctx
+            .pass_state(|fs| fs.layers.get(&response.layer_id).and_then(|layer| layer.widget_with_tooltip).is_some_and(|id| id != response.id));
         if is_other_tooltip_shown_this_pass {
             // Only one tooltip per layer. Children are shown before their parent container,
             // so this makes sure the innermost widget wins.
             return false;
         }
 
-        let any_open_popups = response.ctx.prev_pass_state(|fs| {
-            fs.layers
-                .get(&response.layer_id)
-                .is_some_and(|layer| !layer.open_popups.is_empty())
-        });
+        let any_open_popups = response.ctx.prev_pass_state(|fs| fs.layers.get(&response.layer_id).is_some_and(|layer| !layer.open_popups.is_empty()));
         if any_open_popups {
             // Hide tooltips if the user opens a popup (menu, combo-box, etc.) in the same layer.
             return false;
@@ -293,13 +233,7 @@ impl Tooltip<'_> {
         let tooltip_delay = style.interaction.tooltip_delay;
         let tooltip_grace_time = style.interaction.tooltip_grace_time;
 
-        let (
-            time_since_last_scroll,
-            time_since_last_click,
-            time_since_last_pointer_movement,
-            pointer_pos,
-            pointer_dir,
-        ) = response.ctx.input(|i| {
+        let (time_since_last_scroll, time_since_last_click, time_since_last_pointer_movement, pointer_pos, pointer_dir) = response.ctx.input(|i| {
             (
                 i.time_since_last_scroll(),
                 i.pointer.time_since_last_click(),
@@ -312,9 +246,7 @@ impl Tooltip<'_> {
         if time_since_last_scroll < tooltip_delay {
             // See https://github.com/emilk/egui/issues/4781
             // Note that this means we cannot have `ScrollArea`s in a tooltip.
-            response
-                .ctx
-                .request_repaint_after_secs(tooltip_delay - time_since_last_scroll);
+            response.ctx.request_repaint_after_secs(tooltip_delay - time_since_last_scroll);
             return false;
         }
 
@@ -325,8 +257,7 @@ impl Tooltip<'_> {
 
             let tooltip_id = Self::next_tooltip_id(&response.ctx, response.id);
 
-            let tooltip_has_interactive_widget = allow_interactive_tooltip
-                && Self::had_interactive_widgets(&response.ctx, tooltip_id);
+            let tooltip_has_interactive_widget = allow_interactive_tooltip && Self::had_interactive_widgets(&response.ctx, tooltip_id);
 
             if tooltip_has_interactive_widget {
                 // We keep the tooltip open if hovered,
@@ -340,9 +271,7 @@ impl Tooltip<'_> {
                         if rect.contains(pos) {
                             return true; // hovering interactive tooltip
                         }
-                        if pointer_dir != Vec2::ZERO
-                            && rect.intersects_ray(pos, pointer_dir.normalized())
-                        {
+                        if pointer_dir != Vec2::ZERO && rect.intersects_ray(pos, pointer_dir.normalized()) {
                             return true; // on the way to interactive tooltip
                         }
                     }
@@ -350,8 +279,7 @@ impl Tooltip<'_> {
             }
         }
 
-        let clicked_more_recently_than_moved =
-            time_since_last_click < time_since_last_pointer_movement + 0.1;
+        let clicked_more_recently_than_moved = time_since_last_click < time_since_last_pointer_movement + 0.1;
         if clicked_more_recently_than_moved {
             // It is common to click a widget and then rest the mouse there.
             // It would be annoying to then see a tooltip for it immediately.
@@ -370,9 +298,7 @@ impl Tooltip<'_> {
             }
         }
 
-        let already_open_tooltip = response
-            .ctx
-            .prev_pass_state(|fs| fs.layers.get(&response.layer_id)?.widget_with_tooltip);
+        let already_open_tooltip = response.ctx.prev_pass_state(|fs| fs.layers.get(&response.layer_id)?.widget_with_tooltip);
         let is_other_tooltip_open = already_open_tooltip.is_some_and(|already_open_tooltip| {
             already_open_tooltip != response.id
                 // A widget may take over the tooltip from a container it is inside of:
@@ -391,17 +317,12 @@ impl Tooltip<'_> {
             // is over one of its children, but we still want to show its tooltip then.
             // If the child has a tooltip of its own, that tooltip was already shown
             // (children are added before the container response is available), and wins.
-            let hovered = response.hovered()
-                || (response.container_contains_pointer()
-                    && Self::is_child_hovered(&response.ctx, response.id));
+            let hovered = response.hovered() || (response.container_contains_pointer() && Self::is_child_hovered(&response.ctx, response.id));
 
             if !hovered || !response.ctx.input(|i| i.pointer.has_pointer()) {
                 return false;
             }
-        } else if !response
-            .ctx
-            .rect_contains_pointer(response.layer_id, response.rect)
-        {
+        } else if !response.ctx.rect_contains_pointer(response.layer_id, response.rect) {
             return false;
         }
 
@@ -410,25 +331,19 @@ impl Tooltip<'_> {
         // another widget should show the tooltip for that widget right away.
 
         // Let the user quickly move over some dead space to hover the next thing
-        let tooltip_was_recently_shown =
-            Self::seconds_since_last_tooltip(&response.ctx) < tooltip_grace_time;
+        let tooltip_was_recently_shown = Self::seconds_since_last_tooltip(&response.ctx) < tooltip_grace_time;
 
         if !tooltip_was_recently_shown && !is_our_tooltip_open {
             if style.interaction.show_tooltips_only_when_still {
                 // We only show the tooltip when the mouse pointer is still.
-                if !response
-                    .ctx
-                    .input(|i| i.pointer.is_still() && !i.is_scrolling())
-                {
+                if !response.ctx.input(|i| i.pointer.is_still() && !i.is_scrolling()) {
                     // wait for mouse to stop
                     response.ctx.request_repaint();
                     return false;
                 }
             }
 
-            let time_since_last_interaction = time_since_last_scroll
-                .min(time_since_last_pointer_movement)
-                .min(time_since_last_click);
+            let time_since_last_interaction = time_since_last_scroll.min(time_since_last_pointer_movement).min(time_since_last_click);
             let time_til_tooltip = tooltip_delay - time_since_last_interaction;
 
             if 0.0 < time_til_tooltip {
@@ -440,10 +355,7 @@ impl Tooltip<'_> {
 
         // We don't want tooltips of things while we are dragging them,
         // but we do want tooltips while holding down on an item on a touch screen.
-        if response
-            .ctx
-            .input(|i| i.pointer.any_down() && i.pointer.has_moved_too_much_for_a_click)
-        {
+        if response.ctx.input(|i| i.pointer.any_down() && i.pointer.has_moved_too_much_for_a_click) {
             return false;
         }
 
@@ -455,10 +367,7 @@ impl Tooltip<'_> {
     /// Was this tooltip visible last frame?
     pub fn was_tooltip_open_last_frame(ctx: &Context, widget_id: Id) -> bool {
         let primary_tooltip_area_id = Self::tooltip_id(widget_id, 0);
-        ctx.memory(|mem| {
-            mem.areas()
-                .visible_last_frame(&LayerId::new(Order::Tooltip, primary_tooltip_area_id))
-        })
+        ctx.memory(|mem| mem.areas().visible_last_frame(&LayerId::new(Order::Tooltip, primary_tooltip_area_id)))
     }
 }
 

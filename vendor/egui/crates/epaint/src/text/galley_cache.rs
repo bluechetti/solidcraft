@@ -3,9 +3,7 @@ use alloc::sync::Arc;
 use emath::OrderedFloat;
 use nohash_hasher::IntMap;
 
-use crate::text::{
-    ByteIndex, Galley, LayoutJob, LayoutSection, fonts::FontsImpl, text_layout::layout,
-};
+use crate::text::{ByteIndex, Galley, LayoutJob, LayoutSection, fonts::FontsImpl, text_layout::layout};
 
 /// A laid-out [`Galley`], and what we need to know to evict it.
 struct CachedGalley {
@@ -90,32 +88,17 @@ impl GalleyCache {
             std::collections::hash_map::Entry::Vacant(entry) => {
                 let job = Arc::new(job);
                 if allow_split_paragraphs && should_cache_each_paragraph_individually(&job) {
-                    let (child_galleys, child_hashes) =
-                        self.layout_each_paragraph_individually(fonts, &job, pixels_per_point);
-                    debug_assert_eq!(
-                        child_hashes.len(),
-                        child_galleys.len(),
-                        "Bug in `layout_each_paragraph_individually`"
-                    );
+                    let (child_galleys, child_hashes) = self.layout_each_paragraph_individually(fonts, &job, pixels_per_point);
+                    debug_assert_eq!(child_hashes.len(), child_galleys.len(), "Bug in `layout_each_paragraph_individually`");
                     let galley = Arc::new(Galley::concat(job, &child_galleys, pixels_per_point));
 
-                    self.cache.insert(
-                        hash,
-                        CachedGalley {
-                            last_used: self.generation,
-                            children: Some(child_hashes.into()),
-                            galley: Arc::clone(&galley),
-                        },
-                    );
+                    self.cache
+                        .insert(hash, CachedGalley { last_used: self.generation, children: Some(child_hashes.into()), galley: Arc::clone(&galley) });
                     galley
                 } else {
                     let galley = layout(fonts, pixels_per_point, job);
                     let galley = Arc::new(galley);
-                    entry.insert(CachedGalley {
-                        last_used: self.generation,
-                        children: None,
-                        galley: Arc::clone(&galley),
-                    });
+                    entry.insert(CachedGalley { last_used: self.generation, children: None, galley: Arc::clone(&galley) });
                     galley
                 }
             }
@@ -124,24 +107,12 @@ impl GalleyCache {
         (hash, galley)
     }
 
-    pub(super) fn layout(
-        &mut self,
-        fonts: &mut FontsImpl,
-        pixels_per_point: f32,
-        job: LayoutJob,
-        allow_split_paragraphs: bool,
-    ) -> Arc<Galley> {
-        self.layout_internal(fonts, job, pixels_per_point, allow_split_paragraphs)
-            .1
+    pub(super) fn layout(&mut self, fonts: &mut FontsImpl, pixels_per_point: f32, job: LayoutJob, allow_split_paragraphs: bool) -> Arc<Galley> {
+        self.layout_internal(fonts, job, pixels_per_point, allow_split_paragraphs).1
     }
 
     /// Split on `\n` and lay out (and cache) each paragraph individually.
-    fn layout_each_paragraph_individually(
-        &mut self,
-        fonts: &mut FontsImpl,
-        job: &LayoutJob,
-        pixels_per_point: f32,
-    ) -> (Vec<Arc<Galley>>, Vec<u64>) {
+    fn layout_each_paragraph_individually(&mut self, fonts: &mut FontsImpl, job: &LayoutJob, pixels_per_point: f32) -> (Vec<Arc<Galley>>, Vec<u64>) {
         profiling::function_scope!();
 
         let mut current_section = 0;
@@ -154,39 +125,26 @@ impl GalleyCache {
             let is_first_paragraph = start == 0;
             // `end` will not include the `\n` since we don't want to create an empty row in our
             // split galley
-            let mut end = job.text[start..]
-                .find('\n')
-                .map_or(job.text.len(), |i| start + i);
+            let mut end = job.text[start..].find('\n').map_or(job.text.len(), |i| start + i);
             if end == job.text.len() - 1 && job.text.ends_with('\n') {
                 end += 1; // If the text ends with a newline, we include it in the last paragraph.
             }
 
             let mut paragraph_job = LayoutJob {
                 text: job.text[start..end].to_owned(),
-                wrap: crate::text::TextWrapping {
-                    max_rows: max_rows_remaining,
-                    ..job.wrap
-                },
+                wrap: crate::text::TextWrapping { max_rows: max_rows_remaining, ..job.wrap },
                 sections: Vec::new(),
                 break_on_newline: job.break_on_newline,
                 halign: job.halign,
                 justify: job.justify,
-                first_row_min_height: if is_first_paragraph {
-                    job.first_row_min_height
-                } else {
-                    0.0
-                },
+                first_row_min_height: if is_first_paragraph { job.first_row_min_height } else { 0.0 },
                 round_output_to_gui: job.round_output_to_gui,
                 keep_trailing_whitespace: job.keep_trailing_whitespace,
             };
 
             // Add overlapping sections:
             for section in &job.sections[current_section..job.sections.len()] {
-                let LayoutSection {
-                    leading_space,
-                    byte_range: section_range,
-                    format,
-                } = section;
+                let LayoutSection { leading_space, byte_range: section_range, format } = section;
 
                 // `start` and `end` are the byte range of the current paragraph.
                 // How does the current section overlap with the paragraph range?
@@ -198,22 +156,11 @@ impl GalleyCache {
                     break; // Haven't reached this one yet.
                 } else {
                     // Section range overlaps with paragraph range
-                    debug_assert!(
-                        section_range.start <= section_range.end,
-                        "Bad byte_range: {section_range:?}"
-                    );
-                    let new_range = section_range.start.saturating_sub(start)
-                        ..(section_range.end.min(ByteIndex(end))).saturating_sub(start);
-                    debug_assert!(
-                        new_range.start <= new_range.end,
-                        "Bad new section range: {new_range:?}"
-                    );
+                    debug_assert!(section_range.start <= section_range.end, "Bad byte_range: {section_range:?}");
+                    let new_range = section_range.start.saturating_sub(start)..(section_range.end.min(ByteIndex(end))).saturating_sub(start);
+                    debug_assert!(new_range.start <= new_range.end, "Bad new section range: {new_range:?}");
                     paragraph_job.sections.push(LayoutSection {
-                        leading_space: if ByteIndex(start) <= section_range.start {
-                            *leading_space
-                        } else {
-                            0.0
-                        },
+                        leading_space: if ByteIndex(start) <= section_range.start { *leading_space } else { 0.0 },
                         byte_range: new_range,
                         format: format.clone(),
                     });
@@ -221,8 +168,7 @@ impl GalleyCache {
             }
 
             // TODO(emilk): we could lay out each paragraph in parallel to get a nice speedup on multicore machines.
-            let (hash, galley) =
-                self.layout_internal(fonts, paragraph_job, pixels_per_point, false);
+            let (hash, galley) = self.layout_internal(fonts, paragraph_job, pixels_per_point, false);
             child_hashes.push(hash);
 
             // This will prevent us from invalidating cache entries unnecessarily:
@@ -279,31 +225,11 @@ mod tests {
 
     fn jobs() -> Vec<LayoutJob> {
         vec![
-            LayoutJob::simple(
-                String::default(),
-                FontId::new(14.0, FontFamily::Monospace),
-                Color32::WHITE,
-                f32::INFINITY,
-            ),
-            LayoutJob::simple(
-                "ends with newlines\n\n".to_owned(),
-                FontId::new(14.0, FontFamily::Monospace),
-                Color32::WHITE,
-                f32::INFINITY,
-            ),
-            LayoutJob::simple(
-                "Simple test.".to_owned(),
-                FontId::new(14.0, FontFamily::Monospace),
-                Color32::WHITE,
-                f32::INFINITY,
-            ),
+            LayoutJob::simple(String::default(), FontId::new(14.0, FontFamily::Monospace), Color32::WHITE, f32::INFINITY),
+            LayoutJob::simple("ends with newlines\n\n".to_owned(), FontId::new(14.0, FontFamily::Monospace), Color32::WHITE, f32::INFINITY),
+            LayoutJob::simple("Simple test.".to_owned(), FontId::new(14.0, FontFamily::Monospace), Color32::WHITE, f32::INFINITY),
             {
-                let mut job = LayoutJob::simple(
-                    "hi".to_owned(),
-                    FontId::default(),
-                    Color32::WHITE,
-                    f32::INFINITY,
-                );
+                let mut job = LayoutJob::simple("hi".to_owned(), FontId::default(), Color32::WHITE, f32::INFINITY);
                 job.append("\n", 0.0, TextFormat::default());
                 job.append("\n", 0.0, TextFormat::default());
                 job.append("world", 0.0, TextFormat::default());
@@ -327,10 +253,7 @@ mod tests {
                 50.0,
             ),
             {
-                let mut job = LayoutJob {
-                    first_row_min_height: 20.0,
-                    ..Default::default()
-                };
+                let mut job = LayoutJob { first_row_min_height: 20.0, ..Default::default() };
                 job.append(
                     "1st paragraph has underline and strikethrough, and has some non-ASCII characters:\n ÅÄÖ.",
                     0.0,
@@ -344,19 +267,12 @@ mod tests {
                 job.append(
                     "2nd paragraph has some leading space.\n",
                     16.0,
-                    TextFormat {
-                        font_id: FontId::new(14.0, FontFamily::Proportional),
-                        ..Default::default()
-                    },
+                    TextFormat { font_id: FontId::new(14.0, FontFamily::Proportional), ..Default::default() },
                 );
                 job.append(
                     "3rd paragraph is kind of boring, but has italics.\nAnd a newline",
                     0.0,
-                    TextFormat {
-                        font_id: FontId::new(10.0, FontFamily::Proportional),
-                        italics: true,
-                        ..Default::default()
-                    },
+                    TextFormat { font_id: FontId::new(10.0, FontFamily::Proportional), italics: true, ..Default::default() },
                 );
 
                 job
@@ -383,19 +299,9 @@ mod tests {
                         job.halign = halign;
                         job.justify = justify;
 
-                        let whole = GalleyCache::default().layout(
-                            &mut fonts,
-                            pixels_per_point,
-                            job.clone(),
-                            false,
-                        );
+                        let whole = GalleyCache::default().layout(&mut fonts, pixels_per_point, job.clone(), false);
 
-                        let split = GalleyCache::default().layout(
-                            &mut fonts,
-                            pixels_per_point,
-                            job.clone(),
-                            true,
-                        );
+                        let split = GalleyCache::default().layout(&mut fonts, pixels_per_point, job.clone(), true);
 
                         for (i, row) in whole.rows.iter().enumerate() {
                             println!(
@@ -442,8 +348,7 @@ mod tests {
 
                         job.round_output_to_gui = round_output_to_gui;
 
-                        let galley_wrapped =
-                            layout(&mut fonts, pixels_per_point, job.clone().into());
+                        let galley_wrapped = layout(&mut fonts, pixels_per_point, job.clone().into());
 
                         job.wrap = TextWrapping::no_max_width();
 

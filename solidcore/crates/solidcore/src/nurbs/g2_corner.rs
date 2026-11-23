@@ -12,7 +12,8 @@
 //! conditions of G2, so that at `n = 4` the patches are the bicubic B-spline's own.
 //!
 //! Upstream: none (not upstream; solidcore-native). The construction is the paper's; this file
-//! follows `SurfaceCraft`'s `surfaces/g2_corner.rs` (the same owner's), with the solve changed as
+//! follows `SurfaceCraft`'s `surfaces/g2_corner.rs` (this fork's author's own earlier app, not
+//! d0pawlus/SurfaceCraft), with the solve changed as
 //! under Deviations.
 //!
 //! | Rust                         | Upstream |

@@ -111,10 +111,7 @@ impl Ui {
 
         let layer_id = layer_id.unwrap_or_else(LayerId::background);
 
-        debug_assert!(
-            id_source.is_none(),
-            "Top-level Ui:s should not have an UiBuilder::id_source"
-        );
+        debug_assert!(id_source.is_none(), "Top-level Ui:s should not have an UiBuilder::id_source");
 
         let max_rect = max_rect.unwrap_or_else(|| ctx.content_rect());
         let clip_rect = max_rect;
@@ -155,8 +152,7 @@ impl Ui {
         };
 
         if let Some(accessibility_parent) = accessibility_parent {
-            ui.ctx()
-                .register_accesskit_parent(ui.unique_id, accessibility_parent);
+            ui.ctx().register_accesskit_parent(ui.unique_id, accessibility_parent);
         }
 
         // Register in the widget stack early, to ensure we are behind all widgets we contain:
@@ -183,11 +179,7 @@ impl Ui {
             ui.set_invisible();
         }
 
-        let role = accessibility_role.unwrap_or_else(|| {
-            ui.stack
-                .kind()
-                .map_or(accesskit::Role::GenericContainer, UiKind::accesskit_role)
-        });
+        let role = accessibility_role.unwrap_or_else(|| ui.stack.kind().map_or(accesskit::Role::GenericContainer, UiKind::accesskit_role));
         ui.ctx().accesskit_node_builder(ui.unique_id, |node| {
             node.set_role(role);
             if let Some(label) = accessibility_label {
@@ -294,10 +286,7 @@ impl Ui {
             child_ui.disable();
         }
 
-        child_ui.ctx().register_accesskit_parent(
-            child_ui.unique_id,
-            accessibility_parent.unwrap_or(self.unique_id),
-        );
+        child_ui.ctx().register_accesskit_parent(child_ui.unique_id, accessibility_parent.unwrap_or(self.unique_id));
 
         // Register in the widget stack early, to ensure we are behind all widgets we contain:
         let start_rect = Rect::NOTHING; // This will be overwritten when `remember_min_rect` is called
@@ -316,20 +305,13 @@ impl Ui {
             Default::default(),
         );
 
-        let role = accessibility_role.unwrap_or_else(|| {
-            child_ui
-                .stack
-                .kind()
-                .map_or(accesskit::Role::GenericContainer, UiKind::accesskit_role)
+        let role = accessibility_role.unwrap_or_else(|| child_ui.stack.kind().map_or(accesskit::Role::GenericContainer, UiKind::accesskit_role));
+        child_ui.ctx().accesskit_node_builder(child_ui.unique_id, |node| {
+            node.set_role(role);
+            if let Some(label) = accessibility_label {
+                node.set_label(label);
+            }
         });
-        child_ui
-            .ctx()
-            .accesskit_node_builder(child_ui.unique_id, |node| {
-                node.set_role(role);
-                if let Some(label) = accessibility_label {
-                    node.set_label(label);
-                }
-            });
 
         child_ui
     }
@@ -523,8 +505,7 @@ impl Ui {
     pub fn disable(&mut self) {
         self.enabled = false;
         if self.is_visible() {
-            self.painter
-                .multiply_opacity(self.visuals().disabled_alpha());
+            self.painter.multiply_opacity(self.visuals().disabled_alpha());
         }
     }
 
@@ -616,27 +597,17 @@ impl Ui {
         if let Some(wrap_mode) = self.style.wrap_mode {
             wrap_mode
         } else if let Some(grid) = self.placer.grid() {
-            if grid.wrap_text() {
-                TextWrapMode::Wrap
-            } else {
-                TextWrapMode::Extend
-            }
+            if grid.wrap_text() { TextWrapMode::Wrap } else { TextWrapMode::Extend }
         } else {
             let layout = self.layout();
-            if layout.is_vertical() || layout.is_horizontal() && layout.main_wrap() {
-                TextWrapMode::Wrap
-            } else {
-                TextWrapMode::Extend
-            }
+            if layout.is_vertical() || layout.is_horizontal() && layout.main_wrap() { TextWrapMode::Wrap } else { TextWrapMode::Extend }
         }
     }
 
     /// How to vertically align text
     #[inline]
     pub fn text_valign(&self) -> Align {
-        self.style()
-            .override_text_valign
-            .unwrap_or_else(|| self.layout().vertical_align())
+        self.style().override_text_valign.unwrap_or_else(|| self.layout().vertical_align())
     }
 
     /// Create a painter for a sub-region of this Ui.
@@ -763,20 +734,14 @@ impl Ui {
     /// Set the minimum width of the ui.
     /// This can't shrink the ui, only make it larger.
     pub fn set_min_width(&mut self, width: f32) {
-        debug_assert!(
-            0.0 <= width,
-            "Negative width makes no sense, but got: {width}"
-        );
+        debug_assert!(0.0 <= width, "Negative width makes no sense, but got: {width}");
         self.placer.set_min_width(width);
     }
 
     /// Set the minimum height of the ui.
     /// This can't shrink the ui, only make it larger.
     pub fn set_min_height(&mut self, height: f32) {
-        debug_assert!(
-            0.0 <= height,
-            "Negative height makes no sense, but got: {height}"
-        );
+        debug_assert!(0.0 <= height, "Negative height makes no sense, but got: {height}");
         self.placer.set_min_height(height);
     }
 
@@ -946,13 +911,7 @@ impl Ui {
     }
 
     /// Check for clicks, drags and/or hover on a specific region of this [`Ui`].
-    pub fn interact_opt(
-        &self,
-        rect: Rect,
-        id: Id,
-        sense: Sense,
-        options: crate::InteractOptions,
-    ) -> Response {
+    pub fn interact_opt(&self, rect: Rect, id: Id, sense: Sense, options: crate::InteractOptions) -> Response {
         self.ctx().register_accesskit_parent(id, self.unique_id);
 
         self.ctx().create_widget(
@@ -978,11 +937,7 @@ impl Ui {
     /// whose label is painted apart from its value widgets (a property row, a form), this names
     /// the value widgets without each editor having to know the row label.
     /// Costs a lookup per widget added, and nothing when accessibility is off.
-    pub fn label_inputs_by<R>(
-        &mut self,
-        label_id: Id,
-        add_contents: impl FnOnce(&mut Self) -> R,
-    ) -> R {
+    pub fn label_inputs_by<R>(&mut self, label_id: Id, add_contents: impl FnOnce(&mut Self) -> R) -> R {
         let first = self.widget_count_in_layer();
         let result = add_contents(self);
         for id in self.unnamed_inputs_added_since(first) {
@@ -1001,17 +956,12 @@ impl Ui {
     /// An input widget is one whose role passes [`crate::accessibility::is_input`]. This is for
     /// widgets that cannot be named where they are built, e.g. inside a third-party crate.
     /// Costs a lookup per widget added, and nothing when accessibility is off.
-    pub fn name_inputs<R>(
-        &mut self,
-        name: impl Into<String>,
-        add_contents: impl FnOnce(&mut Self) -> R,
-    ) -> R {
+    pub fn name_inputs<R>(&mut self, name: impl Into<String>, add_contents: impl FnOnce(&mut Self) -> R) -> R {
         let first = self.widget_count_in_layer();
         let result = add_contents(self);
         let name = name.into();
         for id in self.unnamed_inputs_added_since(first) {
-            self.ctx()
-                .accesskit_node_builder(id, |node| node.set_label(name.clone()));
+            self.ctx().accesskit_node_builder(id, |node| node.set_label(name.clone()));
         }
         result
     }
@@ -1019,8 +969,7 @@ impl Ui {
     /// How many widgets this pass has registered on this `Ui`'s layer so far.
     fn widget_count_in_layer(&self) -> usize {
         let layer_id = self.layer_id();
-        self.ctx()
-            .viewport(|viewport| viewport.this_pass.widgets.get_layer(layer_id).count())
+        self.ctx().viewport(|viewport| viewport.this_pass.widgets.get_layer(layer_id).count())
     }
 
     /// The input widgets registered on this `Ui`'s layer from index `first` on that have
@@ -1044,9 +993,7 @@ impl Ui {
                     let unnamed = crate::accessibility::is_input(node.role())
                         && node.label().is_none_or(|label| label.trim().is_empty())
                         && node.labelled_by().is_empty()
-                        && node
-                            .placeholder()
-                            .is_none_or(|placeholder| placeholder.trim().is_empty());
+                        && node.placeholder().is_none_or(|placeholder| placeholder.trim().is_empty());
                     unnamed.then_some(rect.id)
                 })
                 .collect()
@@ -1067,18 +1014,9 @@ impl Ui {
         // Ui::remember_min_rect is called or the Ui is dropped.
         let mut response = self
             .ctx()
-            .viewport(|viewport| {
-                viewport
-                    .prev_pass
-                    .widgets
-                    .get(self.unique_id)
-                    .or_else(|| viewport.this_pass.widgets.get(self.unique_id))
-                    .copied()
-            })
+            .viewport(|viewport| viewport.prev_pass.widgets.get(self.unique_id).or_else(|| viewport.this_pass.widgets.get(self.unique_id)).copied())
             .map(|widget_rect| self.ctx().get_response(widget_rect))
-            .expect(
-                "Since we always call Context::create_widget in Ui::new, this should never be None",
-            );
+            .expect("Since we always call Context::create_widget in Ui::new, this should never be None");
         if self.should_close() {
             response.set_close();
         }
@@ -1099,11 +1037,7 @@ impl Ui {
         let mut response = self.ctx().create_widget(
             WidgetRect {
                 id: self.unique_id,
-                parent_id: self
-                    .stack
-                    .parent
-                    .as_ref()
-                    .map_or(self.unique_id, |p| p.unique_id),
+                parent_id: self.stack.parent.as_ref().map_or(self.unique_id, |p| p.unique_id),
                 layer_id: self.layer_id(),
                 rect: self.min_rect(),
                 interact_rect: self.clip_rect().intersect(self.min_rect()),
@@ -1127,8 +1061,7 @@ impl Ui {
     ///
     /// However, this will NOT check if any other _widget_ in the same layer is covering this widget. For that, use [`Response::contains_pointer`] instead.
     pub fn rect_contains_pointer(&self, rect: Rect) -> bool {
-        self.ctx()
-            .rect_contains_pointer(self.layer_id(), self.clip_rect().intersect(rect))
+        self.ctx().rect_contains_pointer(self.layer_id(), self.clip_rect().intersect(rect))
     }
 
     /// Is the pointer (mouse/touch) above the current [`Ui`]?
@@ -1163,12 +1096,7 @@ impl Ui {
     /// - [`Ui::should_close`]
     /// - [`Ui::will_parent_close`]
     pub fn close(&self) {
-        let tag = self.stack.iter().find_map(|stack| {
-            stack
-                .info
-                .tags
-                .get_downcast::<ClosableTag>(ClosableTag::NAME)
-        });
+        let tag = self.stack.iter().find_map(|stack| stack.info.tags.get_downcast::<ClosableTag>(ClosableTag::NAME));
         if let Some(tag) = tag {
             tag.set_close();
         } else {
@@ -1191,12 +1119,7 @@ impl Ui {
             .stack
             .iter()
             .filter(|stack| stack.info.kind == Some(ui_kind))
-            .find_map(|stack| {
-                stack
-                    .info
-                    .tags
-                    .get_downcast::<ClosableTag>(ClosableTag::NAME)
-            });
+            .find_map(|stack| stack.info.tags.get_downcast::<ClosableTag>(ClosableTag::NAME));
         if let Some(tag) = tag {
             tag.set_close();
         } else {
@@ -1215,11 +1138,7 @@ impl Ui {
     /// - [`Ui::close_kind`]
     /// - [`Response::should_close`]
     pub fn should_close(&self) -> bool {
-        self.stack
-            .info
-            .tags
-            .get_downcast(ClosableTag::NAME)
-            .is_some_and(|tag: &ClosableTag| tag.should_close())
+        self.stack.info.tags.get_downcast(ClosableTag::NAME).is_some_and(|tag: &ClosableTag| tag.should_close())
     }
 
     /// Will this [`Ui`] or any of its parents close this frame?
@@ -1229,13 +1148,7 @@ impl Ui {
     /// - [`Ui::close`]
     /// - [`Ui::close_kind`]
     pub fn will_parent_close(&self) -> bool {
-        self.stack.iter().any(|stack| {
-            stack
-                .info
-                .tags
-                .get_downcast::<ClosableTag>(ClosableTag::NAME)
-                .is_some_and(|tag| tag.should_close())
-        })
+        self.stack.iter().any(|stack| stack.info.tags.get_downcast::<ClosableTag>(ClosableTag::NAME).is_some_and(|tag| tag.should_close()))
     }
 }
 
@@ -1275,9 +1188,7 @@ impl Ui {
     /// the widget will react to interactions outside the returned [`Rect`].
     pub fn allocate_exact_size(&mut self, desired_size: Vec2, sense: Sense) -> (Rect, Response) {
         let response = self.allocate_response(desired_size, sense);
-        let rect = self
-            .placer
-            .align_size_within_rect(desired_size, response.rect);
+        let rect = self.placer.align_size_within_rect(desired_size, response.rect);
         (rect, response)
     }
 
@@ -1325,12 +1236,7 @@ impl Ui {
             let debug_expand_height = self.style().debug.show_expand_height;
 
             if (debug_expand_width && too_wide) || (debug_expand_height && too_high) {
-                self.painter.rect_stroke(
-                    rect,
-                    0.0,
-                    (1.0, Color32::LIGHT_BLUE),
-                    crate::StrokeKind::Inside,
-                );
+                self.painter.rect_stroke(rect, 0.0, (1.0, Color32::LIGHT_BLUE), crate::StrokeKind::Inside);
 
                 let stroke = crate::Stroke::new(2.5, Color32::from_rgb(200, 0, 0));
                 let paint_line_seg = |a, b| self.painter().line_segment([a, b], stroke);
@@ -1338,10 +1244,7 @@ impl Ui {
                 if debug_expand_width && too_wide {
                     paint_line_seg(rect.left_top(), rect.left_bottom());
                     paint_line_seg(rect.left_center(), rect.right_center());
-                    paint_line_seg(
-                        pos2(rect.left() + original_available.x, rect.top()),
-                        pos2(rect.left() + original_available.x, rect.bottom()),
-                    );
+                    paint_line_seg(pos2(rect.left() + original_available.x, rect.top()), pos2(rect.left() + original_available.x, rect.bottom()));
                     paint_line_seg(rect.right_top(), rect.right_bottom());
                 }
 
@@ -1367,8 +1270,7 @@ impl Ui {
         debug_assert!(!frame_rect.any_nan(), "frame_rect is nan in allocate_space");
         let widget_rect = self.placer.justify_and_align(frame_rect, desired_size);
 
-        self.placer
-            .advance_after_rects(frame_rect, widget_rect, item_spacing);
+        self.placer.advance_after_rects(frame_rect, widget_rect, item_spacing);
 
         register_rect(self, widget_rect);
 
@@ -1431,11 +1333,7 @@ impl Ui {
     /// When finished, the amount of space actually used (`min_rect`) will be allocated.
     /// So you can request a lot of space and then use less.
     #[inline]
-    pub fn allocate_ui<R>(
-        &mut self,
-        desired_size: Vec2,
-        add_contents: impl FnOnce(&mut Self) -> R,
-    ) -> InnerResponse<R> {
+    pub fn allocate_ui<R>(&mut self, desired_size: Vec2, add_contents: impl FnOnce(&mut Self) -> R) -> InnerResponse<R> {
         self.allocate_ui_with_layout(desired_size, *self.layout(), add_contents)
     }
 
@@ -1444,12 +1342,7 @@ impl Ui {
     /// When finished, the amount of space actually used (`min_rect`) will be allocated.
     /// So you can request a lot of space and then use less.
     #[inline]
-    pub fn allocate_ui_with_layout<R>(
-        &mut self,
-        desired_size: Vec2,
-        layout: Layout,
-        add_contents: impl FnOnce(&mut Self) -> R,
-    ) -> InnerResponse<R> {
+    pub fn allocate_ui_with_layout<R>(&mut self, desired_size: Vec2, layout: Layout, add_contents: impl FnOnce(&mut Self) -> R) -> InnerResponse<R> {
         self.allocate_ui_with_layout_dyn(desired_size, layout, Box::new(add_contents))
     }
 
@@ -1459,17 +1352,11 @@ impl Ui {
         layout: Layout,
         add_contents: Box<dyn FnOnce(&mut Self) -> R + 'c>,
     ) -> InnerResponse<R> {
-        debug_assert!(
-            desired_size.x >= 0.0 && desired_size.y >= 0.0,
-            "Negative desired size: {desired_size:?}"
-        );
+        debug_assert!(desired_size.x >= 0.0 && desired_size.y >= 0.0, "Negative desired size: {desired_size:?}");
         let item_spacing = self.spacing().item_spacing;
         let frame_rect = self.placer.next_space(desired_size, item_spacing);
         let child_rect = self.placer.justify_and_align(frame_rect, desired_size);
-        self.scope_dyn(
-            UiBuilder::new().max_rect(child_rect).layout(layout),
-            add_contents,
-        )
+        self.scope_dyn(UiBuilder::new().max_rect(child_rect).layout(layout), add_contents)
     }
 
     /// Convenience function to get a region to paint on.
@@ -1527,17 +1414,11 @@ impl Ui {
     }
 
     /// Same as [`Self::scroll_to_rect`], but allows you to specify the [`style::ScrollAnimation`].
-    pub fn scroll_to_rect_animation(
-        &self,
-        rect: Rect,
-        align: Option<Align>,
-        animation: style::ScrollAnimation,
-    ) {
+    pub fn scroll_to_rect_animation(&self, rect: Rect, align: Option<Align>, animation: style::ScrollAnimation) {
         for d in 0..2 {
             let range = Rangef::new(rect.min[d], rect.max[d]);
             self.ctx().pass_state_mut(|state| {
-                state.scroll_target[d] =
-                    Some(pass_state::ScrollTarget::new(range, align, animation));
+                state.scroll_target[d] = Some(pass_state::ScrollTarget::new(range, align, animation));
             });
         }
     }
@@ -1569,17 +1450,12 @@ impl Ui {
     }
 
     /// Same as [`Self::scroll_to_cursor`], but allows you to specify the [`style::ScrollAnimation`].
-    pub fn scroll_to_cursor_animation(
-        &self,
-        align: Option<Align>,
-        animation: style::ScrollAnimation,
-    ) {
+    pub fn scroll_to_cursor_animation(&self, align: Option<Align>, animation: style::ScrollAnimation) {
         let target = self.next_widget_position();
         for d in 0..2 {
             let target = Rangef::point(target[d]);
             self.ctx().pass_state_mut(|state| {
-                state.scroll_target[d] =
-                    Some(pass_state::ScrollTarget::new(target, align, animation));
+                state.scroll_target[d] = Some(pass_state::ScrollTarget::new(target, align, animation));
             });
         }
     }
@@ -1667,8 +1543,7 @@ impl Ui {
         //
         // Make sure we keep the same main direction since it changes e.g. how text is wrapped:
         let layout = Layout::centered_and_justified(self.layout().main_dir());
-        self.allocate_ui_with_layout(max_size.into(), layout, |ui| ui.add(widget))
-            .inner
+        self.allocate_ui_with_layout(max_size.into(), layout, |ui| ui.add(widget)).inner
     }
 
     /// Add a [`Widget`] to this [`Ui`] at a specific location (manual layout) without
@@ -1676,12 +1551,7 @@ impl Ui {
     ///
     /// See also [`Self::add`] and [`Self::add_sized`] and [`Self::put`].
     pub fn place(&mut self, max_rect: Rect, widget: impl Widget) -> Response {
-        self.new_child(
-            UiBuilder::new()
-                .max_rect(max_rect)
-                .layout(Layout::centered_and_justified(Direction::TopDown)),
-        )
-        .add(widget)
+        self.new_child(UiBuilder::new().max_rect(max_rect).layout(Layout::centered_and_justified(Direction::TopDown))).add(widget)
     }
 
     /// Add a [`Widget`] to this [`Ui`] at a specific location (manual layout) and advance the
@@ -1689,13 +1559,7 @@ impl Ui {
     ///
     /// See also [`Self::add`], [`Self::add_sized`], and [`Self::place`].
     pub fn put(&mut self, max_rect: Rect, widget: impl Widget) -> Response {
-        self.scope_builder(
-            UiBuilder::new()
-                .max_rect(max_rect)
-                .layout(Layout::centered_and_justified(Direction::TopDown)),
-            |ui| ui.add(widget),
-        )
-        .inner
+        self.scope_builder(UiBuilder::new().max_rect(max_rect).layout(Layout::centered_and_justified(Direction::TopDown)), |ui| ui.add(widget)).inner
     }
 
     /// Add a single [`Widget`] that is possibly disabled, i.e. greyed out and non-interactive.
@@ -1742,11 +1606,7 @@ impl Ui {
     /// });
     /// # });
     /// ```
-    pub fn add_enabled_ui<R>(
-        &mut self,
-        enabled: bool,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> InnerResponse<R> {
+    pub fn add_enabled_ui<R>(&mut self, enabled: bool, add_contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
         self.scope(|ui| {
             if !enabled {
                 ui.disable();
@@ -1825,11 +1685,7 @@ impl Ui {
     /// Show colored text.
     ///
     /// Shortcut for `ui.label(RichText::new(text).color(color))`
-    pub fn colored_label(
-        &mut self,
-        color: impl Into<Color32>,
-        text: impl Into<RichText>,
-    ) -> Response {
+    pub fn colored_label(&mut self, color: impl Into<Color32>, text: impl Into<RichText>) -> Response {
         Label::new(text.into().color(color)).ui(self)
     }
 
@@ -1924,20 +1780,14 @@ impl Ui {
     /// No newlines (`\n`) allowed. Pressing enter key will result in the [`TextEdit`] losing focus (`response.lost_focus`).
     ///
     /// See also [`TextEdit`].
-    pub fn text_edit_singleline<S: widgets::text_edit::TextBuffer>(
-        &mut self,
-        text: &mut S,
-    ) -> Response {
+    pub fn text_edit_singleline<S: widgets::text_edit::TextBuffer>(&mut self, text: &mut S) -> Response {
         TextEdit::singleline(text).ui(self)
     }
 
     /// A [`TextEdit`] for multiple lines. Pressing enter key will create a new line.
     ///
     /// See also [`TextEdit`].
-    pub fn text_edit_multiline<S: widgets::text_edit::TextBuffer>(
-        &mut self,
-        text: &mut S,
-    ) -> Response {
+    pub fn text_edit_multiline<S: widgets::text_edit::TextBuffer>(&mut self, text: &mut S) -> Response {
         TextEdit::multiline(text).ui(self)
     }
 
@@ -2033,12 +1883,7 @@ impl Ui {
     /// }
     /// # });
     /// ```
-    pub fn radio_value<'a, Value: PartialEq>(
-        &mut self,
-        current_value: &mut Value,
-        alternative: Value,
-        atoms: impl IntoAtoms<'a>,
-    ) -> Response {
+    pub fn radio_value<'a, Value: PartialEq>(&mut self, current_value: &mut Value, alternative: Value, atoms: impl IntoAtoms<'a>) -> Response {
         let mut response = self.radio(*current_value == alternative, atoms);
         if response.clicked() && *current_value != alternative {
             *current_value = alternative;
@@ -2061,12 +1906,7 @@ impl Ui {
     /// Example: `ui.selectable_value(&mut my_enum, Enum::Alternative, "Alternative")`.
     ///
     /// See also [`Button::selectable`] and [`Self::toggle_value`].
-    pub fn selectable_value<'a, Value: PartialEq>(
-        &mut self,
-        current_value: &mut Value,
-        selected_value: Value,
-        text: impl IntoAtoms<'a>,
-    ) -> Response {
+    pub fn selectable_value<'a, Value: PartialEq>(&mut self, current_value: &mut Value, selected_value: Value, text: impl IntoAtoms<'a>) -> Response {
         let mut response = self.selectable_label(*current_value == selected_value, text);
         if response.clicked() && *current_value != selected_value {
             *current_value = selected_value;
@@ -2116,8 +1956,7 @@ impl Ui {
         let mut response = self.add(DragValue::new(&mut taus).speed(0.01).suffix("τ"));
 
         if self.style().explanation_tooltips {
-            response =
-                response.on_hover_text("1τ = one turn, 0.5τ = half a turn, etc. 0.25τ = 90°");
+            response = response.on_hover_text("1τ = one turn, 0.5τ = half a turn, etc. 0.25τ = 90°");
         }
 
         // only touch `*radians` if we actually changed the value
@@ -2211,8 +2050,7 @@ impl Ui {
     /// If unsure what "premultiplied alpha" is, then this is probably the function you want to use.
     pub fn color_edit_button_srgba_unmultiplied(&mut self, srgba: &mut [u8; 4]) -> Response {
         let mut rgba = Rgba::from_srgba_unmultiplied(srgba[0], srgba[1], srgba[2], srgba[3]);
-        let response =
-            color_picker::color_edit_button_rgba(self, &mut rgba, color_picker::Alpha::OnlyBlend);
+        let response = color_picker::color_edit_button_rgba(self, &mut rgba, color_picker::Alpha::OnlyBlend);
         *srgba = rgba.to_srgba_unmultiplied();
         response
     }
@@ -2222,17 +2060,8 @@ impl Ui {
     /// If the user clicks the button, a full color picker is shown.
     /// The given color is in linear RGBA space with premultiplied alpha
     pub fn color_edit_button_rgba_premultiplied(&mut self, rgba_premul: &mut [f32; 4]) -> Response {
-        let mut rgba = Rgba::from_rgba_premultiplied(
-            rgba_premul[0],
-            rgba_premul[1],
-            rgba_premul[2],
-            rgba_premul[3],
-        );
-        let response = color_picker::color_edit_button_rgba(
-            self,
-            &mut rgba,
-            color_picker::Alpha::BlendOrAdditive,
-        );
+        let mut rgba = Rgba::from_rgba_premultiplied(rgba_premul[0], rgba_premul[1], rgba_premul[2], rgba_premul[3]);
+        let response = color_picker::color_edit_button_rgba(self, &mut rgba, color_picker::Alpha::BlendOrAdditive);
         *rgba_premul = rgba.to_array();
         response
     }
@@ -2243,14 +2072,8 @@ impl Ui {
     /// The given color is in linear RGBA space without premultiplied alpha.
     /// If unsure, what "premultiplied alpha" is, then this is probably the function you want to use.
     pub fn color_edit_button_rgba_unmultiplied(&mut self, rgba_unmul: &mut [f32; 4]) -> Response {
-        let mut rgba = Rgba::from_rgba_unmultiplied(
-            rgba_unmul[0],
-            rgba_unmul[1],
-            rgba_unmul[2],
-            rgba_unmul[3],
-        );
-        let response =
-            color_picker::color_edit_button_rgba(self, &mut rgba, color_picker::Alpha::OnlyBlend);
+        let mut rgba = Rgba::from_rgba_unmultiplied(rgba_unmul[0], rgba_unmul[1], rgba_unmul[2], rgba_unmul[3]);
+        let response = color_picker::color_edit_button_rgba(self, &mut rgba, color_picker::Alpha::OnlyBlend);
         *rgba_unmul = rgba.to_rgba_unmultiplied();
         response
     }
@@ -2286,11 +2109,7 @@ impl Ui {
     /// }
     /// # });
     /// ```
-    pub fn push_id<R>(
-        &mut self,
-        id_salt: impl AsIdSalt,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> InnerResponse<R> {
+    pub fn push_id<R>(&mut self, id_salt: impl AsIdSalt, add_contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
         self.scope_dyn(UiBuilder::new().id_salt(id_salt), Box::new(add_contents))
     }
 
@@ -2316,20 +2135,12 @@ impl Ui {
     /// In contrast to [`Self::new_child`], this allocates the space used by the child.
     ///
     /// See also [`Self::scope`] and [`Self::scope_dyn`].
-    pub fn scope_builder<R>(
-        &mut self,
-        ui_builder: UiBuilder,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> InnerResponse<R> {
+    pub fn scope_builder<R>(&mut self, ui_builder: UiBuilder, add_contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
         self.scope_dyn(ui_builder, Box::new(add_contents))
     }
 
     /// [`Self::scope_builder`] but with dynamic dispatch.
-    pub fn scope_dyn<'c, R>(
-        &mut self,
-        ui_builder: UiBuilder,
-        add_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>,
-    ) -> InnerResponse<R> {
+    pub fn scope_dyn<'c, R>(&mut self, ui_builder: UiBuilder, add_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>) -> InnerResponse<R> {
         let next_auto_id_salt = self.next_auto_id_salt;
         let mut child_ui = self.new_child(ui_builder);
         self.next_auto_id_salt = next_auto_id_salt; // HACK: we want `scope` to only increment this once, so that `ui.scope` is equivalent to `ui.allocate_space`.
@@ -2343,11 +2154,7 @@ impl Ui {
     ///
     /// The name must be unique within the current parent,
     /// or you need to use [`CollapsingHeader::id_salt`].
-    pub fn collapsing<R>(
-        &mut self,
-        heading: impl Into<WidgetText>,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> CollapsingResponse<R> {
+    pub fn collapsing<R>(&mut self, heading: impl Into<WidgetText>, add_contents: impl FnOnce(&mut Ui) -> R) -> CollapsingResponse<R> {
         CollapsingHeader::new(heading).show(self, add_contents)
     }
 
@@ -2356,24 +2163,12 @@ impl Ui {
     /// The `id_salt` here be anything at all.
     // TODO(emilk): remove `id_salt` argument?
     #[inline]
-    pub fn indent<R>(
-        &mut self,
-        id_salt: impl AsIdSalt,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> InnerResponse<R> {
+    pub fn indent<R>(&mut self, id_salt: impl AsIdSalt, add_contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
         self.indent_dyn(id_salt, Box::new(add_contents))
     }
 
-    fn indent_dyn<'c, R>(
-        &mut self,
-        id_salt: impl AsIdSalt,
-        add_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>,
-    ) -> InnerResponse<R> {
-        assert!(
-            self.layout().is_vertical(),
-            "You can only indent vertical layouts, found {:?}",
-            self.layout()
-        );
+    fn indent_dyn<'c, R>(&mut self, id_salt: impl AsIdSalt, add_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>) -> InnerResponse<R> {
+        assert!(self.layout().is_vertical(), "You can only indent vertical layouts, found {:?}", self.layout());
 
         let indent = self.spacing().indent;
         let mut child_rect = self.placer.available_rect_before_wrap();
@@ -2402,8 +2197,7 @@ impl Ui {
             if end_with_horizontal_line {
                 let fudge = 2.0; // looks nicer with button rounding in collapsing headers
                 let right_bottom = pos2(child_ui.min_rect().right() - fudge, left_bottom.y);
-                self.painter
-                    .line_segment([left_bottom, right_bottom], stroke);
+                self.painter.line_segment([left_bottom, right_bottom], stroke);
             }
         }
 
@@ -2442,32 +2236,18 @@ impl Ui {
     }
 
     /// Like [`Self::horizontal`], but allocates the full vertical height and then centers elements vertically.
-    pub fn horizontal_centered<R>(
-        &mut self,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> InnerResponse<R> {
+    pub fn horizontal_centered<R>(&mut self, add_contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
         let initial_size = self.available_size_before_wrap();
-        let layout = if self.placer.prefer_right_to_left() {
-            Layout::right_to_left(Align::Center)
-        } else {
-            Layout::left_to_right(Align::Center)
-        }
-        .with_cross_align(Align::Center);
+        let layout = if self.placer.prefer_right_to_left() { Layout::right_to_left(Align::Center) } else { Layout::left_to_right(Align::Center) }
+            .with_cross_align(Align::Center);
         self.allocate_ui_with_layout_dyn(initial_size, layout, Box::new(add_contents))
     }
 
     /// Like [`Self::horizontal`], but aligns content with top.
-    pub fn horizontal_top<R>(
-        &mut self,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> InnerResponse<R> {
+    pub fn horizontal_top<R>(&mut self, add_contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
         let initial_size = self.available_size_before_wrap();
-        let layout = if self.placer.prefer_right_to_left() {
-            Layout::right_to_left(Align::Center)
-        } else {
-            Layout::left_to_right(Align::Center)
-        }
-        .with_cross_align(Align::Min);
+        let layout = if self.placer.prefer_right_to_left() { Layout::right_to_left(Align::Center) } else { Layout::left_to_right(Align::Center) }
+            .with_cross_align(Align::Min);
         self.allocate_ui_with_layout_dyn(initial_size, layout, Box::new(add_contents))
     }
 
@@ -2486,29 +2266,18 @@ impl Ui {
     /// It also contains the [`Rect`] used by the horizontal layout.
     ///
     /// See also [`Self::with_layout`] for more options.
-    pub fn horizontal_wrapped<R>(
-        &mut self,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> InnerResponse<R> {
+    pub fn horizontal_wrapped<R>(&mut self, add_contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
         self.horizontal_with_main_wrap_dyn(true, Box::new(add_contents))
     }
 
-    fn horizontal_with_main_wrap_dyn<'c, R>(
-        &mut self,
-        main_wrap: bool,
-        add_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>,
-    ) -> InnerResponse<R> {
+    fn horizontal_with_main_wrap_dyn<'c, R>(&mut self, main_wrap: bool, add_contents: Box<dyn FnOnce(&mut Ui) -> R + 'c>) -> InnerResponse<R> {
         let initial_size = vec2(
             self.available_size_before_wrap().x,
             self.spacing().interact_size.y, // Assume there will be something interactive on the horizontal layout
         );
 
-        let layout = if self.placer.prefer_right_to_left() {
-            Layout::right_to_left(Align::Center)
-        } else {
-            Layout::left_to_right(Align::Center)
-        }
-        .with_main_wrap(main_wrap);
+        let layout = if self.placer.prefer_right_to_left() { Layout::right_to_left(Align::Center) } else { Layout::left_to_right(Align::Center) }
+            .with_main_wrap(main_wrap);
 
         self.allocate_ui_with_layout_dyn(initial_size, layout, add_contents)
     }
@@ -2528,10 +2297,7 @@ impl Ui {
     /// See also [`Self::with_layout`] for more options.
     #[inline]
     pub fn vertical<R>(&mut self, add_contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
-        self.scope_builder(
-            UiBuilder::new().layout(Layout::top_down(Align::Min)),
-            add_contents,
-        )
+        self.scope_builder(UiBuilder::new().layout(Layout::top_down(Align::Min)), add_contents)
     }
 
     /// Start a ui with vertical layout.
@@ -2546,14 +2312,8 @@ impl Ui {
     /// # });
     /// ```
     #[inline]
-    pub fn vertical_centered<R>(
-        &mut self,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> InnerResponse<R> {
-        self.scope_builder(
-            UiBuilder::new().layout(Layout::top_down(Align::Center)),
-            add_contents,
-        )
+    pub fn vertical_centered<R>(&mut self, add_contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
+        self.scope_builder(UiBuilder::new().layout(Layout::top_down(Align::Center)), add_contents)
     }
 
     /// Start a ui with vertical layout.
@@ -2567,14 +2327,8 @@ impl Ui {
     /// });
     /// # });
     /// ```
-    pub fn vertical_centered_justified<R>(
-        &mut self,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> InnerResponse<R> {
-        self.scope_builder(
-            UiBuilder::new().layout(Layout::top_down(Align::Center).with_cross_justify(true)),
-            add_contents,
-        )
+    pub fn vertical_centered_justified<R>(&mut self, add_contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
+        self.scope_builder(UiBuilder::new().layout(Layout::top_down(Align::Center).with_cross_justify(true)), add_contents)
     }
 
     /// The new layout will take up all available space.
@@ -2592,25 +2346,15 @@ impl Ui {
     ///
     /// See also the helpers [`Self::horizontal`], [`Self::vertical`], etc.
     #[inline]
-    pub fn with_layout<R>(
-        &mut self,
-        layout: Layout,
-        add_contents: impl FnOnce(&mut Self) -> R,
-    ) -> InnerResponse<R> {
+    pub fn with_layout<R>(&mut self, layout: Layout, add_contents: impl FnOnce(&mut Self) -> R) -> InnerResponse<R> {
         self.scope_builder(UiBuilder::new().layout(layout), add_contents)
     }
 
     /// This will make the next added widget centered and justified in the available space.
     ///
     /// Only one widget may be added to the inner `Ui`!
-    pub fn centered_and_justified<R>(
-        &mut self,
-        add_contents: impl FnOnce(&mut Self) -> R,
-    ) -> InnerResponse<R> {
-        self.scope_builder(
-            UiBuilder::new().layout(Layout::centered_and_justified(Direction::TopDown)),
-            add_contents,
-        )
+    pub fn centered_and_justified<R>(&mut self, add_contents: impl FnOnce(&mut Self) -> R) -> InnerResponse<R> {
+        self.scope_builder(UiBuilder::new().layout(Layout::centered_and_justified(Direction::TopDown)), add_contents)
     }
 
     pub(crate) fn set_grid(&mut self, grid: grid::GridLayout) {
@@ -2628,8 +2372,7 @@ impl Ui {
     /// Move to the next row in a grid layout or wrapping layout.
     /// Otherwise does nothing.
     pub fn end_row(&mut self) {
-        self.placer
-            .end_row(self.spacing().item_spacing, &self.painter().clone());
+        self.placer.end_row(self.spacing().item_spacing, &self.painter().clone());
     }
 
     /// Set row height in horizontal wrapping layout.
@@ -2648,19 +2391,11 @@ impl Ui {
     /// # });
     /// ```
     #[inline]
-    pub fn columns<R>(
-        &mut self,
-        num_columns: usize,
-        add_contents: impl FnOnce(&mut [Self]) -> R,
-    ) -> R {
+    pub fn columns<R>(&mut self, num_columns: usize, add_contents: impl FnOnce(&mut [Self]) -> R) -> R {
         self.columns_dyn(num_columns, Box::new(add_contents))
     }
 
-    fn columns_dyn<'c, R>(
-        &mut self,
-        num_columns: usize,
-        add_contents: Box<dyn FnOnce(&mut [Self]) -> R + 'c>,
-    ) -> R {
+    fn columns_dyn<'c, R>(&mut self, num_columns: usize, add_contents: Box<dyn FnOnce(&mut [Self]) -> R + 'c>) -> R {
         // TODO(emilk): ensure there is space
         let spacing = self.spacing().item_spacing.x;
         let total_spacing = spacing * (num_columns as f32 - 1.0);
@@ -2670,15 +2405,8 @@ impl Ui {
         let mut columns: Vec<Self> = (0..num_columns)
             .map(|col_idx| {
                 let pos = top_left + vec2((col_idx as f32) * (column_width + spacing), 0.0);
-                let child_rect = Rect::from_min_max(
-                    pos,
-                    pos2(pos.x + column_width, self.max_rect().right_bottom().y),
-                );
-                let mut column_ui = self.new_child(
-                    UiBuilder::new()
-                        .max_rect(child_rect)
-                        .layout(Layout::top_down_justified(Align::LEFT)),
-                );
+                let child_rect = Rect::from_min_max(pos, pos2(pos.x + column_width, self.max_rect().right_bottom().y));
+                let mut column_ui = self.new_child(UiBuilder::new().max_rect(child_rect).layout(Layout::top_down_justified(Align::LEFT)));
                 column_ui.set_width(column_width);
                 column_ui
             })
@@ -2715,10 +2443,7 @@ impl Ui {
     /// # });
     /// ```
     #[inline]
-    pub fn columns_const<const NUM_COL: usize, R>(
-        &mut self,
-        add_contents: impl FnOnce(&mut [Self; NUM_COL]) -> R,
-    ) -> R {
+    pub fn columns_const<const NUM_COL: usize, R>(&mut self, add_contents: impl FnOnce(&mut [Self; NUM_COL]) -> R) -> R {
         // TODO(emilk): ensure there is space
         let spacing = self.spacing().item_spacing.x;
         let total_spacing = spacing * (NUM_COL as f32 - 1.0);
@@ -2727,15 +2452,8 @@ impl Ui {
 
         let mut columns = core::array::from_fn(|col_idx| {
             let pos = top_left + vec2((col_idx as f32) * (column_width + spacing), 0.0);
-            let child_rect = Rect::from_min_max(
-                pos,
-                pos2(pos.x + column_width, self.max_rect().right_bottom().y),
-            );
-            let mut column_ui = self.new_child(
-                UiBuilder::new()
-                    .max_rect(child_rect)
-                    .layout(Layout::top_down_justified(Align::LEFT)),
-            );
+            let child_rect = Rect::from_min_max(pos, pos2(pos.x + column_width, self.max_rect().right_bottom().y));
+            let mut column_ui = self.new_child(UiBuilder::new().max_rect(child_rect).layout(Layout::top_down_justified(Align::LEFT)));
             column_ui.set_width(column_width);
             column_ui
         });
@@ -2764,12 +2482,7 @@ impl Ui {
     /// In contrast to [`Response::dnd_set_drag_payload`],
     /// this function will paint the widget at the mouse cursor while the user is dragging.
     #[doc(alias = "drag and drop")]
-    pub fn dnd_drag_source<Payload, R>(
-        &mut self,
-        id: Id,
-        payload: Payload,
-        add_contents: impl FnOnce(&mut Self) -> R,
-    ) -> InnerResponse<R>
+    pub fn dnd_drag_source<Payload, R>(&mut self, id: Id, payload: Payload, add_contents: impl FnOnce(&mut Self) -> R) -> InnerResponse<R>
     where
         Payload: Any + Send + Sync,
     {
@@ -2780,8 +2493,7 @@ impl Ui {
 
             // Paint the body to a new layer:
             let layer_id = LayerId::new(Order::Tooltip, id);
-            let InnerResponse { inner, response } =
-                self.scope_builder(UiBuilder::new().layer_id(layer_id), add_contents);
+            let InnerResponse { inner, response } = self.scope_builder(UiBuilder::new().layer_id(layer_id), add_contents);
 
             // Now we move the visuals of the body to where the mouse is.
             // Normally you need to decide a location for a widget first,
@@ -2792,8 +2504,7 @@ impl Ui {
 
             if let Some(pointer_pos) = self.ctx().pointer_interact_pos() {
                 let delta = pointer_pos - response.rect.center();
-                self.ctx()
-                    .transform_layer_shapes(layer_id, emath::TSTransform::from_translation(delta));
+                self.ctx().transform_layer_shapes(layer_id, emath::TSTransform::from_translation(delta));
             }
 
             InnerResponse::new(inner, response)
@@ -2801,9 +2512,7 @@ impl Ui {
             let InnerResponse { inner, response } = self.scope(add_contents);
 
             // Check for drags:
-            let dnd_response = self
-                .interact(response.rect, id, Sense::drag())
-                .on_hover_cursor(CursorIcon::Grab);
+            let dnd_response = self.interact(response.rect, id, Sense::drag()).on_hover_cursor(CursorIcon::Grab);
 
             InnerResponse::new(inner, dnd_response | response)
         }
@@ -2823,24 +2532,18 @@ impl Ui {
     ///
     /// During a drag, the fill and stroke are always replaced with the drop target visuals.
     #[doc(alias = "drag and drop")]
-    pub fn dnd_drop_zone<Payload, R>(
-        &mut self,
-        frame: Frame,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> (InnerResponse<R>, Option<Arc<Payload>>)
+    pub fn dnd_drop_zone<Payload, R>(&mut self, frame: Frame, add_contents: impl FnOnce(&mut Ui) -> R) -> (InnerResponse<R>, Option<Arc<Payload>>)
     where
         Payload: Any + Send + Sync,
     {
         let is_anything_being_dragged = DragAndDrop::has_any_payload(self.ctx());
-        let can_accept_what_is_being_dragged =
-            DragAndDrop::has_payload_of_type::<Payload>(self.ctx());
+        let can_accept_what_is_being_dragged = DragAndDrop::has_payload_of_type::<Payload>(self.ctx());
 
         let mut frame = frame.begin(self);
         let inner = add_contents(&mut frame.content_ui);
         let response = frame.allocate_space(self);
 
-        let has_own_styling =
-            frame.frame.fill != Color32::TRANSPARENT || !frame.frame.stroke.is_empty();
+        let has_own_styling = frame.frame.fill != Color32::TRANSPARENT || !frame.frame.stroke.is_empty();
 
         if is_anything_being_dragged || !has_own_styling {
             // NOTE: we use `response.contains_pointer` here instead of `hovered`, because
@@ -2877,15 +2580,8 @@ impl Ui {
     ///
     /// Check out [`Context::set_transform_layer`] for a persistent transform that also affects
     /// inputs.
-    pub fn with_visual_transform<R>(
-        &mut self,
-        transform: emath::TSTransform,
-        add_contents: impl FnOnce(&mut Self) -> R,
-    ) -> InnerResponse<R> {
-        let start_idx = self.ctx().graphics(|gx| {
-            gx.get(self.layer_id())
-                .map_or(crate::layers::ShapeIdx(0), |l| l.next_idx())
-        });
+    pub fn with_visual_transform<R>(&mut self, transform: emath::TSTransform, add_contents: impl FnOnce(&mut Self) -> R) -> InnerResponse<R> {
+        let start_idx = self.ctx().graphics(|gx| gx.get(self.layer_id()).map_or(crate::layers::ShapeIdx(0), |l| l.next_idx()));
 
         let r = self.scope_dyn(UiBuilder::new(), Box::new(add_contents));
 
@@ -2919,11 +2615,7 @@ impl Ui {
     /// ```
     ///
     /// See also: [`Self::close`] and [`Response::context_menu`].
-    pub fn menu_button<'a, R>(
-        &mut self,
-        atoms: impl IntoAtoms<'a>,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> InnerResponse<Option<R>> {
+    pub fn menu_button<'a, R>(&mut self, atoms: impl IntoAtoms<'a>, add_contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<Option<R>> {
         let (response, inner) = if menu::is_in_menu(self) {
             menu::SubMenuButton::new(atoms).ui(self, add_contents)
         } else {
@@ -2953,16 +2645,9 @@ impl Ui {
     ///
     /// See also: [`Self::close`] and [`Response::context_menu`].
     #[inline]
-    pub fn menu_image_button<'a, R>(
-        &mut self,
-        image: impl Into<Image<'a>>,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> InnerResponse<Option<R>> {
+    pub fn menu_image_button<'a, R>(&mut self, image: impl Into<Image<'a>>, add_contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<Option<R>> {
         let (response, inner) = if menu::is_in_menu(self) {
-            menu::SubMenuButton::from_button(
-                Button::image(image).right_text(menu::SubMenuButton::arrow_atom(None)),
-            )
-            .ui(self, add_contents)
+            menu::SubMenuButton::from_button(Button::image(image).right_text(menu::SubMenuButton::arrow_atom(None))).ui(self, add_contents)
         } else {
             menu::MenuButton::from_button(Button::image(image)).ui(self, add_contents)
         };
@@ -2997,14 +2682,10 @@ impl Ui {
         add_contents: impl FnOnce(&mut Ui) -> R,
     ) -> InnerResponse<Option<R>> {
         let (response, inner) = if menu::is_in_menu(self) {
-            menu::SubMenuButton::from_button(
-                Button::image_and_text(image, title)
-                    .right_text(menu::SubMenuButton::arrow_atom(None)),
-            )
-            .ui(self, add_contents)
-        } else {
-            menu::MenuButton::from_button(Button::image_and_text(image, title))
+            menu::SubMenuButton::from_button(Button::image_and_text(image, title).right_text(menu::SubMenuButton::arrow_atom(None)))
                 .ui(self, add_contents)
+        } else {
+            menu::MenuButton::from_button(Button::image_and_text(image, title)).ui(self, add_contents)
         };
         InnerResponse::new(inner.map(|i| i.inner), response)
     }
@@ -3044,8 +2725,7 @@ fn register_rect(ui: &Ui, rect: Rect) {
             let color = Color32::ORANGE;
             let font_id = TextStyle::Monospace.resolve(ui.style());
             ui.painter().line_segment([p0, p1], (1.0, color));
-            ui.painter()
-                .text(p0, Align2::LEFT_TOP, "Unaligned", font_id, color);
+            ui.painter().text(p0, Align2::LEFT_TOP, "Unaligned", font_id, color);
         };
 
         if rect.left() != rect.left().round_ui() {
@@ -3062,8 +2742,7 @@ fn register_rect(ui: &Ui, rect: Rect) {
         }
     }
 
-    let show_callstacks = debug.debug_on_hover
-        || debug.debug_on_hover_with_all_modifiers && ui.input(|i| i.modifiers.all());
+    let show_callstacks = debug.debug_on_hover || debug.debug_on_hover_with_all_modifiers && ui.input(|i| i.modifiers.all());
 
     if !show_callstacks {
         return;
@@ -3082,11 +2761,7 @@ fn register_rect(ui: &Ui, rect: Rect) {
     let callstack = String::default();
 
     // We only show one debug rectangle, or things get confusing:
-    let debug_rect = pass_state::DebugRect {
-        rect,
-        callstack,
-        is_clicking,
-    };
+    let debug_rect = pass_state::DebugRect { rect, callstack, is_clicking };
 
     let mut kept = false;
     ui.ctx().pass_state_mut(|fs| {

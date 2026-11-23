@@ -5,15 +5,8 @@ use eframe::egui;
 
 fn main() -> eframe::Result {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
-        ..Default::default()
-    };
-    eframe::run_native(
-        "Confirm exit",
-        options,
-        Box::new(|_cc| Ok(Box::<MyApp>::default())),
-    )
+    let options = eframe::NativeOptions { viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]), ..Default::default() };
+    eframe::run_native("Confirm exit", options, Box::new(|_cc| Ok(Box::<MyApp>::default())))
 }
 
 #[derive(Default)]
@@ -38,23 +31,20 @@ impl eframe::App for MyApp {
         }
 
         if self.show_confirmation_dialog {
-            egui::Window::new("Do you want to quit?")
-                .collapsible(false)
-                .resizable(false)
-                .show(ui.ctx(), |ui| {
-                    ui.horizontal(|ui| {
-                        if ui.button("No").clicked() {
-                            self.show_confirmation_dialog = false;
-                            self.allowed_to_close = false;
-                        }
+            egui::Window::new("Do you want to quit?").collapsible(false).resizable(false).show(ui.ctx(), |ui| {
+                ui.horizontal(|ui| {
+                    if ui.button("No").clicked() {
+                        self.show_confirmation_dialog = false;
+                        self.allowed_to_close = false;
+                    }
 
-                        if ui.button("Yes").clicked() {
-                            self.show_confirmation_dialog = false;
-                            self.allowed_to_close = true;
-                            ui.send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
-                    });
+                    if ui.button("Yes").clicked() {
+                        self.show_confirmation_dialog = false;
+                        self.allowed_to_close = true;
+                        ui.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
                 });
+            });
         }
     }
 }

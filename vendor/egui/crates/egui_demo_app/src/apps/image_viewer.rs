@@ -53,8 +53,7 @@ impl crate::DemoApp for ImageViewer {
         egui::Panel::top("url bar").show(ui, |ui| {
             ui.horizontal_centered(|ui| {
                 let label = ui.label("URI:");
-                ui.text_edit_singleline(&mut self.uri_edit_text)
-                    .labelled_by(label.id);
+                ui.text_edit_singleline(&mut self.uri_edit_text).labelled_by(label.id);
                 if ui.small_button("✔️").clicked() {
                     ui.ctx().forget_image(&self.current_uri);
                     self.uri_edit_text = self.uri_edit_text.trim().to_owned();
@@ -87,8 +86,7 @@ impl crate::DemoApp for ImageViewer {
             match (had_rotation, has_rotation) {
                 (true, false) => self.image_options.rotation = None,
                 (false, true) => {
-                    self.image_options.rotation =
-                        Some((Rot2::from_angle(0.0), Vec2::new(0.5, 0.5)));
+                    self.image_options.rotation = Some((Rot2::from_angle(0.0), Vec2::new(0.5, 0.5)));
                 }
                 (true, true) | (false, false) => {}
             }
@@ -120,37 +118,19 @@ impl crate::DemoApp for ImageViewer {
 
             // fit
             ui.add_space(10.0);
-            ui.label(
-                "The chosen fit will determine how the image tries to fill the available space",
-            );
-            egui::ComboBox::from_label("Fit")
-                .selected_text(self.chosen_fit.as_str())
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(
-                        &mut self.chosen_fit,
-                        ChosenFit::ExactSize,
-                        ChosenFit::ExactSize.as_str(),
-                    );
-                    ui.selectable_value(
-                        &mut self.chosen_fit,
-                        ChosenFit::Fraction,
-                        ChosenFit::Fraction.as_str(),
-                    );
-                    ui.selectable_value(
-                        &mut self.chosen_fit,
-                        ChosenFit::OriginalSize,
-                        ChosenFit::OriginalSize.as_str(),
-                    );
-                });
+            ui.label("The chosen fit will determine how the image tries to fill the available space");
+            egui::ComboBox::from_label("Fit").selected_text(self.chosen_fit.as_str()).show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.chosen_fit, ChosenFit::ExactSize, ChosenFit::ExactSize.as_str());
+                ui.selectable_value(&mut self.chosen_fit, ChosenFit::Fraction, ChosenFit::Fraction.as_str());
+                ui.selectable_value(&mut self.chosen_fit, ChosenFit::OriginalSize, ChosenFit::OriginalSize.as_str());
+            });
 
             match self.chosen_fit {
                 ChosenFit::ExactSize => {
                     if !matches!(self.fit, ImageFit::Exact(_)) {
                         self.fit = ImageFit::Exact(Vec2::splat(128.0));
                     }
-                    let ImageFit::Exact(size) = &mut self.fit else {
-                        unreachable!()
-                    };
+                    let ImageFit::Exact(size) = &mut self.fit else { unreachable!() };
                     ui.add(Slider::new(&mut size.x, 0.0..=2048.0).text("width"));
                     ui.add(Slider::new(&mut size.y, 0.0..=2048.0).text("height"));
                 }
@@ -158,9 +138,7 @@ impl crate::DemoApp for ImageViewer {
                     if !matches!(self.fit, ImageFit::Fraction(_)) {
                         self.fit = ImageFit::Fraction(Vec2::splat(1.0));
                     }
-                    let ImageFit::Fraction(fract) = &mut self.fit else {
-                        unreachable!()
-                    };
+                    let ImageFit::Fraction(fract) = &mut self.fit else { unreachable!() };
                     ui.add(Slider::new(&mut fract.x, 0.0..=1.0).text("width"));
                     ui.add(Slider::new(&mut fract.y, 0.0..=1.0).text("height"));
                 }
@@ -168,9 +146,7 @@ impl crate::DemoApp for ImageViewer {
                     if !matches!(self.fit, ImageFit::Original { .. }) {
                         self.fit = ImageFit::Original { scale: 1.0 };
                     }
-                    let ImageFit::Original { scale } = &mut self.fit else {
-                        unreachable!()
-                    };
+                    let ImageFit::Original { scale } = &mut self.fit else { unreachable!() };
                     ui.add(Slider::new(scale, 0.1..=4.0).text("scale"));
                 }
             }
@@ -189,8 +165,7 @@ impl crate::DemoApp for ImageViewer {
             // alt text
             ui.add_space(5.0);
             let label = ui.label("Alt text");
-            ui.text_edit_singleline(&mut self.alt_text)
-                .labelled_by(label.id);
+            ui.text_edit_singleline(&mut self.alt_text).labelled_by(label.id);
 
             // forget all images
             if ui.button("Forget all images").clicked() {
@@ -204,12 +179,7 @@ impl crate::DemoApp for ImageViewer {
                 image = image.uv(self.image_options.uv);
                 image = image.bg_fill(self.image_options.bg_fill);
                 image = image.tint(self.image_options.tint);
-                let (angle, origin) = self
-                    .image_options
-                    .rotation
-                    .map_or((0.0, Vec2::splat(0.5)), |(rot, origin)| {
-                        (rot.angle(), origin)
-                    });
+                let (angle, origin) = self.image_options.rotation.map_or((0.0, Vec2::splat(0.5)), |(rot, origin)| (rot.angle(), origin));
                 image = image.rotate(angle, origin);
                 match self.fit {
                     ImageFit::Original { scale } => image = image.fit_to_original_size(scale),

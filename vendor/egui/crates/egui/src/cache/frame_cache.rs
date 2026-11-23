@@ -26,11 +26,7 @@ where
 
 impl<Value, Computer> FrameCache<Value, Computer> {
     pub fn new(computer: Computer) -> Self {
-        Self {
-            generation: 0,
-            computer,
-            cache: Default::default(),
-        }
+        Self { generation: 0, computer, cache: Default::default() }
     }
 
     /// Must be called once per frame to clear the cache.
@@ -68,9 +64,7 @@ impl<Value, Computer> FrameCache<Value, Computer> {
     }
 }
 
-impl<Value: 'static + Send + Sync, Computer: 'static + Send + Sync> CacheTrait
-    for FrameCache<Value, Computer>
-{
+impl<Value: 'static + Send + Sync, Computer: 'static + Send + Sync> CacheTrait for FrameCache<Value, Computer> {
     fn update(&mut self) {
         self.evict_cache();
     }

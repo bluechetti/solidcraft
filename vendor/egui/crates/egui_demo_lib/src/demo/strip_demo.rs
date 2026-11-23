@@ -12,15 +12,10 @@ impl crate::Demo for StripDemo {
     }
 
     fn show(&mut self, ui: &mut egui::Ui, open: &mut bool) {
-        egui::Window::new(self.name())
-            .open(open)
-            .resizable(true)
-            .default_width(400.0)
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| {
-                use crate::View as _;
-                self.ui(ui);
-            });
+        egui::Window::new(self.name()).open(open).resizable(true).default_width(400.0).constrain_to(ui.available_rect_before_wrap()).show(ui, |ui| {
+            use crate::View as _;
+            self.ui(ui);
+        });
     }
 }
 
@@ -42,32 +37,20 @@ impl crate::View for StripDemo {
             .size(Size::exact(body_text_size))
             .vertical(|mut strip| {
                 strip.cell(|ui| {
-                    ui.painter().rect_filled(
-                        ui.available_rect_before_wrap(),
-                        0.0,
-                        faded_color(Color32::BLUE),
-                    );
+                    ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, faded_color(Color32::BLUE));
                     ui.label("width: 100%\nheight: 50px");
                 });
                 strip.strip(|builder| {
                     builder.sizes(Size::remainder(), 2).horizontal(|mut strip| {
                         strip.cell(|ui| {
-                            ui.painter().rect_filled(
-                                ui.available_rect_before_wrap(),
-                                0.0,
-                                faded_color(Color32::RED),
-                            );
+                            ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, faded_color(Color32::RED));
                             ui.label("width: 50%\nheight: remaining");
                         });
                         strip.strip(|builder| {
                             builder.sizes(Size::remainder(), 3).vertical(|mut strip| {
                                 strip.empty();
                                 strip.cell(|ui| {
-                                    ui.painter().rect_filled(
-                                        ui.available_rect_before_wrap(),
-                                        0.0,
-                                        faded_color(Color32::YELLOW),
-                                    );
+                                    ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, faded_color(Color32::YELLOW));
                                     ui.label("width: 50%\nheight: 1/3 of the red region");
                                 });
                                 strip.empty();
@@ -76,40 +59,25 @@ impl crate::View for StripDemo {
                     });
                 });
                 strip.strip(|builder| {
-                    builder
-                        .size(Size::remainder())
-                        .size(Size::exact(120.0))
-                        .size(Size::remainder())
-                        .size(Size::exact(70.0))
-                        .horizontal(|mut strip| {
+                    builder.size(Size::remainder()).size(Size::exact(120.0)).size(Size::remainder()).size(Size::exact(70.0)).horizontal(
+                        |mut strip| {
                             strip.empty();
                             strip.strip(|builder| {
-                                builder
-                                    .size(Size::remainder())
-                                    .size(Size::exact(60.0))
-                                    .size(Size::remainder())
-                                    .vertical(|mut strip| {
-                                        strip.empty();
-                                        strip.cell(|ui| {
-                                            ui.painter().rect_filled(
-                                                ui.available_rect_before_wrap(),
-                                                0.0,
-                                                faded_color(Color32::GOLD),
-                                            );
-                                            ui.label("width: 120px\nheight: 60px");
-                                        });
+                                builder.size(Size::remainder()).size(Size::exact(60.0)).size(Size::remainder()).vertical(|mut strip| {
+                                    strip.empty();
+                                    strip.cell(|ui| {
+                                        ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, faded_color(Color32::GOLD));
+                                        ui.label("width: 120px\nheight: 60px");
                                     });
+                                });
                             });
                             strip.empty();
                             strip.cell(|ui| {
-                                ui.painter().rect_filled(
-                                    ui.available_rect_before_wrap(),
-                                    0.0,
-                                    faded_color(Color32::GREEN),
-                                );
+                                ui.painter().rect_filled(ui.available_rect_before_wrap(), 0.0, faded_color(Color32::GREEN));
                                 ui.label("width: 70px\n\nheight: 50%, but at least 60px.");
                             });
-                        });
+                        },
+                    );
                 });
                 strip.cell(|ui| {
                     ui.vertical_centered(|ui| {

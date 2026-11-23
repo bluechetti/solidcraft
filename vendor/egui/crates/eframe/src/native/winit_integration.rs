@@ -21,12 +21,7 @@ pub fn is_invisible_or_minimized(window: &Window) -> bool {
 /// override: `default` unless the app says otherwise. Only the root viewport's events are put
 /// to the app (`viewport`, `None` when the window is unknown): the event carries no window, so
 /// the app would read another window's pointer position as the root's.
-pub(crate) fn repaint_for_event(
-    app: &mut dyn crate::App,
-    event: &winit::event::WindowEvent,
-    default: bool,
-    viewport: Option<ViewportId>,
-) -> bool {
+pub(crate) fn repaint_for_event(app: &mut dyn crate::App, event: &winit::event::WindowEvent, default: bool, viewport: Option<ViewportId>) -> bool {
     if viewport != Some(ViewportId::ROOT) {
         return default;
     }
@@ -74,35 +69,14 @@ mod tests {
     fn the_app_can_override_the_repaint_an_event_asks_for() {
         let window_event = winit::event::WindowEvent::Focused(true);
         let device_event = winit::event::DeviceEvent::MouseMotion { delta: (1.0, 2.0) };
-        for (answer, default, expected) in [
-            (None, true, true),
-            (None, false, false),
-            (Some(false), true, false),
-            (Some(true), false, true),
-        ] {
+        for (answer, default, expected) in [(None, true, true), (None, false, false), (Some(false), true, false), (Some(true), false, true)] {
             let mut app = TestApp { answer };
             let root = Some(ViewportId::ROOT);
-            assert_eq!(
-                repaint_for_event(&mut app, &window_event, default, root),
-                expected,
-                "{answer:?} over {default} for a window event"
-            );
-            assert_eq!(
-                repaint_for_device_event(&mut app, &device_event, default, root),
-                expected,
-                "{answer:?} over {default} for a device event"
-            );
+            assert_eq!(repaint_for_event(&mut app, &window_event, default, root), expected, "{answer:?} over {default} for a window event");
+            assert_eq!(repaint_for_device_event(&mut app, &device_event, default, root), expected, "{answer:?} over {default} for a device event");
             for other in [Some(ViewportId::from_hash_of("panel")), None] {
-                assert_eq!(
-                    repaint_for_event(&mut app, &window_event, default, other),
-                    default,
-                    "{answer:?} for a window event of {other:?}"
-                );
-                assert_eq!(
-                    repaint_for_device_event(&mut app, &device_event, default, other),
-                    default,
-                    "{answer:?} for a device event of {other:?}"
-                );
+                assert_eq!(repaint_for_event(&mut app, &window_event, default, other), default, "{answer:?} for a window event of {other:?}");
+                assert_eq!(repaint_for_device_event(&mut app, &device_event, default, other), default, "{answer:?} for a device event of {other:?}");
             }
         }
     }
@@ -137,13 +111,8 @@ pub enum PassMode {
 pub fn create_egui_context(storage: Option<&dyn crate::Storage>) -> egui::Context {
     profiling::function_scope!();
 
-    pub const IS_DESKTOP: bool = cfg!(any(
-        target_os = "freebsd",
-        target_os = "linux",
-        target_os = "macos",
-        target_os = "openbsd",
-        target_os = "windows",
-    ));
+    pub const IS_DESKTOP: bool =
+        cfg!(any(target_os = "freebsd", target_os = "linux", target_os = "macos", target_os = "openbsd", target_os = "windows",));
 
     let egui_ctx = egui::Context::default();
 
@@ -201,12 +170,7 @@ pub trait WinitApp {
 
     fn save_and_destroy(&mut self);
 
-    fn run_ui_and_paint(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        window_id: WindowId,
-        mode: PassMode,
-    ) -> crate::Result<EventResult>;
+    fn run_ui_and_paint(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, mode: PassMode) -> crate::Result<EventResult>;
 
     fn suspended(&mut self, event_loop: &ActiveEventLoop) -> crate::Result<EventResult>;
 
@@ -219,12 +183,7 @@ pub trait WinitApp {
         event: winit::event::DeviceEvent,
     ) -> crate::Result<EventResult>;
 
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        window_id: WindowId,
-        event: winit::event::WindowEvent,
-    ) -> crate::Result<EventResult>;
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, window_id: WindowId, event: winit::event::WindowEvent) -> crate::Result<EventResult>;
 
     #[cfg(feature = "accesskit")]
     fn on_accesskit_event(&mut self, event: accesskit_winit::Event) -> crate::Result<EventResult>;

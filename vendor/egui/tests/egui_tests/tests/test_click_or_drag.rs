@@ -28,39 +28,24 @@ fn widget_id() -> Id {
 /// `max_click_duration` within a couple of frames, turning every press into a
 /// drag before the distance rules get a chance to matter.
 fn harness_with_widget(size: Vec2, with_background: bool) -> Harness<'static, ()> {
-    Harness::builder()
-        .with_step_dt(1.0 / 60.0)
-        .with_size(Vec2::new(300.0, 200.0))
-        .build_ui(move |ui| {
-            if with_background {
-                // Allocated first, so it ends up _behind_ the widget under test.
-                ui.interact(
-                    ui.max_rect(),
-                    Id::unique("background"),
-                    Sense::click_and_drag(),
-                );
-            }
-            let rect = Rect::from_min_size(ui.max_rect().min, size);
-            ui.interact(rect, widget_id(), Sense::click_and_drag());
-        })
+    Harness::builder().with_step_dt(1.0 / 60.0).with_size(Vec2::new(300.0, 200.0)).build_ui(move |ui| {
+        if with_background {
+            // Allocated first, so it ends up _behind_ the widget under test.
+            ui.interact(ui.max_rect(), Id::unique("background"), Sense::click_and_drag());
+        }
+        let rect = Rect::from_min_size(ui.max_rect().min, size);
+        ui.interact(rect, widget_id(), Sense::click_and_drag());
+    })
 }
 
 /// The widget's `(hovered, dragged)` as of the last completed pass.
 fn widget_state(harness: &Harness<'_, ()>) -> (bool, bool) {
-    harness
-        .ctx
-        .read_response(widget_id())
-        .map(|r| (r.hovered(), r.dragged()))
-        .expect("the widget should have been registered")
+    harness.ctx.read_response(widget_id()).map(|r| (r.hovered(), r.dragged())).expect("the widget should have been registered")
 }
 
 /// The widget's rect as of the last completed pass.
 fn widget_rect(harness: &Harness<'_, ()>) -> Rect {
-    harness
-        .ctx
-        .read_response(widget_id())
-        .expect("the widget should have been registered")
-        .rect
+    harness.ctx.read_response(widget_id()).expect("the widget should have been registered").rect
 }
 
 /// Press the primary button at `pos`, without releasing it.
@@ -107,10 +92,7 @@ fn press_that_leaves_a_thin_widget_becomes_a_drag_immediately() {
         );
     }
 
-    assert!(
-        saw_drag,
-        "leaving the widget should have started a drag, even within max_click_dist"
-    );
+    assert!(saw_drag, "leaving the widget should have started a drag, even within max_click_dist");
 }
 
 /// While the pointer is still on the widget, a press stays undecided: hovered,
@@ -129,10 +111,7 @@ fn press_inside_a_wide_widget_stays_undecided() {
 
     let (hovered, dragged) = widget_state(&harness);
     assert!(hovered, "the pointer is still over the widget");
-    assert!(
-        !dragged,
-        "a small twitch inside the widget should still be able to become a click"
-    );
+    assert!(!dragged, "a small twitch inside the widget should still be able to become a click");
 }
 
 /// A press just _outside_ the widget still hits it, thanks to `interact_radius`.
@@ -149,14 +128,8 @@ fn press_just_outside_a_widget_stays_undecided() {
     press_at(&mut harness, grab);
 
     let (hovered, dragged) = widget_state(&harness);
-    assert!(
-        hovered,
-        "a press within interact_radius still hits the widget"
-    );
-    assert!(
-        !dragged,
-        "the pointer never moved, so this press must still be able to become a click"
-    );
+    assert!(hovered, "a press within interact_radius still hits the widget");
+    assert!(!dragged, "the pointer never moved, so this press must still be able to become a click");
 }
 
 /// A press and release inside the widget is still a click, not a drag.
@@ -169,21 +142,10 @@ fn click_inside_a_widget_still_clicks() {
     press_at(&mut harness, grab);
     // Release without `drop_at`, which would also fire `PointerGone` and so
     // discard the click.
-    harness.event(egui::Event::PointerButton {
-        pos: grab,
-        button: egui::PointerButton::Primary,
-        pressed: false,
-        modifiers: egui::Modifiers::NONE,
-    });
+    harness.event(egui::Event::PointerButton { pos: grab, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
     harness.step();
 
-    assert!(
-        harness
-            .ctx
-            .read_response(widget_id())
-            .is_some_and(|r| r.clicked()),
-        "press and release without moving should be a click"
-    );
+    assert!(harness.ctx.read_response(widget_id()).is_some_and(|r| r.clicked()), "press and release without moving should be a click");
 }
 
 /// A button inside a draggable row takes the click hit, because it is on top.
@@ -194,41 +156,24 @@ fn press_on_a_button_inside_a_draggable_row_stays_undecided() {
     let button_id = Id::unique("button");
     let button_size = Vec2::new(50.0, 20.0);
 
-    let mut harness = Harness::builder()
-        .with_step_dt(1.0 / 60.0)
-        .with_size(Vec2::new(300.0, 200.0))
-        .build_ui(move |ui| {
-            let row_rect = ui.max_rect();
-            ui.interact(row_rect, widget_id(), Sense::click_and_drag());
+    let mut harness = Harness::builder().with_step_dt(1.0 / 60.0).with_size(Vec2::new(300.0, 200.0)).build_ui(move |ui| {
+        let row_rect = ui.max_rect();
+        ui.interact(row_rect, widget_id(), Sense::click_and_drag());
 
-            // Allocated after the row, so it ends up _on top_ of it.
-            let button_rect = Rect::from_min_size(row_rect.min, button_size);
-            ui.interact(button_rect, button_id, Sense::click());
-        });
+        // Allocated after the row, so it ends up _on top_ of it.
+        let button_rect = Rect::from_min_size(row_rect.min, button_size);
+        ui.interact(button_rect, button_id, Sense::click());
+    });
     harness.step();
 
     let grab = Rect::from_min_size(widget_rect(&harness).min, button_size).center();
     press_at(&mut harness, grab);
 
     let (_hovered, dragged) = widget_state(&harness);
-    assert!(
-        !dragged,
-        "pressing a button inside the row must not start dragging the row"
-    );
+    assert!(!dragged, "pressing a button inside the row must not start dragging the row");
 
-    harness.event(egui::Event::PointerButton {
-        pos: grab,
-        button: egui::PointerButton::Primary,
-        pressed: false,
-        modifiers: egui::Modifiers::NONE,
-    });
+    harness.event(egui::Event::PointerButton { pos: grab, button: egui::PointerButton::Primary, pressed: false, modifiers: egui::Modifiers::NONE });
     harness.step();
 
-    assert!(
-        harness
-            .ctx
-            .read_response(button_id)
-            .is_some_and(|r| r.clicked()),
-        "the button should have been clicked"
-    );
+    assert!(harness.ctx.read_response(button_id).is_some_and(|r| r.clicked()), "the button should have been clicked");
 }

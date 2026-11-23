@@ -8,9 +8,7 @@ use std::sync::Arc;
 ///
 /// Automatically implemented for all types that satisfy the bounds
 /// (including [`winit::event_loop::OwnedDisplayHandle`]).
-pub trait EguiDisplayHandle:
-    wgpu::rwh::HasDisplayHandle + core::fmt::Debug + Send + Sync + 'static
-{
+pub trait EguiDisplayHandle: wgpu::rwh::HasDisplayHandle + core::fmt::Debug + Send + Sync + 'static {
     /// Clone into a `Box<dyn WgpuHasDisplayHandle>` for [`wgpu::InstanceDescriptor::display`].
     fn clone_for_wgpu(&self) -> Box<dyn wgpu::wgt::WgpuHasDisplayHandle>;
 
@@ -80,10 +78,7 @@ impl WgpuSetup {
 impl core::fmt::Debug for WgpuSetup {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::CreateNew(create_new) => f
-                .debug_tuple("WgpuSetup::CreateNew")
-                .field(create_new)
-                .finish(),
+            Self::CreateNew(create_new) => f.debug_tuple("WgpuSetup::CreateNew").field(create_new).finish(),
             Self::Existing { .. } => f.debug_tuple("WgpuSetup::Existing").finish(),
         }
     }
@@ -106,12 +101,9 @@ impl WgpuSetup {
                 // in `wgpu/build.rs`).
                 #[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
                 if backends.contains(wgpu::Backends::BROWSER_WEBGPU) {
-                    let is_secure_context =
-                        wgpu::web_sys::window().is_some_and(|w| w.is_secure_context());
+                    let is_secure_context = wgpu::web_sys::window().is_some_and(|w| w.is_secure_context());
                     if !is_secure_context {
-                        log::info!(
-                            "WebGPU is only available in secure contexts, i.e. on HTTPS and on localhost."
-                        );
+                        log::info!("WebGPU is only available in secure contexts, i.e. on HTTPS and on localhost.");
                         backends.remove(wgpu::Backends::BROWSER_WEBGPU);
                     }
                 }
@@ -123,10 +115,7 @@ impl WgpuSetup {
                     flags: desc.flags,
                     backend_options: desc.backend_options.clone(),
                     memory_budget_thresholds: desc.memory_budget_thresholds,
-                    display: create_new
-                        .display_handle
-                        .as_ref()
-                        .map(|handle| handle.clone_for_wgpu()),
+                    display: create_new.display_handle.as_ref().map(|handle| handle.clone_for_wgpu()),
                 };
                 wgpu::util::new_instance_with_webgpu_detection(descriptor).await
             }
@@ -152,11 +141,8 @@ impl From<WgpuSetupExisting> for WgpuSetup {
 /// This can be used for fully custom adapter selection.
 /// If available, `wgpu::Surface` is passed to allow checking for surface compatibility.
 /// Return `Ok(None)` to use the normal wgpu adapter request.
-pub type NativeAdapterSelectorMethod = Arc<
-    dyn Fn(&[wgpu::Adapter], Option<&wgpu::Surface<'_>>) -> Result<Option<wgpu::Adapter>, String>
-        + Send
-        + Sync,
->;
+pub type NativeAdapterSelectorMethod =
+    Arc<dyn Fn(&[wgpu::Adapter], Option<&wgpu::Surface<'_>>) -> Result<Option<wgpu::Adapter>, String> + Send + Sync>;
 
 /// Configuration for creating a new wgpu setup.
 ///
@@ -204,8 +190,7 @@ pub struct WgpuSetupCreateNew {
     pub native_adapter_selector: Option<NativeAdapterSelectorMethod>,
 
     /// Configuration passed on device request, given an adapter
-    pub device_descriptor:
-        Arc<dyn Fn(&wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> + Send + Sync>,
+    pub device_descriptor: Arc<dyn Fn(&wgpu::Adapter) -> wgpu::DeviceDescriptor<'static> + Send + Sync>,
 }
 
 impl WgpuSetupCreateNew {
@@ -220,10 +205,7 @@ impl WgpuSetupCreateNew {
     ///
     /// With winit, pass [`EventLoop::owned_display_handle`](winit::event_loop::EventLoop::owned_display_handle).
     pub fn from_display_handle(display_handle: impl EguiDisplayHandle) -> Self {
-        Self {
-            display_handle: Some(Box::new(display_handle)),
-            ..Self::without_display_handle()
-        }
+        Self { display_handle: Some(Box::new(display_handle)), ..Self::without_display_handle() }
     }
 
     /// Creates a new configuration without a display handle.
@@ -243,8 +225,7 @@ impl WgpuSetupCreateNew {
             instance_descriptor: wgpu::InstanceDescriptor {
                 // Add GL backend, primarily because WebGPU is not stable enough yet.
                 // (note however, that the GL backend needs to be opted-in via the wgpu feature flag "webgl")
-                backends: wgpu::Backends::from_env()
-                    .unwrap_or(wgpu::Backends::PRIMARY | wgpu::Backends::GL),
+                backends: wgpu::Backends::from_env().unwrap_or(wgpu::Backends::PRIMARY | wgpu::Backends::GL),
                 flags: wgpu::InstanceFlags::from_build_config().with_env(),
                 backend_options: wgpu::BackendOptions::from_env_or_default(),
                 memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
@@ -253,17 +234,13 @@ impl WgpuSetupCreateNew {
 
             display_handle: None,
 
-            power_preference: wgpu::PowerPreference::from_env()
-                .unwrap_or(wgpu::PowerPreference::HighPerformance),
+            power_preference: wgpu::PowerPreference::from_env().unwrap_or(wgpu::PowerPreference::HighPerformance),
 
             native_adapter_selector: None,
 
             device_descriptor: Arc::new(|adapter| {
-                let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
-                    wgpu::Limits::downlevel_webgl2_defaults()
-                } else {
-                    wgpu::Limits::default()
-                };
+                let base_limits =
+                    if adapter.get_info().backend == wgpu::Backend::Gl { wgpu::Limits::downlevel_webgl2_defaults() } else { wgpu::Limits::default() };
 
                 wgpu::DeviceDescriptor {
                     label: Some("egui wgpu device"),
@@ -277,8 +254,7 @@ impl WgpuSetupCreateNew {
                     },
                     // SolidCraft: without it only the sample counts WebGPU guarantees (1x, 4x)
                     // are allowed, even where the adapter supports 2x and 8x.
-                    required_features: adapter.features()
-                        & wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+                    required_features: adapter.features() & wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
                     ..Default::default()
                 }
             }),
@@ -307,21 +283,12 @@ impl Clone for WgpuSetupCreateNew {
 
 impl core::fmt::Debug for WgpuSetupCreateNew {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let Self {
-            instance_descriptor,
-            display_handle,
-            power_preference,
-            native_adapter_selector,
-            device_descriptor: _,
-        } = self;
+        let Self { instance_descriptor, display_handle, power_preference, native_adapter_selector, device_descriptor: _ } = self;
         f.debug_struct("WgpuSetupCreateNew")
             .field("instance_descriptor", instance_descriptor)
             .field("display_handle", display_handle)
             .field("power_preference", power_preference)
-            .field(
-                "native_adapter_selector",
-                &native_adapter_selector.is_some(),
-            )
+            .field("native_adapter_selector", &native_adapter_selector.is_some())
             .finish_non_exhaustive()
     }
 }

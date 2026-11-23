@@ -1,6 +1,4 @@
-use egui::{
-    Key, KeyboardShortcut, Modifiers, ScrollArea, TextBuffer, TextEdit, Ui, text::CCursorRange,
-};
+use egui::{Key, KeyboardShortcut, Modifiers, ScrollArea, TextBuffer, TextEdit, Ui, text::CCursorRange};
 
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(feature = "serde", serde(default))]
@@ -15,19 +13,13 @@ pub struct EasyMarkEditor {
 
 impl PartialEq for EasyMarkEditor {
     fn eq(&self, other: &Self) -> bool {
-        (&self.code, self.highlight_editor, self.show_rendered)
-            == (&other.code, other.highlight_editor, other.show_rendered)
+        (&self.code, self.highlight_editor, self.show_rendered) == (&other.code, other.highlight_editor, other.show_rendered)
     }
 }
 
 impl Default for EasyMarkEditor {
     fn default() -> Self {
-        Self {
-            code: DEFAULT_CODE.trim().to_owned(),
-            highlight_editor: true,
-            show_rendered: true,
-            highlighter: Default::default(),
-        }
+        Self { code: DEFAULT_CODE.trim().to_owned(), highlight_editor: true, show_rendered: true, highlighter: Default::default() }
     }
 }
 
@@ -35,9 +27,7 @@ impl EasyMarkEditor {
     pub fn panels(&mut self, ui: &mut egui::Ui) {
         egui::Panel::bottom("easy_mark_bottom").show(ui, |ui| {
             let layout = egui::Layout::top_down(egui::Align::Center).with_main_justify(true);
-            ui.allocate_ui_with_layout(ui.available_size(), layout, |ui| {
-                ui.add(crate::egui_github_link_file!())
-            })
+            ui.allocate_ui_with_layout(ui.available_size(), layout, |ui| ui.add(crate::egui_github_link_file!()))
         });
 
         egui::CentralPanel::default().show(ui, |ui| {
@@ -57,27 +47,19 @@ impl EasyMarkEditor {
 
         if self.show_rendered {
             ui.columns(2, |columns| {
-                ScrollArea::vertical()
-                    .id_salt("source")
-                    .show(&mut columns[0], |ui| self.editor_ui(ui));
-                ScrollArea::vertical()
-                    .id_salt("rendered")
-                    .show(&mut columns[1], |ui| {
-                        // TODO(emilk): we can save some more CPU by caching the rendered output.
-                        crate::easy_mark::easy_mark(ui, &self.code);
-                    });
+                ScrollArea::vertical().id_salt("source").show(&mut columns[0], |ui| self.editor_ui(ui));
+                ScrollArea::vertical().id_salt("rendered").show(&mut columns[1], |ui| {
+                    // TODO(emilk): we can save some more CPU by caching the rendered output.
+                    crate::easy_mark::easy_mark(ui, &self.code);
+                });
             });
         } else {
-            ScrollArea::vertical()
-                .id_salt("source")
-                .show(ui, |ui| self.editor_ui(ui));
+            ScrollArea::vertical().id_salt("source").show(ui, |ui| self.editor_ui(ui));
         }
     }
 
     fn editor_ui(&mut self, ui: &mut egui::Ui) {
-        let Self {
-            code, highlighter, ..
-        } = self;
+        let Self { code, highlighter, .. } = self;
 
         let response = if self.highlight_editor {
             let mut layouter = |ui: &egui::Ui, easymark: &dyn TextBuffer, wrap_width: f32| {
@@ -94,11 +76,7 @@ impl EasyMarkEditor {
                     .layouter(&mut layouter),
             )
         } else {
-            ui.add(
-                egui::TextEdit::multiline(code)
-                    .hint_text("EasyMark source")
-                    .desired_width(f32::INFINITY),
-            )
+            ui.add(egui::TextEdit::multiline(code).hint_text("EasyMark source").desired_width(f32::INFINITY))
         };
 
         if let Some(mut state) = TextEdit::load_state(ui.ctx(), response.id)
@@ -117,14 +95,10 @@ pub const SHORTCUT_BOLD: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COM
 pub const SHORTCUT_CODE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
 pub const SHORTCUT_ITALICS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::I);
 pub const SHORTCUT_SUBSCRIPT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::L);
-pub const SHORTCUT_SUPERSCRIPT: KeyboardShortcut =
-    KeyboardShortcut::new(Modifiers::COMMAND, Key::Y);
-pub const SHORTCUT_STRIKETHROUGH: KeyboardShortcut =
-    KeyboardShortcut::new(Modifiers::CTRL.plus(Modifiers::SHIFT), Key::Q);
-pub const SHORTCUT_UNDERLINE: KeyboardShortcut =
-    KeyboardShortcut::new(Modifiers::CTRL.plus(Modifiers::SHIFT), Key::W);
-pub const SHORTCUT_INDENT: KeyboardShortcut =
-    KeyboardShortcut::new(Modifiers::CTRL.plus(Modifiers::SHIFT), Key::E);
+pub const SHORTCUT_SUPERSCRIPT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Y);
+pub const SHORTCUT_STRIKETHROUGH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL.plus(Modifiers::SHIFT), Key::Q);
+pub const SHORTCUT_UNDERLINE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL.plus(Modifiers::SHIFT), Key::W);
+pub const SHORTCUT_INDENT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::CTRL.plus(Modifiers::SHIFT), Key::E);
 
 fn nested_hotkeys_ui(ui: &mut egui::Ui) {
     egui::Grid::new("shortcuts").striped(true).show(ui, |ui| {
@@ -177,19 +151,14 @@ fn shortcuts(ui: &Ui, code: &mut dyn TextBuffer, ccursor_range: &mut CCursorRang
 }
 
 /// E.g. toggle *strong* with `toggle_surrounding(&mut text, &mut cursor, "*")`
-fn toggle_surrounding(
-    code: &mut dyn TextBuffer,
-    ccursor_range: &mut CCursorRange,
-    surrounding: &str,
-) {
+fn toggle_surrounding(code: &mut dyn TextBuffer, ccursor_range: &mut CCursorRange, surrounding: &str) {
     let [primary, secondary] = ccursor_range.sorted_cursors();
 
     let surrounding_ccount = surrounding.chars().count();
 
     let prefix_crange = primary.index.saturating_sub(surrounding_ccount)..primary.index;
     let suffix_crange = secondary.index..secondary.index.saturating_add(surrounding_ccount);
-    let already_surrounded = code.char_range(prefix_crange.clone()) == surrounding
-        && code.char_range(suffix_crange.clone()) == surrounding;
+    let already_surrounded = code.char_range(prefix_crange.clone()) == surrounding && code.char_range(suffix_crange.clone()) == surrounding;
 
     if already_surrounded {
         code.delete_char_range(suffix_crange);

@@ -3,8 +3,7 @@ use core::iter::once;
 use emath::{Align, Pos2, Rect, RectAlign, Vec2, vec2};
 
 use crate::{
-    Area, AreaState, Context, Frame, Id, InnerResponse, Key, LayerId, Layout, Order, Response,
-    Sense, Ui, UiKind, UiStackInfo,
+    Area, AreaState, Context, Frame, Id, InnerResponse, Key, LayerId, Layout, Order, Response, Sense, Ui, UiKind, UiStackInfo,
     containers::menu::{MenuConfig, MenuState, menu_style},
     style::StyleModifier,
 };
@@ -221,13 +220,7 @@ impl<'a> Popup<'a> {
     ///
     /// See [`Self::menu`] and [`Self::context_menu`] for common use cases.
     pub fn from_response(response: &Response) -> Self {
-        Self::new(
-            Self::default_response_id(response),
-            response.ctx.clone(),
-            response,
-            response.layer_id,
-        )
-        .anchor_widget(response.id)
+        Self::new(Self::default_response_id(response), response.ctx.clone(), response, response.layer_id).anchor_widget(response.id)
     }
 
     /// Show a popup relative to some widget,
@@ -235,8 +228,7 @@ impl<'a> Popup<'a> {
     ///
     /// See [`Self::menu`] and [`Self::context_menu`] for common use cases.
     pub fn from_toggle_button_response(button_response: &Response) -> Self {
-        Self::from_response(button_response)
-            .open_memory(button_response.clicked().then_some(SetOpenCommand::Toggle))
+        Self::from_response(button_response).open_memory(button_response.clicked().then_some(SetOpenCommand::Toggle))
     }
 
     /// Show a popup when the widget was clicked.
@@ -301,11 +293,7 @@ impl<'a> Popup<'a> {
     /// Force the popup to be open or closed.
     #[inline]
     pub fn open(mut self, open: bool) -> Self {
-        self.open_kind = if open {
-            OpenKind::Open
-        } else {
-            OpenKind::Closed
-        };
+        self.open_kind = if open { OpenKind::Open } else { OpenKind::Closed };
         self
     }
 
@@ -313,9 +301,7 @@ impl<'a> Popup<'a> {
     /// You can set the state via the first [`SetOpenCommand`] param.
     #[inline]
     pub fn open_memory(mut self, set_state: impl Into<Option<SetOpenCommand>>) -> Self {
-        self.open_kind = OpenKind::Memory {
-            set: set_state.into(),
-        };
+        self.open_kind = OpenKind::Memory { set: set_state.into() };
         self
     }
 
@@ -481,12 +467,7 @@ impl<'a> Popup<'a> {
     /// there is no pointer.
     pub fn get_popup_rect(&self) -> Option<Rect> {
         let size = self.get_expected_size();
-        if let Some(size) = size {
-            self.get_anchor_rect()
-                .map(|anchor| self.get_best_align().align_rect(&anchor, size, self.gap))
-        } else {
-            None
-        }
+        if let Some(size) = size { self.get_anchor_rect().map(|anchor| self.get_best_align().align_rect(&anchor, size, self.gap)) } else { None }
     }
 
     /// Get the id of the popup.
@@ -511,9 +492,7 @@ impl<'a> Popup<'a> {
 
     /// Calculate the best alignment for the popup, based on the last size and screen rect.
     pub fn get_best_align(&self) -> RectAlign {
-        let expected_popup_size = self
-            .get_expected_size()
-            .unwrap_or_else(|| vec2(self.width.unwrap_or(0.0), 0.0));
+        let expected_popup_size = self.get_expected_size().unwrap_or_else(|| vec2(self.width.unwrap_or(0.0), 0.0));
 
         let Some(anchor_rect) = self.anchor.rect(self.id, &self.ctx) else {
             return self.rect_align;
@@ -527,10 +506,7 @@ impl<'a> Popup<'a> {
                 self.alternative_aligns
                     // Need the empty slice so the iters have the same type so we can unwrap_or
                     .map(|a| core::iter::chain(a.iter().copied(), [].iter().copied()))
-                    .unwrap_or(core::iter::chain(
-                        self.rect_align.symmetries().iter().copied(),
-                        RectAlign::MENU_ALIGNS.iter().copied(),
-                    )),
+                    .unwrap_or(core::iter::chain(self.rect_align.symmetries().iter().copied(), RectAlign::MENU_ALIGNS.iter().copied())),
             ),
             self.ctx.content_rect(),
             anchor_rect,
@@ -606,13 +582,7 @@ impl<'a> Popup<'a> {
         } = self;
 
         if kind != PopupKind::Tooltip {
-            ctx.pass_state_mut(|fs| {
-                fs.layers
-                    .entry(layer_id)
-                    .or_default()
-                    .open_popups
-                    .insert(id)
-            });
+            ctx.pass_state_mut(|fs| fs.layers.entry(layer_id).or_default().open_popups.insert(id));
         }
 
         let anchor_rect = anchor.rect(id, &ctx)?;
@@ -628,12 +598,8 @@ impl<'a> Popup<'a> {
             .layout(layout)
             .sizing_pass(sizing_pass || !was_open_last_frame)
             .info(info.unwrap_or_else(|| {
-                UiStackInfo::new(kind.into()).with_tag_value(
-                    MenuConfig::MENU_CONFIG_TAG,
-                    MenuConfig::new()
-                        .close_behavior(close_behavior)
-                        .style(style.clone()),
-                )
+                UiStackInfo::new(kind.into())
+                    .with_tag_value(MenuConfig::MENU_CONFIG_TAG, MenuConfig::new().close_behavior(close_behavior).style(style.clone()))
             }));
 
         if let Some(width) = width {
@@ -661,8 +627,7 @@ impl<'a> Popup<'a> {
         // would immediately close again on the following *release*.
         // This also covers the case where the popup was just opened with a click.
         let press_started_while_open_id = id.with("press_started_while_open");
-        let (any_pressed, any_click) =
-            ctx.input(|i| (i.pointer.any_pressed(), i.pointer.any_click()));
+        let (any_pressed, any_click) = ctx.input(|i| (i.pointer.any_pressed(), i.pointer.any_click()));
         let press_started_while_open = if !was_open_last_frame {
             ctx.data_mut(|d| d.remove::<bool>(press_started_while_open_id));
             false
@@ -670,16 +635,13 @@ impl<'a> Popup<'a> {
             ctx.data_mut(|d| d.insert_temp(press_started_while_open_id, true));
             true
         } else {
-            ctx.data(|d| d.get_temp(press_started_while_open_id))
-                .unwrap_or(false)
+            ctx.data(|d| d.get_temp(press_started_while_open_id)).unwrap_or(false)
         };
         let close_click = press_started_while_open && any_click;
 
         let closed_by_click = match close_behavior {
             PopupCloseBehavior::CloseOnClick => close_click,
-            PopupCloseBehavior::CloseOnClickOutside => {
-                close_click && response.response.clicked_elsewhere()
-            }
+            PopupCloseBehavior::CloseOnClickOutside => close_click && response.response.clicked_elsewhere(),
             PopupCloseBehavior::IgnoreClicks => false,
         };
 
@@ -689,9 +651,7 @@ impl<'a> Popup<'a> {
         // If a submenu is open, the CloseBehavior is handled there
         let is_any_submenu_open = !MenuState::is_deepest_open_sub_menu(&response.response.ctx, id);
 
-        let should_close = (!is_any_submenu_open && closed_by_click)
-            || ctx.input(|i| i.key_pressed(Key::Escape))
-            || response.response.should_close();
+        let should_close = (!is_any_submenu_open && closed_by_click) || ctx.input(|i| i.key_pressed(Key::Escape)) || response.response.should_close();
 
         if should_close {
             response.response.set_close();

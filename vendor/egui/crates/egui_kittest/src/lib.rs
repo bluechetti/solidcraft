@@ -55,19 +55,11 @@ fn push_cursor_shape(ctx: &egui::Context, shapes: &mut Vec<ClippedShape>) {
         return;
     };
 
-    let triangle = vec![
-        mouse_pos,
-        mouse_pos + egui::vec2(16.0, 8.0),
-        mouse_pos + egui::vec2(8.0, 16.0),
-    ];
+    let triangle = vec![mouse_pos, mouse_pos + egui::vec2(16.0, 8.0), mouse_pos + egui::vec2(8.0, 16.0)];
 
     shapes.push(ClippedShape::new(
         ctx.content_rect(),
-        egui::epaint::PathShape::convex_polygon(
-            triangle,
-            Color32::WHITE,
-            egui::Stroke::new(1.0, Color32::BLACK),
-        ),
+        egui::epaint::PathShape::convex_polygon(triangle, Color32::WHITE, egui::Stroke::new(1.0, Color32::BLACK)),
     ));
 }
 
@@ -93,11 +85,7 @@ impl Display for ExceededMaxStepsError {
 
         match self.steps_to_settle {
             Some(steps) => write!(f, "It would have settled after {steps} steps. ")?,
-            None => write!(
-                f,
-                "It did not settle within {} further steps either. ",
-                self.diagnostic_max_steps
-            )?,
+            None => write!(f, "It did not settle within {} further steps either. ", self.diagnostic_max_steps)?,
         }
 
         write!(
@@ -186,12 +174,7 @@ impl<State> Debug for Harness<'_, State> {
 
 impl<'a, State> Harness<'a, State> {
     #[track_caller]
-    pub(crate) fn from_builder(
-        builder: HarnessBuilder<State>,
-        mut app: AppKind<'a, State>,
-        mut state: State,
-        ctx: Option<egui::Context>,
-    ) -> Self {
+    pub(crate) fn from_builder(builder: HarnessBuilder<State>, mut app: AppKind<'a, State>, mut state: State, ctx: Option<egui::Context>) -> Self {
         let HarnessBuilder {
             screen_rect,
             pixels_per_point,
@@ -235,10 +218,7 @@ impl<'a, State> Harness<'a, State> {
             style.scroll_animation = ScrollAnimation::none();
             style.animation_time = 0.0;
         });
-        let mut input = egui::RawInput {
-            screen_rect: Some(screen_rect),
-            ..Default::default()
-        };
+        let mut input = egui::RawInput { screen_rect: Some(screen_rect), ..Default::default() };
         let viewport = input.viewports.get_mut(&ViewportId::ROOT).unwrap();
         viewport.native_pixels_per_point = Some(pixels_per_point);
 
@@ -257,13 +237,7 @@ impl<'a, State> Harness<'a, State> {
             app,
             ctx,
             input,
-            kittest: kittest::State::new(
-                output
-                    .platform_output
-                    .accesskit_update
-                    .take()
-                    .expect("AccessKit was disabled"),
-            ),
+            kittest: kittest::State::new(output.platform_output.accesskit_update.take().expect("AccessKit was disabled")),
             output,
             ui_output,
             state,
@@ -386,20 +360,13 @@ impl<'a, State> Harness<'a, State> {
         let mut output = self.ctx.run_ui(self.input.take(), |ui| {
             self.ui_output = self.app.run(ui, &mut self.state, sizing_pass);
         });
-        self.kittest.update(
-            output
-                .platform_output
-                .accesskit_update
-                .take()
-                .expect("AccessKit was disabled"),
-        );
+        self.kittest.update(output.platform_output.accesskit_update.take().expect("AccessKit was disabled"));
         self.renderer.handle_delta(&mut output.textures_delta);
         self.output = output;
 
         #[cfg(any(feature = "wgpu", feature = "snapshot"))]
         if self.render_every_step {
-            self.render()
-                .expect("Failed to render during `render_every_step`");
+            self.render().expect("Failed to render during `render_every_step`");
         }
 
         self.handle_viewport_commands();
@@ -465,18 +432,10 @@ impl<'a, State> Harness<'a, State> {
 
     /// When `sleep` is true, each step sleeps for `self.step_dt`.
     /// When `diagnostic` is true, we run extra steps to find [`ExceededMaxStepsError::steps_to_settle`].
-    fn try_run_impl(
-        &mut self,
-        sleep: bool,
-        diagnostic: bool,
-    ) -> Result<u64, ExceededMaxStepsError> {
+    fn try_run_impl(&mut self, sleep: bool, diagnostic: bool) -> Result<u64, ExceededMaxStepsError> {
         // Once the budget is blown we keep going for a while, purely to find out how many steps
         // would have been needed. The repaint causes are the ones from the moment we blew it.
-        let diagnostic_max_steps = if diagnostic {
-            config().diagnostic_max_steps()
-        } else {
-            0
-        };
+        let diagnostic_max_steps = if diagnostic { config().diagnostic_max_steps() } else { 0 };
         let last_diagnostic_step = self.max_steps.saturating_add(diagnostic_max_steps);
         let mut repaint_causes_at_max_steps = None;
 
@@ -509,8 +468,7 @@ impl<'a, State> Harness<'a, State> {
                     max_steps: self.max_steps,
                     steps_to_settle: None,
                     diagnostic_max_steps,
-                    repaint_causes: repaint_causes_at_max_steps
-                        .unwrap_or_else(|| self.ctx.repaint_causes()),
+                    repaint_causes: repaint_causes_at_max_steps.unwrap_or_else(|| self.ctx.repaint_causes()),
                 });
             }
         }
@@ -660,55 +618,23 @@ impl<'a, State> Harness<'a, State> {
     }
 
     fn modifiers(&self, modifiers: Modifiers) {
-        self.queued_events
-            .lock()
-            .push(egui::Event::ModifiersChanged(modifiers));
+        self.queued_events.lock().push(egui::Event::ModifiersChanged(modifiers));
     }
 
     pub fn key_down(&self, key: egui::Key) {
-        self.event(egui::Event::Key {
-            key,
-            pressed: true,
-            modifiers: Modifiers::default(),
-            repeat: false,
-            physical_key: None,
-        });
+        self.event(egui::Event::Key { key, pressed: true, modifiers: Modifiers::default(), repeat: false, physical_key: None });
     }
 
     pub fn key_down_modifiers(&self, modifiers: Modifiers, key: egui::Key) {
-        self.event_modifiers(
-            egui::Event::Key {
-                key,
-                pressed: true,
-                modifiers,
-                repeat: false,
-                physical_key: None,
-            },
-            modifiers,
-        );
+        self.event_modifiers(egui::Event::Key { key, pressed: true, modifiers, repeat: false, physical_key: None }, modifiers);
     }
 
     pub fn key_up(&self, key: egui::Key) {
-        self.event(egui::Event::Key {
-            key,
-            pressed: false,
-            modifiers: Modifiers::default(),
-            repeat: false,
-            physical_key: None,
-        });
+        self.event(egui::Event::Key { key, pressed: false, modifiers: Modifiers::default(), repeat: false, physical_key: None });
     }
 
     pub fn key_up_modifiers(&self, modifiers: Modifiers, key: egui::Key) {
-        self.event_modifiers(
-            egui::Event::Key {
-                key,
-                pressed: false,
-                modifiers,
-                repeat: false,
-                physical_key: None,
-            },
-            modifiers,
-        );
+        self.event_modifiers(egui::Event::Key { key, pressed: false, modifiers, repeat: false, physical_key: None }, modifiers);
     }
 
     /// Press the given keys in combination.
@@ -741,13 +667,7 @@ impl<'a, State> Harness<'a, State> {
 
         for pressed in [true, false] {
             for key in keys {
-                self.event(egui::Event::Key {
-                    key: *key,
-                    pressed,
-                    modifiers,
-                    repeat: false,
-                    physical_key: None,
-                });
+                self.event(egui::Event::Key { key: *key, pressed, modifiers, repeat: false, physical_key: None });
             }
         }
 
@@ -779,22 +699,12 @@ impl<'a, State> Harness<'a, State> {
 
     /// Start dragging from a position.
     pub fn drag_at(&self, pos: egui::Pos2) {
-        self.event(egui::Event::PointerButton {
-            pos,
-            button: PointerButton::Primary,
-            pressed: true,
-            modifiers: Modifiers::NONE,
-        });
+        self.event(egui::Event::PointerButton { pos, button: PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
     }
 
     /// Stop dragging and remove cursor.
     pub fn drop_at(&self, pos: egui::Pos2) {
-        self.event(egui::Event::PointerButton {
-            pos,
-            button: PointerButton::Primary,
-            pressed: false,
-            modifiers: Modifiers::NONE,
-        });
+        self.event(egui::Event::PointerButton { pos, button: PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
         self.remove_cursor();
     }
 
@@ -820,10 +730,7 @@ impl<'a, State> Harness<'a, State> {
             self.last_render = None;
         }
 
-        self.output.shapes.push(ClippedShape::new(
-            Rect::EVERYTHING,
-            RectShape::filled(rect, 0.0, Color32::MAGENTA),
-        ));
+        self.output.shapes.push(ClippedShape::new(Rect::EVERYTHING, RectShape::filled(rect, 0.0, Color32::MAGENTA)));
     }
 
     /// Should every step be rendered?
@@ -887,18 +794,12 @@ impl<'a, State> Harness<'a, State> {
     /// Resize the harness to the last [`egui::ViewportCommand::InnerSize`] requested by the app
     /// during the last frame, if any.
     fn handle_inner_size(&mut self) {
-        let new_inner_size =
-            self.root_viewport_output()
-                .commands
-                .iter()
-                .rev()
-                .find_map(|command| {
-                    if let egui::ViewportCommand::InnerSize(size) = command {
-                        Some(*size)
-                    } else {
-                        None
-                    }
-                });
+        let new_inner_size = self
+            .root_viewport_output()
+            .commands
+            .iter()
+            .rev()
+            .find_map(|command| if let egui::ViewportCommand::InnerSize(size) = command { Some(*size) } else { None });
 
         if let Some(size) = new_inner_size {
             self.set_size(size);
@@ -918,13 +819,10 @@ impl<'a, State> Harness<'a, State> {
             .viewport_output
             .values()
             .flat_map(|viewport| {
-                viewport.commands.iter().filter_map(|command| {
-                    if let egui::ViewportCommand::Screenshot(callback) = command {
-                        Some(callback.clone())
-                    } else {
-                        None
-                    }
-                })
+                viewport
+                    .commands
+                    .iter()
+                    .filter_map(|command| if let egui::ViewportCommand::Screenshot(callback) = command { Some(callback.clone()) } else { None })
             })
             .collect();
 
@@ -949,19 +847,12 @@ impl<'a, State> Harness<'a, State> {
 
     /// Get the root viewport output
     fn root_viewport_output(&self) -> &egui::ViewportOutput {
-        self.output
-            .viewport_output
-            .get(&ViewportId::ROOT)
-            .expect("Missing root viewport")
+        self.output.viewport_output.get(&ViewportId::ROOT).expect("Missing root viewport")
     }
 
     /// The root node of the test harness.
     pub fn root(&self) -> Node<'_> {
-        Node::new(
-            self.kittest.root(),
-            &self.queued_events,
-            self.ctx.pixels_per_point(),
-        )
+        Node::new(self.kittest.root(), &self.queued_events, self.ctx.pixels_per_point())
     }
 
     /// Spawn a real native eframe window running this harness's app, reusing its [`egui::Context`].
@@ -1047,13 +938,7 @@ impl<'a, State> Harness<'a, State> {
             }
         }
 
-        let Self {
-            _on_exit: mut on_exit,
-            ctx,
-            state,
-            app,
-            ..
-        } = self;
+        let Self { _on_exit: mut on_exit, ctx, state, app, .. } = self;
         on_exit.disarm();
 
         let eframe_app: Box<dyn eframe::App> = match app {
@@ -1062,13 +947,7 @@ impl<'a, State> Harness<'a, State> {
             AppKind::Eframe(eframe_kind) => (eframe_kind.take_app)(state),
         };
 
-        eframe::run_native_ext(
-            "egui_kittest",
-            eframe::NativeOptions::default(),
-            Some(ctx),
-            Box::new(|_cc| Ok(eframe_app)),
-        )
-        .unwrap();
+        eframe::run_native_ext("egui_kittest", eframe::NativeOptions::default(), Some(ctx), Box::new(|_cc| Ok(eframe_app))).unwrap();
     }
 }
 
@@ -1099,10 +978,7 @@ impl<'a> Harness<'a> {
 #[cfg(any(feature = "wgpu", feature = "snapshot"))]
 fn rgba_image_to_color_image(image: &image::RgbaImage) -> egui::ColorImage {
     let size = [image.width() as usize, image.height() as usize];
-    let pixels = image
-        .pixels()
-        .map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
-        .collect();
+    let pixels = image.pixels().map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3])).collect();
     egui::ColorImage::new(size, pixels)
 }
 

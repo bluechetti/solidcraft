@@ -18,8 +18,7 @@ impl ClosableTag {
 
     /// Set close to `true`
     pub fn set_close(&self) {
-        self.close
-            .store(true, core::sync::atomic::Ordering::Relaxed);
+        self.close.store(true, core::sync::atomic::Ordering::Relaxed);
     }
 
     /// Returns `true` if [`ClosableTag::set_close`] has been called.

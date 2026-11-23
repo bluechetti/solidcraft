@@ -79,14 +79,7 @@ impl One for f64 {
 
 /// Helper trait to implement [`lerp`] and [`remap`].
 pub trait Real:
-    Copy
-    + PartialEq
-    + PartialOrd
-    + One
-    + Add<Self, Output = Self>
-    + Sub<Self, Output = Self>
-    + Mul<Self, Output = Self>
-    + Div<Self, Output = Self>
+    Copy + PartialEq + PartialOrd + One + Add<Self, Output = Self> + Sub<Self, Output = Self> + Mul<Self, Output = Self> + Div<Self, Output = Self>
 {
 }
 
@@ -151,11 +144,7 @@ where
 {
     let min = *range.start();
     let max = *range.end();
-    if min == max {
-        None
-    } else {
-        Some((value - min) / (max - min))
-    }
+    if min == max { None } else { Some((value - min) / (max - min)) }
 }
 
 /// Linearly remap a value from one range to another,
@@ -167,20 +156,13 @@ where
 {
     let from = from.into();
     let to = to.into();
-    debug_assert!(
-        from.start() != from.end(),
-        "from.start() and from.end() should not be equal"
-    );
+    debug_assert!(from.start() != from.end(), "from.start() and from.end() should not be equal");
     let t = (x - *from.start()) / (*from.end() - *from.start());
     lerp(to, t)
 }
 
 /// Like [`remap`], but also clamps the value so that the returned value is always in the `to` range.
-pub fn remap_clamp<T>(
-    x: T,
-    from: impl Into<RangeInclusive<T>>,
-    to: impl Into<RangeInclusive<T>>,
-) -> T
+pub fn remap_clamp<T>(x: T, from: impl Into<RangeInclusive<T>>, to: impl Into<RangeInclusive<T>>) -> T
 where
     T: Real,
 {
@@ -194,10 +176,7 @@ where
     } else if *from.end() <= x {
         *to.end()
     } else {
-        debug_assert!(
-            from.start() != from.end(),
-            "from.start() and from.end() should not be equal"
-        );
+        debug_assert!(from.start() != from.end(), "from.start() and from.end() should not be equal");
         let t = (x - *from.start()) / (*from.end() - *from.start());
         // Ensure no numerical inaccuracies sneak in:
         if T::ONE <= t { *to.end() } else { lerp(to, t) }
@@ -224,10 +203,7 @@ pub fn format_with_decimals_in_range(value: f64, decimal_range: RangeInclusive<u
         min_decimals <= max_decimals,
         "min_decimals should be <= max_decimals, but got min_decimals: {min_decimals}, max_decimals: {max_decimals}"
     );
-    debug_assert!(
-        max_decimals < 100,
-        "max_decimals should be < 100, but got {max_decimals}"
-    );
+    debug_assert!(max_decimals < 100, "max_decimals should be < 100, but got {max_decimals}");
     let max_decimals = max_decimals.min(16);
     let min_decimals = min_decimals.min(max_decimals);
 
@@ -271,10 +247,7 @@ fn test_format() {
     assert_eq!(format_with_minimum_decimals(1_234_567.0, 1), "1234567.0");
     assert_eq!(format_with_minimum_decimals(3.14, 2), "3.14");
     assert_eq!(format_with_minimum_decimals(3.14, 3), "3.140");
-    assert_eq!(
-        format_with_minimum_decimals(core::f64::consts::PI, 2),
-        "3.14159"
-    );
+    assert_eq!(format_with_minimum_decimals(core::f64::consts::PI, 2), "3.14159");
 }
 
 #[test]
@@ -295,17 +268,9 @@ fn test_almost_equal() {
         f32::INFINITY,
     ] {
         for &x in &[-x, x] {
-            for roundtrip in &[
-                |x: f32| x.to_degrees().to_radians(),
-                |x: f32| x.to_radians().to_degrees(),
-            ] {
+            for roundtrip in &[|x: f32| x.to_degrees().to_radians(), |x: f32| x.to_radians().to_degrees()] {
                 let epsilon = f32::EPSILON;
-                assert!(
-                    almost_equal(x, roundtrip(x), epsilon),
-                    "{} vs {}",
-                    x,
-                    roundtrip(x)
-                );
+                assert!(almost_equal(x, roundtrip(x), epsilon), "{} vs {}", x, roundtrip(x));
             }
         }
     }
@@ -411,11 +376,7 @@ fn test_normalized_angle() {
 /// let t = exponential_smooth_factor(0.90, 0.2, dt); // reach 90% in 0.2 seconds
 /// smoothed_value = lerp(smoothed_value..=target_value, t);
 /// ```
-pub fn exponential_smooth_factor(
-    reach_this_fraction: f32,
-    in_this_many_seconds: f32,
-    dt: f32,
-) -> f32 {
+pub fn exponential_smooth_factor(reach_this_fraction: f32, in_this_many_seconds: f32, dt: f32) -> f32 {
     1.0 - (1.0 - reach_this_fraction).powf(dt / in_this_many_seconds)
 }
 
@@ -439,21 +400,12 @@ pub fn exponential_smooth_factor(
 ///     }
 /// }
 /// ```
-pub fn interpolation_factor(
-    (start_time, end_time): (f64, f64),
-    current_time: f64,
-    dt: f32,
-    easing: impl Fn(f32) -> f32,
-) -> f32 {
+pub fn interpolation_factor((start_time, end_time): (f64, f64), current_time: f64, dt: f32, easing: impl Fn(f32) -> f32) -> f32 {
     let animation_duration = (end_time - start_time) as f32;
     let prev_time = current_time - dt as f64;
     let prev_t = easing((prev_time - start_time) as f32 / animation_duration);
     let end_t = easing((current_time - start_time) as f32 / animation_duration);
-    if end_t < 1.0 {
-        (end_t - prev_t) / (1.0 - prev_t)
-    } else {
-        1.0
-    }
+    if end_t < 1.0 { (end_t - prev_t) / (1.0 - prev_t) } else { 1.0 }
 }
 
 /// Ease in, ease out.

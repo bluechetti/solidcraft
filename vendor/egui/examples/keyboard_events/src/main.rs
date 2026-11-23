@@ -7,11 +7,7 @@ use egui::{Key, ScrollArea};
 fn main() -> eframe::Result {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
     let options = eframe::NativeOptions::default();
-    eframe::run_native(
-        "Keyboard events",
-        options,
-        Box::new(|_cc| Ok(Box::<Content>::default())),
-    )
+    eframe::run_native("Keyboard events", options, Box::new(|_cc| Ok(Box::<Content>::default())))
 }
 
 #[derive(Default)]
@@ -26,12 +22,9 @@ impl eframe::App for Content {
             if ui.button("Clear").clicked() {
                 self.text.clear();
             }
-            ScrollArea::vertical()
-                .auto_shrink(false)
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    ui.label(&self.text);
-                });
+            ScrollArea::vertical().auto_shrink(false).stick_to_bottom(true).show(ui, |ui| {
+                ui.label(&self.text);
+            });
 
             if ui.input(|i| i.key_pressed(Key::A)) {
                 self.text.push_str("\nPressed");

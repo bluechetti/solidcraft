@@ -102,13 +102,7 @@ impl AxisPhysics {
     /// and the caller is expected to clamp the offset at the end of the frame.
     pub fn drag(&self, offset: f32, delta: f32) -> f32 {
         if self.style.rubber_band {
-            rubber_band_drag(
-                offset,
-                delta,
-                self.bounds,
-                self.viewport_extent * TOUCH_MAX_STRETCH,
-                TOUCH_RUBBER_BAND_SLOPE,
-            )
+            rubber_band_drag(offset, delta, self.bounds, self.viewport_extent * TOUCH_MAX_STRETCH, TOUCH_RUBBER_BAND_SLOPE)
         } else {
             offset + delta
         }
@@ -122,11 +116,7 @@ impl AxisPhysics {
     ///
     /// Returns `true` if we are still moving and need another frame.
     pub fn step(&self, offset: &mut f32, vel: &mut f32, dt: f32, hold: bool) -> bool {
-        let KineticScrollStyle {
-            decay_time,
-            stop_distance,
-            rubber_band,
-        } = self.style;
+        let KineticScrollStyle { decay_time, stop_distance, rubber_band } = self.style;
 
         let edge = self.clamp(*offset);
         let overscroll = *offset - edge;
@@ -136,11 +126,9 @@ impl AxisPhysics {
                 return false;
             }
 
-            let (new_overscroll, new_vel) =
-                critically_damped_spring_step(overscroll, *vel, dt, RUBBER_BAND_TIME);
+            let (new_overscroll, new_vel) = critically_damped_spring_step(overscroll, *vel, dt, RUBBER_BAND_TIME);
 
-            let settled = new_overscroll.abs() < stop_distance
-                && (new_vel * RUBBER_BAND_TIME).abs() < stop_distance;
+            let settled = new_overscroll.abs() < stop_distance && (new_vel * RUBBER_BAND_TIME).abs() < stop_distance;
             if settled {
                 *offset = edge;
                 *vel = 0.0;
@@ -184,25 +172,11 @@ impl AxisPhysics {
     ///   so that scrolling the other way during a bounce doesn't feel stuck.
     ///
     /// Returns `true` if the delta was consumed, i.e. no enclosing scroll area should get it.
-    pub fn wheel(
-        &self,
-        offset: &mut f32,
-        vel: &mut f32,
-        scroll: WheelScroll,
-        bounced_this_momentum: &mut bool,
-    ) -> bool {
-        let WheelScroll {
-            delta,
-            source,
-            can_chain_to_parent,
-            dt,
-        } = scroll;
+    pub fn wheel(&self, offset: &mut f32, vel: &mut f32, scroll: WheelScroll, bounced_this_momentum: &mut bool) -> bool {
+        let WheelScroll { delta, source, can_chain_to_parent, dt } = scroll;
 
         let is_momentum = source == Some(MouseWheelSource::Momentum);
-        let is_trackpad = matches!(
-            source,
-            Some(MouseWheelSource::Trackpad | MouseWheelSource::Momentum)
-        );
+        let is_trackpad = matches!(source, Some(MouseWheelSource::Trackpad | MouseWheelSource::Momentum));
         if !is_momentum {
             *bounced_this_momentum = false;
         }
@@ -210,15 +184,10 @@ impl AxisPhysics {
             return false;
         }
 
-        let can_scroll = (delta < 0.0 && self.bounds.min < *offset)
-            || (0.0 < delta && *offset < self.bounds.max);
+        let can_scroll = (delta < 0.0 && self.bounds.min < *offset) || (0.0 < delta && *offset < self.bounds.max);
 
-        let rubber_band = self.style.rubber_band
-            && is_trackpad
-            && (can_scroll
-                || self.is_overscrolled(*offset)
-                || !can_chain_to_parent
-                || *bounced_this_momentum);
+        let rubber_band =
+            self.style.rubber_band && is_trackpad && (can_scroll || self.is_overscrolled(*offset) || !can_chain_to_parent || *bounced_this_momentum);
 
         if !(rubber_band || can_scroll) {
             return false;
@@ -245,13 +214,7 @@ impl AxisPhysics {
                 *bounced_this_momentum = true;
             }
         } else if rubber_band {
-            *offset = rubber_band_drag(
-                *offset,
-                delta,
-                self.bounds,
-                self.viewport_extent * TRACKPAD_MAX_STRETCH,
-                TRACKPAD_RUBBER_BAND_SLOPE,
-            );
+            *offset = rubber_band_drag(*offset, delta, self.bounds, self.viewport_extent * TRACKPAD_MAX_STRETCH, TRACKPAD_RUBBER_BAND_SLOPE);
             *vel = 0.0;
         } else {
             *offset = self.clamp(*offset + delta);
@@ -264,8 +227,7 @@ impl AxisPhysics {
     /// limited so that we don't stretch past [`TRACKPAD_MAX_STRETCH`].
     fn bounce_velocity(&self, offset: f32, delta: f32, dt: f32) -> f32 {
         // A critically damped spring kicked with velocity `v` from rest peaks at `v · τ / e`:
-        let room =
-            (self.viewport_extent * TRACKPAD_MAX_STRETCH - self.overscroll(offset).abs()).max(0.0);
+        let room = (self.viewport_extent * TRACKPAD_MAX_STRETCH - self.overscroll(offset).abs()).max(0.0);
         let max_speed = room * core::f32::consts::E / RUBBER_BAND_TIME;
         let speed = if 0.0 < dt { delta.abs() / dt } else { 0.0 };
         speed.min(max_speed).copysign(delta)
@@ -277,13 +239,7 @@ impl AxisPhysics {
 /// Modeled after iOS: the content follows the finger with the given `slope` at the edge,
 /// and the resistance grows as we get further out,
 /// asymptotically approaching an overscroll of `viewport_extent`.
-fn rubber_band_drag(
-    mut offset: f32,
-    mut delta: f32,
-    bounds: Rangef,
-    viewport_extent: f32,
-    slope: f32,
-) -> f32 {
+fn rubber_band_drag(mut offset: f32, mut delta: f32, bounds: Rangef, viewport_extent: f32, slope: f32) -> f32 {
     // Move freely while inside the bounds:
     if bounds.contains(offset) {
         let unclamped = offset + delta;
@@ -300,11 +256,7 @@ fn rubber_band_drag(
     // iOS: `overscroll(raw) = d · (1 − 1 / (slope · raw / d + 1))`, with `d = viewport_extent`.
     // Differentiating gives `d overscroll / d raw = slope · (1 − overscroll / d)²`,
     // which we integrate incrementally so we don't need to track the raw finger distance.
-    let fraction = if 0.0 < viewport_extent {
-        (overscroll.abs() / viewport_extent).min(1.0)
-    } else {
-        1.0
-    };
+    let fraction = if 0.0 < viewport_extent { (overscroll.abs() / viewport_extent).min(1.0) } else { 1.0 };
     let factor = slope * (1.0 - fraction).powi(2);
 
     let new_overscroll = overscroll + delta * factor;
@@ -341,27 +293,11 @@ mod tests {
     const DT: f32 = 1.0 / 60.0;
 
     fn physics(rubber_band: bool) -> AxisPhysics {
-        AxisPhysics {
-            bounds: Rangef::new(0.0, 100.0),
-            viewport_extent: 200.0,
-            style: KineticScrollStyle {
-                rubber_band,
-                ..Default::default()
-            },
-        }
+        AxisPhysics { bounds: Rangef::new(0.0, 100.0), viewport_extent: 200.0, style: KineticScrollStyle { rubber_band, ..Default::default() } }
     }
 
-    fn wheel(
-        delta: f32,
-        source: Option<MouseWheelSource>,
-        can_chain_to_parent: bool,
-    ) -> WheelScroll {
-        WheelScroll {
-            delta,
-            source,
-            can_chain_to_parent,
-            dt: DT,
-        }
+    fn wheel(delta: f32, source: Option<MouseWheelSource>, can_chain_to_parent: bool) -> WheelScroll {
+        WheelScroll { delta, source, can_chain_to_parent, dt: DT }
     }
 
     /// Run `step` until it stops, returning the lowest offset seen.
@@ -382,10 +318,7 @@ mod tests {
 
         // At the edge, the content follows the finger with the given slope:
         let offset = p.drag(0.0, -10.0);
-        assert!(
-            (offset - -10.0 * TOUCH_RUBBER_BAND_SLOPE).abs() < 1e-4,
-            "{offset}"
-        );
+        assert!((offset - -10.0 * TOUCH_RUBBER_BAND_SLOPE).abs() < 1e-4, "{offset}");
         assert!(p.is_rubber_banding(offset));
 
         // Resistance grows the further out we go, and we never exceed the viewport:
@@ -398,17 +331,11 @@ mod tests {
             prev_step = step;
             offset = new_offset;
         }
-        assert!(
-            -p.viewport_extent < offset && offset < -p.viewport_extent * 0.9,
-            "{offset}"
-        );
+        assert!(-p.viewport_extent < offset && offset < -p.viewport_extent * 0.9, "{offset}");
 
         // A delta that is partially inside is split: free up to the edge, resisted after.
         let offset = p.drag(5.0, -15.0);
-        assert!(
-            (offset - -10.0 * TOUCH_RUBBER_BAND_SLOPE).abs() < 1e-4,
-            "{offset}"
-        );
+        assert!((offset - -10.0 * TOUCH_RUBBER_BAND_SLOPE).abs() < 1e-4, "{offset}");
     }
 
     #[test]
@@ -466,29 +393,14 @@ mod tests {
         let fingers = Some(MouseWheelSource::Trackpad);
 
         // At the edge with a parent: let the parent have it.
-        assert!(!p.wheel(
-            &mut offset,
-            &mut vel,
-            wheel(-10.0, fingers, true),
-            &mut bounced
-        ));
+        assert!(!p.wheel(&mut offset, &mut vel, wheel(-10.0, fingers, true), &mut bounced));
         assert_eq!(offset, 0.0);
 
         // But once we have scrolled, we own the gesture, and rubber-band past the edge:
         offset = 5.0;
-        assert!(p.wheel(
-            &mut offset,
-            &mut vel,
-            wheel(-10.0, fingers, true),
-            &mut bounced
-        ));
+        assert!(p.wheel(&mut offset, &mut vel, wheel(-10.0, fingers, true), &mut bounced));
         assert!(offset < 0.0, "{offset}");
-        assert!(p.wheel(
-            &mut offset,
-            &mut vel,
-            wheel(-10.0, fingers, true),
-            &mut bounced
-        ));
+        assert!(p.wheel(&mut offset, &mut vel, wheel(-10.0, fingers, true), &mut bounced));
     }
 
     #[test]
@@ -500,31 +412,16 @@ mod tests {
 
         // Scrolls normally until the edge, where the excess becomes velocity:
         for _ in 0..3 {
-            assert!(p.wheel(
-                &mut offset,
-                &mut vel,
-                wheel(-10.0, momentum, false),
-                &mut bounced
-            ));
+            assert!(p.wheel(&mut offset, &mut vel, wheel(-10.0, momentum, false), &mut bounced));
         }
         assert_eq!((offset, vel, bounced), (0.0, 0.0, false));
-        assert!(p.wheel(
-            &mut offset,
-            &mut vel,
-            wheel(-10.0, momentum, false),
-            &mut bounced
-        ));
+        assert!(p.wheel(&mut offset, &mut vel, wheel(-10.0, momentum, false), &mut bounced));
         assert!(bounced);
         assert!(vel < 0.0, "{vel}");
 
         // Further momentum is swallowed without effect:
         let before = (offset, vel);
-        assert!(p.wheel(
-            &mut offset,
-            &mut vel,
-            wheel(-10.0, momentum, false),
-            &mut bounced
-        ));
+        assert!(p.wheel(&mut offset, &mut vel, wheel(-10.0, momentum, false), &mut bounced));
         assert_eq!((offset, vel), before);
 
         // The spring bounces us out and back:
@@ -533,12 +430,7 @@ mod tests {
         assert_eq!((offset, vel), (0.0, 0.0));
 
         // A new finger gesture resets the bounce:
-        assert!(p.wheel(
-            &mut offset,
-            &mut vel,
-            wheel(-1.0, Some(MouseWheelSource::Trackpad), false),
-            &mut bounced
-        ));
+        assert!(p.wheel(&mut offset, &mut vel, wheel(-1.0, Some(MouseWheelSource::Trackpad), false), &mut bounced));
         assert!(!bounced);
     }
 

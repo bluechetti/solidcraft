@@ -28,40 +28,21 @@ impl PathShape {
     /// Use [`Shape::line_segment`] instead if your line only connects two points.
     #[inline]
     pub fn line(points: Vec<Pos2>, stroke: impl Into<PathStroke>) -> Self {
-        Self {
-            points,
-            closed: false,
-            fill: Default::default(),
-            stroke: stroke.into(),
-        }
+        Self { points, closed: false, fill: Default::default(), stroke: stroke.into() }
     }
 
     /// A line that closes back to the start point again.
     #[inline]
     pub fn closed_line(points: Vec<Pos2>, stroke: impl Into<PathStroke>) -> Self {
-        Self {
-            points,
-            closed: true,
-            fill: Default::default(),
-            stroke: stroke.into(),
-        }
+        Self { points, closed: true, fill: Default::default(), stroke: stroke.into() }
     }
 
     /// A convex polygon with a fill and optional stroke.
     ///
     /// The most performant winding order is clockwise.
     #[inline]
-    pub fn convex_polygon(
-        points: Vec<Pos2>,
-        fill: impl Into<Color32>,
-        stroke: impl Into<PathStroke>,
-    ) -> Self {
-        Self {
-            points,
-            closed: true,
-            fill: fill.into(),
-            stroke: stroke.into(),
-        }
+    pub fn convex_polygon(points: Vec<Pos2>, fill: impl Into<Color32>, stroke: impl Into<PathStroke>) -> Self {
+        Self { points, closed: true, fill: fill.into(), stroke: stroke.into() }
     }
 
     /// The visual bounding rectangle (includes stroke width)

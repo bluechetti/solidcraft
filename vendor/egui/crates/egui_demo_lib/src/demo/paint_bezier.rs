@@ -1,6 +1,5 @@
 use egui::{
-    Color32, Frame, Grid, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, Vec2, Widget as _,
-    Window, emath,
+    Color32, Frame, Grid, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, Vec2, Widget as _, Window, emath,
     epaint::{self, CubicBezierShape, PathShape, QuadraticBezierShape},
     pos2,
 };
@@ -30,12 +29,7 @@ impl Default for PaintBezier {
     fn default() -> Self {
         Self {
             degree: 4,
-            control_points: [
-                pos2(50.0, 50.0),
-                pos2(60.0, 250.0),
-                pos2(200.0, 200.0),
-                pos2(250.0, 50.0),
-            ],
+            control_points: [pos2(50.0, 50.0), pos2(60.0, 250.0), pos2(200.0, 200.0), pos2(250.0, 50.0)],
             stroke: Stroke::new(1.0, Color32::from_rgb(25, 200, 100)),
             fill: Color32::from_rgb(50, 100, 150).linear_multiply(0.25),
             aux_stroke: Stroke::new(1.0, Color32::RED.linear_multiply(0.25)),
@@ -47,27 +41,23 @@ impl Default for PaintBezier {
 impl PaintBezier {
     pub fn ui_control(&mut self, ui: &mut egui::Ui) {
         ui.collapsing("Colors", |ui| {
-            Grid::new("colors")
-                .num_columns(2)
-                .spacing([12.0, 8.0])
-                .striped(true)
-                .show(ui, |ui| {
-                    ui.label("Fill color");
-                    ui.color_edit_button_srgba(&mut self.fill);
-                    ui.end_row();
+            Grid::new("colors").num_columns(2).spacing([12.0, 8.0]).striped(true).show(ui, |ui| {
+                ui.label("Fill color");
+                ui.color_edit_button_srgba(&mut self.fill);
+                ui.end_row();
 
-                    ui.label("Curve Stroke");
-                    ui.add(&mut self.stroke);
-                    ui.end_row();
+                ui.label("Curve Stroke");
+                ui.add(&mut self.stroke);
+                ui.end_row();
 
-                    ui.label("Auxiliary Stroke");
-                    ui.add(&mut self.aux_stroke);
-                    ui.end_row();
+                ui.label("Auxiliary Stroke");
+                ui.add(&mut self.aux_stroke);
+                ui.end_row();
 
-                    ui.label("Bounding Box Stroke");
-                    ui.add(&mut self.bounding_box_stroke);
-                    ui.end_row();
-                });
+                ui.label("Bounding Box Stroke");
+                ui.add(&mut self.bounding_box_stroke);
+                ui.end_row();
+            });
         });
 
         ui.collapsing("Global tessellation options", |ui| {
@@ -83,13 +73,9 @@ impl PaintBezier {
     }
 
     pub fn ui_content(&mut self, ui: &mut Ui) -> egui::Response {
-        let (response, painter) =
-            ui.allocate_painter(Vec2::new(ui.available_width(), 300.0), Sense::hover());
+        let (response, painter) = ui.allocate_painter(Vec2::new(ui.available_width(), 300.0), Sense::hover());
 
-        let to_screen = emath::RectTransform::from_to(
-            Rect::from_min_size(Pos2::ZERO, response.rect.size()),
-            response.rect,
-        );
+        let to_screen = emath::RectTransform::from_to(Rect::from_min_size(Pos2::ZERO, response.rect.size()), response.rect);
 
         let control_point_radius = 8.0;
 
@@ -116,36 +102,19 @@ impl PaintBezier {
             })
             .collect();
 
-        let points_in_screen: Vec<Pos2> = self
-            .control_points
-            .iter()
-            .take(self.degree)
-            .map(|p| to_screen * *p)
-            .collect();
+        let points_in_screen: Vec<Pos2> = self.control_points.iter().take(self.degree).map(|p| to_screen * *p).collect();
 
         match self.degree {
             3 => {
                 let points = points_in_screen.clone().try_into().unwrap();
-                let shape =
-                    QuadraticBezierShape::from_points_stroke(points, true, self.fill, self.stroke);
-                painter.add(epaint::RectShape::stroke(
-                    shape.visual_bounding_rect(),
-                    0.0,
-                    self.bounding_box_stroke,
-                    StrokeKind::Outside,
-                ));
+                let shape = QuadraticBezierShape::from_points_stroke(points, true, self.fill, self.stroke);
+                painter.add(epaint::RectShape::stroke(shape.visual_bounding_rect(), 0.0, self.bounding_box_stroke, StrokeKind::Outside));
                 painter.add(shape);
             }
             4 => {
                 let points = points_in_screen.clone().try_into().unwrap();
-                let shape =
-                    CubicBezierShape::from_points_stroke(points, true, self.fill, self.stroke);
-                painter.add(epaint::RectShape::stroke(
-                    shape.visual_bounding_rect(),
-                    0.0,
-                    self.bounding_box_stroke,
-                    StrokeKind::Outside,
-                ));
+                let shape = CubicBezierShape::from_points_stroke(points, true, self.fill, self.stroke);
+                painter.add(epaint::RectShape::stroke(shape.visual_bounding_rect(), 0.0, self.bounding_box_stroke, StrokeKind::Outside));
                 painter.add(shape);
             }
             _ => {

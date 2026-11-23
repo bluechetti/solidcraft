@@ -14,10 +14,7 @@ pub(crate) struct WebFile {
 impl From<web_sys::File> for WebFile {
     fn from(file: web_sys::File) -> Self {
         let path = file.name().into();
-        Self {
-            file: SendWrapper::new(file),
-            path,
-        }
+        Self { file: SendWrapper::new(file), path }
     }
 }
 
@@ -30,16 +27,10 @@ impl egui::DroppedFile for WebFile {
         let file = web_sys::File::clone(&self.file);
         Box::pin(async move {
             if file.size() > f64::from(u32::MAX) {
-                return Err(format!(
-                    "File is too large: browser file reads are limited to {} bytes",
-                    u32::MAX
-                ));
+                return Err(format!("File is too large: browser file reads are limited to {} bytes", u32::MAX));
             }
 
-            let array_buffer = file
-                .array_buffer()
-                .await
-                .map_err(|err| crate::web::string_from_js_value(&err))?;
+            let array_buffer = file.array_buffer().await.map_err(|err| crate::web::string_from_js_value(&err))?;
             Ok(js_sys::Uint8Array::new(&array_buffer).to_vec())
         })
     }

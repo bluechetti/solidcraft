@@ -11,10 +11,7 @@ fn main() {
 
     let _ = eframe::run_native(
         "Background Logic Test",
-        eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default().with_inner_size([400.0, 200.0]),
-            ..Default::default()
-        },
+        eframe::NativeOptions { viewport: egui::ViewportBuilder::default().with_inner_size([400.0, 200.0]), ..Default::default() },
         Box::new(|_cc| Ok(Box::new(App))),
     );
 }
@@ -37,23 +34,13 @@ impl eframe::App for App {
 
 fn viewport_info(ctx: &egui::Context) -> String {
     ctx.input(|i| {
-        let ViewportInfo {
-            minimized,
-            focused,
-            occluded,
-            ..
-        } = i.viewport();
+        let ViewportInfo { minimized, focused, occluded, .. } = i.viewport();
 
         let visible = i.viewport().visible();
 
         let mut s = String::new();
 
-        let flags = [
-            ("focused", focused),
-            ("occluded", occluded),
-            ("minimized", minimized),
-            ("visible", &visible),
-        ];
+        let flags = [("focused", focused), ("occluded", occluded), ("minimized", minimized), ("visible", &visible)];
         for (name, value) in flags {
             if let Some(value) = value {
                 use core::fmt::Write as _;

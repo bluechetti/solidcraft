@@ -23,9 +23,7 @@ impl ScreenshotCallback {
     ///
     /// This doesn't request a new frame when the data arrives. Call `ctx.request_repaint` if needed.
     pub fn new(callback: impl FnOnce(Arc<ColorImage>) + Send + 'static) -> Self {
-        Self {
-            callback: Arc::new(Mutex::new(Some(Box::new(callback)))),
-        }
+        Self { callback: Arc::new(Mutex::new(Some(Box::new(callback)))) }
     }
 
     /// Complete this screenshot request, invoking the callback.
@@ -41,9 +39,7 @@ impl ScreenshotCallback {
 
 impl core::fmt::Debug for ScreenshotCallback {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("ScreenshotCallback")
-            .field("called", &self.callback.lock().is_none())
-            .finish()
+        f.debug_struct("ScreenshotCallback").field("called", &self.callback.lock().is_none()).finish()
     }
 }
 

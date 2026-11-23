@@ -45,10 +45,7 @@ pub struct Aligned {
 impl Aligned {
     /// Align the contents within the available space of the parent [`Ui`].
     pub fn new(align2: Align2) -> Self {
-        Self {
-            align2,
-            id_salt: None,
-        }
+        Self { align2, id_salt: None }
     }
 
     /// A source for the unique [`crate::Id`], e.g. `.id_salt("second_aligned")` or `.id_salt(loop_index)`.
@@ -130,10 +127,7 @@ impl Aligned {
 /// Never places the contents above or to the left of the available space,
 /// even if the contents are larger than the available space.
 fn place(align2: Align2, size: Vec2, available_rect: Rect) -> Rect {
-    let left_top = align2
-        .align_size_within_rect(size, available_rect)
-        .left_top()
-        .max(available_rect.left_top());
+    let left_top = align2.align_size_within_rect(size, available_rect).left_top().max(available_rect.left_top());
     Rect::from_min_size(left_top, size)
 }
 

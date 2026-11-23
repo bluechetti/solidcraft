@@ -147,19 +147,12 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         let ctx = egui::Context::default();
         ctx.begin_pass(RawInput::default());
 
-        let painter =
-            egui::Painter::new(ctx.clone(), egui::LayerId::background(), ctx.content_rect());
+        let painter = egui::Painter::new(ctx.clone(), egui::LayerId::background(), ctx.content_rect());
 
         c.bench_function("Painter::rect", |b| {
             let rect = painter.clip_rect();
             b.iter(|| {
-                painter.rect(
-                    rect,
-                    2.0,
-                    egui::Color32::RED,
-                    (1.0, egui::Color32::WHITE),
-                    egui::StrokeKind::Inside,
-                );
+                painter.rect(rect, 2.0, egui::Color32::RED, (1.0, egui::Color32::WHITE), egui::StrokeKind::Inside);
             });
         });
 
@@ -171,32 +164,19 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         let wrap_width = 512.0;
         let font_id = egui::FontId::default();
         let text_color = egui::Color32::WHITE;
-        let mut fonts =
-            egui::epaint::text::Fonts::new(Default::default(), egui::FontDefinitions::default());
+        let mut fonts = egui::epaint::text::Fonts::new(Default::default(), egui::FontDefinitions::default());
         {
             c.bench_function("text_layout_uncached", |b| {
                 b.iter(|| {
                     use egui::epaint::text::LayoutJob;
 
-                    let job = LayoutJob::simple(
-                        LOREM_IPSUM_LONG.to_owned(),
-                        font_id.clone(),
-                        text_color,
-                        wrap_width,
-                    );
+                    let job = LayoutJob::simple(LOREM_IPSUM_LONG.to_owned(), font_id.clone(), text_color, wrap_width);
                     fonts.layout_uncached(pixels_per_point, job.into())
                 });
             });
         }
         c.bench_function("text_layout_cached", |b| {
-            b.iter(|| {
-                fonts.with_pixels_per_point(pixels_per_point).layout(
-                    LOREM_IPSUM_LONG.to_owned(),
-                    font_id.clone(),
-                    text_color,
-                    wrap_width,
-                )
-            });
+            b.iter(|| fonts.with_pixels_per_point(pixels_per_point).layout(LOREM_IPSUM_LONG.to_owned(), font_id.clone(), text_color, wrap_width));
         });
 
         c.bench_function("text_layout_cached_many_lines_modified", |b| {
@@ -213,39 +193,21 @@ pub fn criterion_benchmark(c: &mut Criterion) {
 
             let mut rng = rand::rng();
             b.iter(|| {
-                fonts.begin_pass(
-                    egui::epaint::TextOptions::default(),
-                    egui::epaint::text::ViewportKey::default(),
-                );
+                fonts.begin_pass(egui::epaint::TextOptions::default(), egui::epaint::text::ViewportKey::default());
 
                 // Delete a random character, simulating a user making an edit in a long file:
                 let mut new_string = string.clone();
                 let idx = rng.random_range(0..string.len());
                 new_string.remove(idx);
 
-                fonts.with_pixels_per_point(pixels_per_point).layout(
-                    new_string,
-                    font_id.clone(),
-                    text_color,
-                    wrap_width,
-                );
+                fonts.with_pixels_per_point(pixels_per_point).layout(new_string, font_id.clone(), text_color, wrap_width);
             });
         });
 
-        let galley = fonts.with_pixels_per_point(pixels_per_point).layout(
-            LOREM_IPSUM_LONG.to_owned(),
-            font_id,
-            text_color,
-            wrap_width,
-        );
+        let galley = fonts.with_pixels_per_point(pixels_per_point).layout(LOREM_IPSUM_LONG.to_owned(), font_id, text_color, wrap_width);
         let font_image_size = fonts.font_image_size();
         let prepared_discs = fonts.texture_atlas().prepared_discs();
-        let mut tessellator = egui::epaint::Tessellator::new(
-            1.0,
-            Default::default(),
-            font_image_size,
-            prepared_discs,
-        );
+        let mut tessellator = egui::epaint::Tessellator::new(1.0, Default::default(), font_image_size, prepared_discs);
         let mut mesh = egui::epaint::Mesh::default();
         let text_shape = TextShape::new(egui::Pos2::ZERO, galley, text_color);
         c.bench_function("tessellate_text", |b| {

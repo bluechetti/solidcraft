@@ -37,16 +37,11 @@ impl WebInput {
             time: Some(super::now_sec()),
             ..self.raw.take()
         };
-        let viewport = raw_input
-            .viewports
-            .entry(egui::ViewportId::ROOT)
-            .or_default();
+        let viewport = raw_input.viewports.entry(egui::ViewportId::ROOT).or_default();
         viewport.native_pixels_per_point = Some(super::native_pixels_per_point());
 
         // A hidden browser tab is effectively occluded.
-        let hidden = web_sys::window()
-            .and_then(|w| w.document())
-            .is_some_and(|doc| doc.hidden());
+        let hidden = web_sys::window().and_then(|w| w.document()).is_some_and(|doc| doc.hidden());
         viewport.occluded = Some(hidden);
 
         raw_input
@@ -71,9 +66,7 @@ impl WebInput {
     pub fn set_modifiers(&mut self, modifiers: egui::Modifiers) {
         if self.modifiers != modifiers {
             self.modifiers = modifiers;
-            self.raw
-                .events
-                .push(egui::Event::ModifiersChanged(modifiers));
+            self.raw.events.push(egui::Event::ModifiersChanged(modifiers));
         }
     }
 }
@@ -155,12 +148,7 @@ pub fn web_location() -> epi::Location {
 
     let hash = percent_decode(&location.hash().unwrap_or_default());
 
-    let query = location
-        .search()
-        .unwrap_or_default()
-        .strip_prefix('?')
-        .unwrap_or_default()
-        .to_owned();
+    let query = location.search().unwrap_or_default().strip_prefix('?').unwrap_or_default().to_owned();
 
     epi::Location {
         // TODO(emilk): should we really percent-decode the url? 🤷‍♂️
@@ -183,13 +171,9 @@ fn parse_query_map(query: &str) -> BTreeMap<String, Vec<String>> {
     for pair in query.split('&') {
         if !pair.is_empty() {
             if let Some((key, value)) = pair.split_once('=') {
-                map.entry(percent_decode(key))
-                    .or_default()
-                    .push(percent_decode(value));
+                map.entry(percent_decode(key)).or_default().push(percent_decode(value));
             } else {
-                map.entry(percent_decode(pair))
-                    .or_default()
-                    .push(String::new());
+                map.entry(percent_decode(pair)).or_default().push(String::new());
             }
         }
     }
@@ -202,27 +186,12 @@ fn parse_query_map(query: &str) -> BTreeMap<String, Vec<String>> {
 fn test_parse_query() {
     assert_eq!(parse_query_map(""), BTreeMap::default());
     assert_eq!(parse_query_map("foo"), BTreeMap::from_iter([("foo", "")]));
-    assert_eq!(
-        parse_query_map("foo=bar"),
-        BTreeMap::from_iter([("foo", "bar")])
-    );
-    assert_eq!(
-        parse_query_map("foo=bar&baz=42"),
-        BTreeMap::from_iter([("foo", "bar"), ("baz", "42")])
-    );
-    assert_eq!(
-        parse_query_map("foo&baz=42"),
-        BTreeMap::from_iter([("foo", ""), ("baz", "42")])
-    );
-    assert_eq!(
-        parse_query_map("foo&baz&&"),
-        BTreeMap::from_iter([("foo", ""), ("baz", "")])
-    );
+    assert_eq!(parse_query_map("foo=bar"), BTreeMap::from_iter([("foo", "bar")]));
+    assert_eq!(parse_query_map("foo=bar&baz=42"), BTreeMap::from_iter([("foo", "bar"), ("baz", "42")]));
+    assert_eq!(parse_query_map("foo&baz=42"), BTreeMap::from_iter([("foo", ""), ("baz", "42")]));
+    assert_eq!(parse_query_map("foo&baz&&"), BTreeMap::from_iter([("foo", ""), ("baz", "")]));
     assert_eq!(
         parse_query_map("badger=data.rrd%3Fparam1%3Dfoo%26param2%3Dbar&mushroom=snake"),
-        BTreeMap::from_iter([
-            ("badger", "data.rrd?param1=foo&param2=bar"),
-            ("mushroom", "snake")
-        ])
+        BTreeMap::from_iter([("badger", "data.rrd?param1=foo&param2=bar"), ("mushroom", "snake")])
     );
 }

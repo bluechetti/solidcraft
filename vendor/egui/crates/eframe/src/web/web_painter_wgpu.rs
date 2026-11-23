@@ -33,9 +33,7 @@ struct WebDisplay;
 
 #[cfg(target_arch = "wasm32")]
 impl egui_wgpu::wgpu::rwh::HasDisplayHandle for WebDisplay {
-    fn display_handle(
-        &self,
-    ) -> Result<egui_wgpu::wgpu::rwh::DisplayHandle<'_>, egui_wgpu::wgpu::rwh::HandleError> {
+    fn display_handle(&self) -> Result<egui_wgpu::wgpu::rwh::DisplayHandle<'_>, egui_wgpu::wgpu::rwh::HandleError> {
         Ok(egui_wgpu::wgpu::rwh::DisplayHandle::web())
     }
 }
@@ -45,22 +43,13 @@ impl WebPainterWgpu {
         self.render_state.clone()
     }
 
-    pub fn generate_depth_texture_view(
-        &self,
-        render_state: &RenderState,
-        width_in_pixels: u32,
-        height_in_pixels: u32,
-    ) -> Option<wgpu::TextureView> {
+    pub fn generate_depth_texture_view(&self, render_state: &RenderState, width_in_pixels: u32, height_in_pixels: u32) -> Option<wgpu::TextureView> {
         let device = &render_state.device;
         self.depth_stencil_format.map(|depth_stencil_format| {
             device
                 .create_texture(&wgpu::TextureDescriptor {
                     label: Some("egui_depth_texture"),
-                    size: wgpu::Extent3d {
-                        width: width_in_pixels,
-                        height: height_in_pixels,
-                        depth_or_array_layers: 1,
-                    },
+                    size: wgpu::Extent3d { width: width_in_pixels, height: height_in_pixels, depth_or_array_layers: 1 },
                     mip_level_count: 1,
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
@@ -72,11 +61,7 @@ impl WebPainterWgpu {
         })
     }
 
-    pub async fn new(
-        ctx: egui::Context,
-        canvas: web_sys::HtmlCanvasElement,
-        options: &crate::WebOptions,
-    ) -> Result<Self, String> {
+    pub async fn new(ctx: egui::Context, canvas: web_sys::HtmlCanvasElement, options: &crate::WebOptions) -> Result<Self, String> {
         log::debug!("Creating wgpu painter");
 
         // Inject the display handle into the wgpu setup so that wgpu can create surfaces on WebGL.
@@ -90,9 +75,8 @@ impl WebPainterWgpu {
         }
 
         let instance = wgpu_options.wgpu_setup.new_instance().await;
-        let surface = instance
-            .create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone()))
-            .map_err(|err| format!("failed to create wgpu surface: {err}"))?;
+        let surface =
+            instance.create_surface(wgpu::SurfaceTarget::Canvas(canvas.clone())).map_err(|err| format!("failed to create wgpu surface: {err}"))?;
 
         let depth_stencil_format = egui_wgpu::depth_format_from_bits(options.depth_buffer, 0);
 
@@ -100,11 +84,7 @@ impl WebPainterWgpu {
             &wgpu_options,
             &instance,
             Some(&surface),
-            egui_wgpu::RendererOptions {
-                dithering: options.dithering,
-                depth_stencil_format,
-                ..Default::default()
-            },
+            egui_wgpu::RendererOptions { dithering: options.dithering, depth_stencil_format, ..Default::default() },
         )
         .await
         .map_err(|err| err.to_string())?;
@@ -145,9 +125,7 @@ impl WebPainter for WebPainterWgpu {
     }
 
     fn max_texture_side(&self) -> usize {
-        self.render_state.as_ref().map_or(0, |state| {
-            state.device.limits().max_texture_dimension_2d as _
-        })
+        self.render_state.as_ref().map_or(0, |state| state.device.limits().max_texture_dimension_2d as _)
     }
 
     fn paint_and_update_textures(
@@ -163,19 +141,14 @@ impl WebPainter for WebPainterWgpu {
         let size_in_pixels = [self.canvas.width(), self.canvas.height()];
 
         let Some(render_state) = &self.render_state else {
-            return Err(JsValue::from_str(
-                "Can't paint, wgpu renderer was already disposed",
-            ));
+            return Err(JsValue::from_str("Can't paint, wgpu renderer was already disposed"));
         };
 
         // If the previous frame produced `CurrentSurfaceTexture::Lost`, drop and recreate the
         // surface from the canvas before re-borrowing `self.render_state` for the rest of paint.
         if self.needs_recreate {
             self.needs_recreate = false;
-            match self
-                .instance
-                .create_surface(wgpu::SurfaceTarget::Canvas(self.canvas.clone()))
-            {
+            match self.instance.create_surface(wgpu::SurfaceTarget::Canvas(self.canvas.clone())) {
                 Ok(new_surface) => {
                     new_surface.configure(&render_state.device, &self.surface_configuration);
                     self.surface = new_surface;
@@ -187,39 +160,21 @@ impl WebPainter for WebPainterWgpu {
         }
 
         let mut encoder =
-            render_state
-                .device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("egui_webpainter_paint_and_update_textures"),
-                });
+            render_state.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("egui_webpainter_paint_and_update_textures") });
 
         // Upload all resources for the GPU.
-        let screen_descriptor = egui_wgpu::ScreenDescriptor {
-            size_in_pixels,
-            pixels_per_point,
-        };
+        let screen_descriptor = egui_wgpu::ScreenDescriptor { size_in_pixels, pixels_per_point };
 
         let user_cmd_bufs = {
             let mut renderer = render_state.renderer.write();
             #[expect(clippy::iter_over_hash_type)] // Order doesn't matter here
             for (id, image_deltas) in textures_delta.set.drain() {
                 for image_delta in image_deltas {
-                    renderer.update_texture(
-                        &render_state.device,
-                        &render_state.queue,
-                        id,
-                        &image_delta,
-                    );
+                    renderer.update_texture(&render_state.device, &render_state.queue, id, &image_delta);
                 }
             }
 
-            renderer.update_buffers(
-                &render_state.device,
-                &render_state.queue,
-                &mut encoder,
-                clipped_primitives,
-                &screen_descriptor,
-            )
+            renderer.update_buffers(&render_state.device, &render_state.queue, &mut encoder, clipped_primitives, &screen_descriptor)
         };
 
         // Resize surface if needed
@@ -227,23 +182,15 @@ impl WebPainter for WebPainterWgpu {
         let frame_and_capture_buffer = if is_zero_sized_surface {
             None
         } else {
-            if size_in_pixels[0] != self.surface_configuration.width
-                || size_in_pixels[1] != self.surface_configuration.height
-            {
+            if size_in_pixels[0] != self.surface_configuration.width || size_in_pixels[1] != self.surface_configuration.height {
                 self.surface_configuration.width = size_in_pixels[0];
                 self.surface_configuration.height = size_in_pixels[1];
-                self.surface
-                    .configure(&render_state.device, &self.surface_configuration);
-                self.depth_texture_view = self.generate_depth_texture_view(
-                    render_state,
-                    size_in_pixels[0],
-                    size_in_pixels[1],
-                );
+                self.surface.configure(&render_state.device, &self.surface_configuration);
+                self.depth_texture_view = self.generate_depth_texture_view(render_state, size_in_pixels[0], size_in_pixels[1]);
             }
 
             if self.needs_reconfigure {
-                self.surface
-                    .configure(&render_state.device, &self.surface_configuration);
+                self.surface.configure(&render_state.device, &self.surface_configuration);
                 self.needs_reconfigure = false;
             }
 
@@ -256,8 +203,7 @@ impl WebPainter for WebPainterWgpu {
                 other => {
                     match (*self.on_surface_status)(&other) {
                         SurfaceErrorAction::Reconfigure => {
-                            self.surface
-                                .configure(&render_state.device, &self.surface_configuration);
+                            self.surface.configure(&render_state.device, &self.surface_configuration);
                         }
                         SurfaceErrorAction::RecreateSurface => {
                             // Full recovery needs `&mut self`, which conflicts with the live
@@ -279,17 +225,14 @@ impl WebPainter for WebPainterWgpu {
                 let target_texture = if capture {
                     let size = output_frame.texture.size();
                     let format = output_frame.texture.format();
-                    let capture_state = self.screen_capture_state.get_or_insert_with(|| {
-                        CaptureState::new(&render_state.device, size, format)
-                    });
+                    let capture_state = self.screen_capture_state.get_or_insert_with(|| CaptureState::new(&render_state.device, size, format));
                     capture_state.update(&render_state.device, size);
 
                     &capture_state.texture
                 } else {
                     &output_frame.texture
                 };
-                let target_view =
-                    target_texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let target_view = target_texture.create_view(&wgpu::TextureViewDescriptor::default());
 
                 let render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -311,9 +254,7 @@ impl WebPainter for WebPainterWgpu {
                             view,
                             depth_ops: self
                                 .depth_stencil_format
-                                .is_some_and(|depth_stencil_format| {
-                                    depth_stencil_format.has_depth_aspect()
-                                })
+                                .is_some_and(|depth_stencil_format| depth_stencil_format.has_depth_aspect())
                                 .then_some(wgpu::Operations {
                                     load: wgpu::LoadOp::Clear(1.0),
                                     // It is very unlikely that the depth buffer is needed after egui finished rendering
@@ -322,13 +263,8 @@ impl WebPainter for WebPainterWgpu {
                                 }),
                             stencil_ops: self
                                 .depth_stencil_format
-                                .is_some_and(|depth_stencil_format| {
-                                    depth_stencil_format.has_stencil_aspect()
-                                })
-                                .then_some(wgpu::Operations {
-                                    load: wgpu::LoadOp::Clear(0),
-                                    store: wgpu::StoreOp::Discard,
-                                }),
+                                .is_some_and(|depth_stencil_format| depth_stencil_format.has_stencil_aspect())
+                                .then_some(wgpu::Operations { load: wgpu::LoadOp::Clear(0), store: wgpu::StoreOp::Discard }),
                         }
                     }),
                     label: Some("egui_render"),
@@ -340,31 +276,20 @@ impl WebPainter for WebPainterWgpu {
                 // Forgetting the pass' lifetime means that we are no longer compile-time protected from
                 // runtime errors caused by accessing the parent encoder before the render pass is dropped.
                 // Since we don't pass it on to the renderer, we should be perfectly safe against this mistake here!
-                renderer.render(
-                    &mut render_pass.forget_lifetime(),
-                    clipped_primitives,
-                    &screen_descriptor,
-                );
+                renderer.render(&mut render_pass.forget_lifetime(), clipped_primitives, &screen_descriptor);
             }
 
-            let capture_buffer =
-                if capture && let Some(capture_state) = &mut self.screen_capture_state {
-                    Some(capture_state.copy_textures(
-                        &render_state.device,
-                        Some(&output_frame),
-                        &mut encoder,
-                    ))
-                } else {
-                    None
-                };
+            let capture_buffer = if capture && let Some(capture_state) = &mut self.screen_capture_state {
+                Some(capture_state.copy_textures(&render_state.device, Some(&output_frame), &mut encoder))
+            } else {
+                None
+            };
 
             Some((output_frame, capture_buffer))
         };
 
         // Submit the commands: both the main buffer and user-defined ones.
-        render_state
-            .queue
-            .submit(core::iter::chain(user_cmd_bufs, [encoder.finish()]));
+        render_state.queue.submit(core::iter::chain(user_cmd_bufs, [encoder.finish()]));
 
         if let Some((frame, capture_buffer)) = frame_and_capture_buffer {
             if let Some(capture_buffer) = capture_buffer

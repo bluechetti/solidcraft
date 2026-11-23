@@ -47,10 +47,7 @@ fn has_name(node: &AccessKitNode<'_>) -> bool {
     let has_label = node.label().is_some_and(|label| !label.trim().is_empty());
     // A hint is what a screen reader falls back to for an unlabelled text field.
     // Read the raw data: the consumer hides the placeholder once the field has text.
-    let has_placeholder = node
-        .data()
-        .placeholder()
-        .is_some_and(|placeholder| !placeholder.trim().is_empty());
+    let has_placeholder = node.data().placeholder().is_some_and(|placeholder| !placeholder.trim().is_empty());
     has_label || has_placeholder
 }
 

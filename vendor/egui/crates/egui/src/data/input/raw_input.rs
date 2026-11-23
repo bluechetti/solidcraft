@@ -74,14 +74,8 @@ pub struct RawInput {
     /// Dragged files dropped into egui.
     ///
     /// egui never reads the file contents.
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        doc = "Call [`crate::DroppedFile::bytes`] to read a dropped file."
-    )]
-    #[cfg_attr(
-        target_arch = "wasm32",
-        doc = "Call [`crate::DroppedFile::bytes_async`] to read a dropped file."
-    )]
+    #[cfg_attr(not(target_arch = "wasm32"), doc = "Call [`crate::DroppedFile::bytes`] to read a dropped file.")]
+    #[cfg_attr(target_arch = "wasm32", doc = "Call [`crate::DroppedFile::bytes_async`] to read a dropped file.")]
     ///
     /// Note: when using `eframe` on Windows, this will always be empty if drag-and-drop support has
     /// been disabled in [`crate::viewport::ViewportBuilder`].
@@ -133,11 +127,7 @@ impl RawInput {
     pub fn take(&mut self) -> Self {
         Self {
             viewport_id: self.viewport_id,
-            viewports: self
-                .viewports
-                .iter_mut()
-                .map(|(id, info)| (*id, info.take()))
-                .collect(),
+            viewports: self.viewports.iter_mut().map(|(id, info)| (*id, info.take())).collect(),
             screen_rect: self.screen_rect.take(),
             safe_area_insets: self.safe_area_insets.take(),
             max_texture_side: self.max_texture_side.take(),
@@ -205,13 +195,8 @@ impl RawInput {
         } = self;
 
         ui.label(format!("Active viewport: {viewport_id:?}"));
-        ui.label(format!(
-            "repaint_on_pointer_move: {repaint_on_pointer_move}"
-        ));
-        let ordered_viewports = viewports
-            .iter()
-            .map(|(id, value)| (*id, value))
-            .collect::<OrderedViewportIdMap<_>>();
+        ui.label(format!("repaint_on_pointer_move: {repaint_on_pointer_move}"));
+        let ordered_viewports = viewports.iter().map(|(id, value)| (*id, value)).collect::<OrderedViewportIdMap<_>>();
         for (id, viewport) in ordered_viewports {
             ui.group(|ui| {
                 ui.label(format!("Viewport {id:?}"));
@@ -236,8 +221,7 @@ impl RawInput {
         ui.label(format!("safe_area: {safe_area:?}"));
         ui.scope(|ui| {
             ui.set_min_height(150.0);
-            ui.label(format!("events: {events:#?}"))
-                .on_hover_text("key presses etc");
+            ui.label(format!("events: {events:#?}")).on_hover_text("key presses etc");
         });
     }
 }
@@ -251,24 +235,15 @@ mod tests {
     fn append_preserves_latest_specified_safe_area_insets() {
         let original = SafeAreaInsets(MarginF32::same(1.0));
         let replacement = SafeAreaInsets(MarginF32::same(2.0));
-        let mut input = RawInput {
-            safe_area_insets: Some(original),
-            ..Default::default()
-        };
+        let mut input = RawInput { safe_area_insets: Some(original), ..Default::default() };
 
         input.append(RawInput::default());
         assert_eq!(input.safe_area_insets, Some(original));
 
-        input.append(RawInput {
-            safe_area_insets: Some(replacement),
-            ..Default::default()
-        });
+        input.append(RawInput { safe_area_insets: Some(replacement), ..Default::default() });
         assert_eq!(input.safe_area_insets, Some(replacement));
 
-        input.append(RawInput {
-            safe_area_insets: Some(SafeAreaInsets::default()),
-            ..Default::default()
-        });
+        input.append(RawInput { safe_area_insets: Some(SafeAreaInsets::default()), ..Default::default() });
         assert_eq!(input.safe_area_insets, Some(SafeAreaInsets::default()));
     }
 }

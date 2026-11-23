@@ -7,10 +7,7 @@ use kittest::{NodeT as _, Queryable as _};
 
 /// The accessible name of every node with the given role.
 fn names_of(harness: &Harness<'_>, role: Role) -> Vec<Option<String>> {
-    harness
-        .get_all_by_role(role)
-        .map(|node| node.accesskit_node().label())
-        .collect()
+    harness.get_all_by_role(role).map(|node| node.accesskit_node().label()).collect()
 }
 
 #[test]
@@ -23,11 +20,9 @@ fn unnamed_button_fails_the_harness() {
 
 #[test]
 fn check_can_be_turned_off() {
-    let harness = Harness::builder()
-        .with_accessibility_check(false)
-        .build_ui(|ui| {
-            let _ = ui.add(Button::new(""));
-        });
+    let harness = Harness::builder().with_accessibility_check(false).build_ui(|ui| {
+        let _ = ui.add(Button::new(""));
+    });
 
     assert_eq!(harness.unnamed_widgets().len(), 1);
 }
@@ -53,18 +48,11 @@ fn slider_labelled_by_names_its_number_field() {
     let mut value = 0.5;
     let harness = Harness::new_ui(|ui| {
         let label = ui.label("Amount");
-        ui.add(Slider::new(&mut value, 0.0..=1.0))
-            .labelled_by(label.id);
+        ui.add(Slider::new(&mut value, 0.0..=1.0)).labelled_by(label.id);
     });
 
-    assert_eq!(
-        names_of(&harness, Role::Slider),
-        [Some("Amount".to_owned())]
-    );
-    assert_eq!(
-        names_of(&harness, Role::SpinButton),
-        [Some("Amount".to_owned())]
-    );
+    assert_eq!(names_of(&harness, Role::Slider), [Some("Amount".to_owned())]);
+    assert_eq!(names_of(&harness, Role::SpinButton), [Some("Amount".to_owned())]);
 }
 
 /// The slider keeps its name while its number field has focus,
@@ -73,8 +61,7 @@ fn slider_labelled_by_names_its_number_field() {
 fn slider_named_by_tooltip_keeps_name_when_number_field_has_focus() {
     let mut value = 0.5;
     let mut harness = Harness::new_ui(|ui| {
-        ui.add(Slider::new(&mut value, 0.0..=1.0))
-            .on_hover_text("Amount");
+        ui.add(Slider::new(&mut value, 0.0..=1.0)).on_hover_text("Amount");
     });
 
     harness.key_press(egui::Key::Tab); // Focus the slider
@@ -82,21 +69,9 @@ fn slider_named_by_tooltip_keeps_name_when_number_field_has_focus() {
     harness.key_press(egui::Key::Tab); // Focus the number field
     harness.run();
 
-    assert!(
-        harness
-            .get_by_role(Role::SpinButton)
-            .accesskit_node()
-            .is_focused(),
-        "The number field should have focus"
-    );
-    assert_eq!(
-        names_of(&harness, Role::Slider),
-        [Some("Amount".to_owned())]
-    );
-    assert_eq!(
-        names_of(&harness, Role::SpinButton),
-        [Some("Amount".to_owned())]
-    );
+    assert!(harness.get_by_role(Role::SpinButton).accesskit_node().is_focused(), "The number field should have focus");
+    assert_eq!(names_of(&harness, Role::Slider), [Some("Amount".to_owned())]);
+    assert_eq!(names_of(&harness, Role::SpinButton), [Some("Amount".to_owned())]);
 }
 
 /// An explicit label wins over the name a `DragValue` gives itself from its suffix.
@@ -105,15 +80,11 @@ fn labelled_by_wins_over_drag_value_suffix() {
     let mut value = 3.0;
     let harness = Harness::new_ui(|ui| {
         let label = ui.label("Width");
-        ui.add(DragValue::new(&mut value).suffix(" px"))
-            .labelled_by(label.id);
+        ui.add(DragValue::new(&mut value).suffix(" px")).labelled_by(label.id);
         ui.add(DragValue::new(&mut value).prefix("x: ").suffix(" px"));
     });
 
-    assert_eq!(
-        names_of(&harness, Role::SpinButton),
-        [Some("Width".to_owned()), Some("x: px".to_owned())]
-    );
+    assert_eq!(names_of(&harness, Role::SpinButton), [Some("Width".to_owned()), Some("x: px".to_owned())]);
 }
 
 #[test]
@@ -170,13 +141,11 @@ fn read_only_text_needs_no_name() {
 /// one without a heading cannot be reached by name.
 #[test]
 fn unnamed_collapsing_header_is_an_unnamed_input() {
-    let harness = Harness::builder()
-        .with_accessibility_check(false)
-        .build_ui(|ui| {
-            egui::CollapsingHeader::new("").show(ui, |ui| {
-                let _ = ui.button("Inside");
-            });
+    let harness = Harness::builder().with_accessibility_check(false).build_ui(|ui| {
+        egui::CollapsingHeader::new("").show(ui, |ui| {
+            let _ = ui.button("Inside");
         });
+    });
 
     assert_eq!(harness.unnamed_widgets().len(), 1);
 }
@@ -207,10 +176,6 @@ fn hinted_text_field_keeps_its_placeholder_name() {
     });
     harness.run();
     let field = harness.get_by_role(Role::TextInput).accesskit_node();
-    assert_eq!(
-        field.label(),
-        None,
-        "The placeholder is the name; nothing to add"
-    );
+    assert_eq!(field.label(), None, "The placeholder is the name; nothing to add");
     assert_eq!(field.placeholder(), Some("Search"));
 }

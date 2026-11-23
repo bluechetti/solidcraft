@@ -32,12 +32,7 @@ impl From<HsvaGamma> for Color32 {
 impl From<HsvaGamma> for Hsva {
     fn from(hsvag: HsvaGamma) -> Self {
         let HsvaGamma { h, s, v, a } = hsvag;
-        Self {
-            h,
-            s,
-            v: linear_from_gamma(v),
-            a,
-        }
+        Self { h, s, v: linear_from_gamma(v), a }
     }
 }
 
@@ -56,11 +51,6 @@ impl From<Color32> for HsvaGamma {
 impl From<Hsva> for HsvaGamma {
     fn from(hsva: Hsva) -> Self {
         let Hsva { h, s, v, a } = hsva;
-        Self {
-            h,
-            s,
-            v: gamma_from_linear(v),
-            a,
-        }
+        Self { h, s, v: gamma_from_linear(v), a }
     }
 }

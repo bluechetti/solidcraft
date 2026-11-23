@@ -7,8 +7,7 @@ use ahash::{HashMap, HashSet};
 use epaint::emath::TSTransform;
 
 use crate::{
-    EventFilter, Id, IdMap, LayerId, Order, Pos2, Rangef, RawInput, Rect, Style, Vec2, ViewportId,
-    ViewportIdMap, ViewportIdSet, area, vec2,
+    EventFilter, Id, IdMap, LayerId, Order, Pos2, Rangef, RawInput, Rect, Style, Vec2, ViewportId, ViewportIdMap, ViewportIdSet, area, vec2,
 };
 
 mod theme;
@@ -334,10 +333,7 @@ impl Default for Options {
             sync_window_theme: true,
             zoom_factor: 1.0,
             zoom_with_keyboard: true,
-            quit_shortcuts: vec![crate::KeyboardShortcut::new(
-                crate::Modifiers::COMMAND,
-                crate::Key::Q,
-            )],
+            quit_shortcuts: vec![crate::KeyboardShortcut::new(crate::Modifiers::COMMAND, crate::Key::Q)],
             tessellation_options: Default::default(),
             repaint_on_widget_change: false,
 
@@ -411,62 +407,48 @@ impl Options {
         use crate::Widget as _;
         use crate::containers::CollapsingHeader;
 
-        CollapsingHeader::new("⚙️ Options")
-            .default_open(false)
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Max passes:");
-                    ui.add(crate::DragValue::new(max_passes).range(0..=10));
-                });
-
-                ui.checkbox(
-                    repaint_on_widget_change,
-                    "Repaint if any widget moves or changes id",
-                );
-
-                ui.horizontal(|ui| {
-                    ui.label("Zoom factor:");
-                    ui.add(crate::DragValue::new(zoom_factor).range(0.10..=10.0));
-                });
-
-                ui.checkbox(
-                    zoom_with_keyboard,
-                    "Zoom with keyboard (Cmd +, Cmd -, Cmd 0)",
-                );
-
-                ui.checkbox(warn_on_id_clash, "Warn if two widgets have the same Id");
-
-                ui.checkbox(reduce_texture_memory, "Reduce texture memory");
+        CollapsingHeader::new("⚙️ Options").default_open(false).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Max passes:");
+                ui.add(crate::DragValue::new(max_passes).range(0..=10));
             });
 
-        CollapsingHeader::new("🎑 Style")
-            .default_open(true)
-            .show(ui, |ui| {
-                theme_preference.buttons(ui);
+            ui.checkbox(repaint_on_widget_change, "Repaint if any widget moves or changes id");
 
-                ui.checkbox(sync_window_theme, "Sync window theme with egui theme");
-
-                let style = Arc::make_mut(match theme {
-                    Theme::Dark => dark_style,
-                    Theme::Light => light_style,
-                });
-                style.ui(ui);
+            ui.horizontal(|ui| {
+                ui.label("Zoom factor:");
+                ui.add(crate::DragValue::new(zoom_factor).range(0.10..=10.0));
             });
 
-        CollapsingHeader::new("✒️ Painting")
-            .default_open(false)
-            .show(ui, |ui| {
-                tessellation_options.ui(ui);
-                ui.vertical_centered(|ui| {
-                    crate::reset_button(ui, tessellation_options, "Reset paint settings");
-                });
-            });
+            ui.checkbox(zoom_with_keyboard, "Zoom with keyboard (Cmd +, Cmd -, Cmd 0)");
 
-        CollapsingHeader::new("🖱️ Input")
-            .default_open(false)
-            .show(ui, |ui| {
-                input_options.ui(ui);
+            ui.checkbox(warn_on_id_clash, "Warn if two widgets have the same Id");
+
+            ui.checkbox(reduce_texture_memory, "Reduce texture memory");
+        });
+
+        CollapsingHeader::new("🎑 Style").default_open(true).show(ui, |ui| {
+            theme_preference.buttons(ui);
+
+            ui.checkbox(sync_window_theme, "Sync window theme with egui theme");
+
+            let style = Arc::make_mut(match theme {
+                Theme::Dark => dark_style,
+                Theme::Light => light_style,
             });
+            style.ui(ui);
+        });
+
+        CollapsingHeader::new("✒️ Painting").default_open(false).show(ui, |ui| {
+            tessellation_options.ui(ui);
+            ui.vertical_centered(|ui| {
+                crate::reset_button(ui, tessellation_options, "Reset paint settings");
+            });
+        });
+
+        CollapsingHeader::new("🖱️ Input").default_open(false).show(ui, |ui| {
+            input_options.ui(ui);
+        });
 
         ui.vertical_centered(|ui| crate::reset_button(ui, self, "Reset all"));
     }
@@ -546,10 +528,7 @@ struct FocusWidget {
 
 impl FocusWidget {
     pub fn new(id: Id) -> Self {
-        Self {
-            id,
-            filter: Default::default(),
-        }
+        Self { id, filter: Default::default() }
     }
 }
 
@@ -580,12 +559,7 @@ impl Focus {
 
         for event in &new_input.events {
             if !event_filter.matches(event)
-                && let crate::Event::Key {
-                    key,
-                    pressed: true,
-                    modifiers,
-                    ..
-                } = event
+                && let crate::Event::Key { key, pressed: true, modifiers, .. } = event
                 && let Some(cardinality) = match key {
                     crate::Key::ArrowUp if !modifiers.any() => Some(FocusDirection::Up),
                     crate::Key::ArrowRight if !modifiers.any() => Some(FocusDirection::Right),
@@ -619,12 +593,8 @@ impl Focus {
         }
 
         // Handle accesskit focus requests
-        let newly_focused = focus_requested_by_accesskit.and_then(|node_id| {
-            self.focus_widgets_cache
-                .keys()
-                .find(|id| id.accesskit_id() == node_id)
-                .copied()
-        });
+        let newly_focused =
+            focus_requested_by_accesskit.and_then(|node_id| self.focus_widgets_cache.keys().find(|id| id.accesskit_id() == node_id).copied());
         if let Some(id) = newly_focused {
             self.focused_widget = Some(FocusWidget::new(id));
             self.give_to_next = false;
@@ -658,9 +628,7 @@ impl Focus {
 
     fn interested_in_focus(&mut self, id: Id) {
         // The rect is updated at the end of the frame.
-        self.focus_widgets_cache
-            .entry(id)
-            .or_insert(Rect::EVERYTHING);
+        self.focus_widgets_cache.entry(id).or_insert(Rect::EVERYTHING);
 
         if self.give_to_next && !self.had_focus_last_frame(id) {
             self.focused_widget = Some(FocusWidget::new(id));
@@ -674,17 +642,11 @@ impl Focus {
                 self.id_next_frame = self.last_interested; // frame-delay so gained_focus works
                 self.reset_focus();
             }
-        } else if self.focus_direction == FocusDirection::Next
-            && self.focused_widget.is_none()
-            && !self.give_to_next
-        {
+        } else if self.focus_direction == FocusDirection::Next && self.focused_widget.is_none() && !self.give_to_next {
             // nothing has focus and the user pressed tab - give focus to the first widgets that wants it:
             self.focused_widget = Some(FocusWidget::new(id));
             self.reset_focus();
-        } else if self.focus_direction == FocusDirection::Previous
-            && self.focused_widget.is_none()
-            && !self.give_to_next
-        {
+        } else if self.focus_direction == FocusDirection::Previous && self.focused_widget.is_none() && !self.give_to_next {
             // nothing has focus and the user pressed Shift+Tab - give focus to the last widgets that wants it:
             self.focused_widget = self.last_interested.map(FocusWidget::new);
             self.reset_focus();
@@ -713,11 +675,7 @@ impl Focus {
         /// * zero if the ranges overlap significantly
         fn range_diff(a: Rangef, b: Rangef) -> f32 {
             let has_significant_overlap = a.intersection(b).span() >= 0.5 * b.span().min(a.span());
-            if has_significant_overlap {
-                0.0
-            } else {
-                a.center() - b.center()
-            }
+            if has_significant_overlap { 0.0 } else { a.center() - b.center() }
         }
 
         let current_focused = self.focused_widget?;
@@ -756,10 +714,8 @@ impl Focus {
             }
 
             // There is a lot of room for improvement here.
-            let to_candidate = vec2(
-                range_diff(candidate_rect.x_range(), current_rect.x_range()),
-                range_diff(candidate_rect.y_range(), current_rect.y_range()),
-            );
+            let to_candidate =
+                vec2(range_diff(candidate_rect.x_range(), current_rect.x_range()), range_diff(candidate_rect.y_range(), current_rect.y_range()));
 
             let acos_angle = to_candidate.normalized().dot(search_direction);
 
@@ -802,10 +758,7 @@ impl Memory {
 
         self.options.begin_pass(new_raw_input);
 
-        self.focus
-            .entry(self.viewport_id)
-            .or_default()
-            .begin_pass(new_raw_input);
+        self.focus.entry(self.viewport_id).or_default().begin_pass(new_raw_input);
     }
 
     pub(crate) fn end_pass(&mut self, used_ids: &IdMap<Rect>) {
@@ -829,9 +782,7 @@ impl Memory {
 
     /// Access memory of the [`Area`](crate::containers::area::Area)s, such as `Window`s.
     pub fn areas(&self) -> &Areas {
-        self.areas
-            .get(&self.viewport_id)
-            .expect("Memory broken: no area for the current viewport")
+        self.areas.get(&self.viewport_id).expect("Memory broken: no area for the current viewport")
     }
 
     /// Access memory of the [`Area`](crate::containers::area::Area)s, such as `Window`s.
@@ -842,11 +793,7 @@ impl Memory {
     /// Top-most layer at the given position.
     pub fn layer_id_at(&self, pos: Pos2) -> Option<LayerId> {
         let layer_id = self.areas().layer_id_at(pos, &self.to_global)?;
-        if self.is_above_modal_layer(layer_id) {
-            Some(layer_id)
-        } else {
-            self.top_modal_layer()
-        }
+        if self.is_above_modal_layer(layer_id) { Some(layer_id) } else { self.top_modal_layer() }
     }
 
     /// An iterator over all layers. Back-to-front, top is last.
@@ -870,10 +817,7 @@ impl Memory {
     /// claims focus, so the loss signal can only reach it on its
     /// next render pass.
     pub(crate) fn lost_focus(&self, id: Id) -> bool {
-        let had_recent_focus = self
-            .focus()
-            .map(|f| f.id_previous_frame == Some(id) || f.id_two_frames_ago == Some(id))
-            .unwrap_or(false);
+        let had_recent_focus = self.focus().map(|f| f.id_previous_frame == Some(id) || f.id_two_frames_ago == Some(id)).unwrap_or(false);
         had_recent_focus && !self.has_focus(id)
     }
 
@@ -961,10 +905,7 @@ impl Memory {
     /// - there is no modal layer
     pub fn is_above_modal_layer(&self, layer_id: LayerId) -> bool {
         if let Some(modal_layer) = self.focus().and_then(|f| f.top_modal_layer) {
-            matches!(
-                self.areas().compare_order(layer_id, modal_layer),
-                core::cmp::Ordering::Equal | core::cmp::Ordering::Greater
-            )
+            matches!(self.areas().compare_order(layer_id, modal_layer), core::cmp::Ordering::Equal | core::cmp::Ordering::Greater)
         } else {
             true
         }
@@ -999,18 +940,14 @@ impl Memory {
 
     /// The navigation request after applying the focused widget's event filter.
     pub(crate) fn focus_direction(&self) -> FocusDirection {
-        self.focus()
-            .map_or(FocusDirection::None, |focus| focus.focus_direction)
+        self.focus().map_or(FocusDirection::None, |focus| focus.focus_direction)
     }
 
     /// Limit focus to widgets on the given layer and above.
     /// If this is called multiple times per frame, the top layer wins.
     pub fn set_modal_layer(&mut self, layer_id: LayerId) {
         if let Some(current) = self.focus().and_then(|f| f.top_modal_layer_current_frame)
-            && matches!(
-                self.areas().compare_order(layer_id, current),
-                core::cmp::Ordering::Less
-            )
+            && matches!(self.areas().compare_order(layer_id, current), core::cmp::Ordering::Less)
         {
             return;
         }
@@ -1044,9 +981,7 @@ impl Memory {
     }
 
     pub(crate) fn interaction(&self) -> &InteractionState {
-        self.interactions
-            .get(&self.viewport_id)
-            .expect("Failed to get interaction")
+        self.interactions.get(&self.viewport_id).expect("Failed to get interaction")
     }
 
     pub(crate) fn interaction_mut(&mut self) -> &mut InteractionState {
@@ -1100,11 +1035,7 @@ struct OpenPopup {
 impl OpenPopup {
     /// Create a new `OpenPopup`.
     fn new(id: Id, pos: Option<Pos2>) -> Self {
-        Self {
-            id,
-            pos,
-            open_this_frame: true,
-        }
+        Self { id, pos, open_this_frame: true }
     }
 }
 
@@ -1113,10 +1044,7 @@ impl OpenPopup {
 /// Used by [`crate::Popup`].
 impl Memory {
     pub(crate) fn is_popup_open(&self, popup_id: Id) -> bool {
-        self.popups
-            .get(&self.viewport_id)
-            .is_some_and(|state| state.id == popup_id)
-            || self.everything_is_visible()
+        self.popups.get(&self.viewport_id).is_some_and(|state| state.id == popup_id) || self.everything_is_visible()
     }
 
     pub(crate) fn any_popup_open(&self) -> bool {
@@ -1124,8 +1052,7 @@ impl Memory {
     }
 
     pub(crate) fn open_popup(&mut self, popup_id: Id) {
-        self.popups
-            .insert(self.viewport_id, OpenPopup::new(popup_id, None));
+        self.popups.insert(self.viewport_id, OpenPopup::new(popup_id, None));
     }
 
     pub(crate) fn keep_popup_open(&mut self, popup_id: Id) {
@@ -1137,8 +1064,7 @@ impl Memory {
     }
 
     pub(crate) fn open_popup_at(&mut self, popup_id: Id, pos: impl Into<Option<Pos2>>) {
-        self.popups
-            .insert(self.viewport_id, OpenPopup::new(popup_id, pos.into()));
+        self.popups.insert(self.viewport_id, OpenPopup::new(popup_id, pos.into()));
     }
 
     pub(crate) fn popup_position(&self, id: Id) -> Option<Pos2> {
@@ -1282,11 +1208,7 @@ impl Areas {
     }
 
     /// Top-most layer at the given position.
-    pub fn layer_id_at(
-        &self,
-        pos: Pos2,
-        layer_to_global: &HashMap<LayerId, TSTransform>,
-    ) -> Option<LayerId> {
+    pub fn layer_id_at(&self, pos: Pos2, layer_to_global: &HashMap<LayerId, TSTransform>) -> Option<LayerId> {
         for layer in self.order.iter().rev() {
             if self.is_visible(layer)
                 && let Some(state) = self.areas.get(&layer.id)
@@ -1311,17 +1233,11 @@ impl Areas {
     }
 
     pub fn is_visible(&self, layer_id: &LayerId) -> bool {
-        self.visible_areas_last_frame.contains(layer_id)
-            || self.visible_areas_current_frame.contains(layer_id)
+        self.visible_areas_last_frame.contains(layer_id) || self.visible_areas_current_frame.contains(layer_id)
     }
 
     pub fn visible_layer_ids(&self) -> ahash::HashSet<LayerId> {
-        core::iter::chain(
-            &self.visible_areas_last_frame,
-            &self.visible_areas_current_frame,
-        )
-        .copied()
-        .collect()
+        core::iter::chain(&self.visible_areas_last_frame, &self.visible_areas_current_frame).copied().collect()
     }
 
     pub(crate) fn visible_windows(&self) -> impl Iterator<Item = (LayerId, &area::AreaState)> {
@@ -1369,21 +1285,12 @@ impl Areas {
     }
 
     pub fn top_layer_id(&self, order: Order) -> Option<LayerId> {
-        self.order
-            .iter()
-            .rfind(|layer| layer.order == order && !self.is_sublayer(layer))
-            .copied()
+        self.order.iter().rfind(|layer| layer.order == order && !self.is_sublayer(layer)).copied()
     }
 
     /// If this layer is the sublayer of another layer, return the parent.
     pub fn parent_layer(&self, layer_id: LayerId) -> Option<LayerId> {
-        self.sublayers.iter().find_map(|(parent, children)| {
-            if children.contains(&layer_id) {
-                Some(*parent)
-            } else {
-                None
-            }
-        })
+        self.sublayers.iter().find_map(|(parent, children)| if children.contains(&layer_id) { Some(*parent) } else { None })
     }
 
     /// All the child layers of this layer.
@@ -1396,14 +1303,7 @@ impl Areas {
     }
 
     pub(crate) fn end_pass(&mut self) {
-        let Self {
-            visible_areas_last_frame,
-            visible_areas_current_frame,
-            order,
-            wants_to_be_on_top,
-            sublayers,
-            ..
-        } = self;
+        let Self { visible_areas_last_frame, visible_areas_current_frame, order, wants_to_be_on_top, sublayers, .. } = self;
 
         core::mem::swap(visible_areas_last_frame, visible_areas_current_frame);
         visible_areas_current_frame.clear();
@@ -1431,12 +1331,7 @@ impl Areas {
             order.splice(parent_pos..=parent_pos, moved_layers); // replace the parent with itself and its children
         }
 
-        self.order_map = self
-            .order
-            .iter()
-            .enumerate()
-            .map(|(i, id)| (*id, i))
-            .collect();
+        self.order_map = self.order.iter().enumerate().map(|(i, id)| (*id, i)).collect();
     }
 }
 
@@ -1459,8 +1354,7 @@ fn lost_focus_fires_after_mid_frame_focus_transfer() {
     let raw = RawInput::default();
 
     fn lost_focus_check(focus: &Focus, id: Id) -> bool {
-        let was_focused =
-            focus.id_previous_frame == Some(id) || focus.id_two_frames_ago == Some(id);
+        let was_focused = focus.id_previous_frame == Some(id) || focus.id_two_frames_ago == Some(id);
         was_focused && focus.focused() != Some(id)
     }
 
@@ -1490,10 +1384,7 @@ fn lost_focus_fires_after_mid_frame_focus_transfer() {
     // Frame N+2
     {
         focus.begin_pass(&raw);
-        assert!(
-            !lost_focus_check(&focus, a),
-            "A's lost_focus must stop firing once the two-frame window passes",
-        );
+        assert!(!lost_focus_check(&focus, a), "A's lost_focus must stop firing once the two-frame window passes",);
     }
 }
 
@@ -1532,11 +1423,7 @@ fn order_map_total_ordering() {
     assert_eq!(layers.len(), equivalence_classes.len());
     for (&l1, c1) in core::iter::zip(&layers, &equivalence_classes) {
         for (&l2, c2) in core::iter::zip(&layers, &equivalence_classes) {
-            assert_eq!(
-                c1.cmp(c2),
-                areas.compare_order(l1, l2),
-                "not a total ordering",
-            );
+            assert_eq!(c1.cmp(c2), areas.compare_order(l1, l2), "not a total ordering",);
         }
     }
 }
@@ -1553,20 +1440,10 @@ fn set_state_makes_layer_hit_testable() {
         let output = ctx.run_ui(Default::default(), |ui| {
             if register {
                 ui.memory_mut(|mem| {
-                    mem.areas_mut().set_state(
-                        layer_id,
-                        area::AreaState {
-                            pivot_pos: Some(rect.min),
-                            size: Some(rect.size()),
-                            ..Default::default()
-                        },
-                    );
+                    mem.areas_mut().set_state(layer_id, area::AreaState { pivot_pos: Some(rect.min), size: Some(rect.size()), ..Default::default() });
                 });
             }
-            found = (
-                ui.ctx().layer_id_at(rect.center()),
-                ui.ctx().layer_id_at(outside),
-            );
+            found = (ui.ctx().layer_id_at(rect.center()), ui.ctx().layer_id_at(outside));
         });
         output.drop_without_applying_deltas();
         found

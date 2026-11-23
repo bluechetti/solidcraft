@@ -6,10 +6,7 @@ pub struct CodeExample {
 
 impl Default for CodeExample {
     fn default() -> Self {
-        Self {
-            name: "Arthur".to_owned(),
-            age: 42,
-        }
+        Self { name: "Arthur".to_owned(), age: 42 }
     }
 }
 
@@ -84,12 +81,9 @@ impl CodeExample {
             let indentation = 2.0 * 4.0 * ui.fonts_mut(|f| f.glyph_width(&font_id, ' '));
             ui.add_space(indentation);
 
-            egui::Grid::new("code_samples")
-                .striped(true)
-                .num_columns(2)
-                .show(ui, |ui| {
-                    self.samples_in_grid(ui);
-                });
+            egui::Grid::new("code_samples").striped(true).num_columns(2).show(ui, |ui| {
+                self.samples_in_grid(ui);
+            });
         });
 
         crate::rust_view_ui(ui, "    }\n}");
@@ -127,8 +121,7 @@ impl crate::View for CodeExample {
 
         ui.separator();
 
-        let mut theme =
-            egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
+        let mut theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
         ui.collapsing("Theme", |ui| {
             theme.ui(ui);
             theme.store_in_memory(ui.ctx());
@@ -160,9 +153,7 @@ fn remove_leading_indentation(code: &str) -> String {
     while !code.is_empty() {
         let indent = code.bytes().take_while(is_indent).count();
         let start = first_line_indent.min(indent);
-        let end = code
-            .find('\n')
-            .map_or_else(|| code.len(), |endline| endline + 1);
+        let end = code.find('\n').map_or_else(|| code.len(), |endline| endline + 1);
         out += &code[start..end];
         code = &code[end..];
     }

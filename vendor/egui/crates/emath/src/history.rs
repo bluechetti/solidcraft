@@ -53,13 +53,7 @@ where
     /// assert_eq!(history.average(), Some(42.0));
     /// ```
     pub fn new(length_range: core::ops::Range<usize>, max_age: f32) -> Self {
-        Self {
-            min_len: length_range.start,
-            max_len: length_range.end,
-            max_age,
-            total_count: 0,
-            values: Default::default(),
-        }
+        Self { min_len: length_range.start, max_len: length_range.end, max_age, total_count: 0, values: Default::default() }
     }
 
     #[inline]
@@ -100,11 +94,7 @@ where
 
     /// Amount of time contained from start to end in this [`History`].
     pub fn duration(&self) -> f32 {
-        if let (Some(front), Some(back)) = (self.values.front(), self.values.back()) {
-            (back.0 - front.0) as f32
-        } else {
-            0.0
-        }
+        if let (Some(front), Some(back)) = (self.values.front(), self.values.back()) { (back.0 - front.0) as f32 } else { 0.0 }
     }
 
     /// `(time, value)` pairs
@@ -126,10 +116,7 @@ where
     /// Values must be added with a monotonically increasing time, or at least not decreasing.
     pub fn add(&mut self, now: f64, value: T) {
         if let Some((last_time, _)) = self.values.back() {
-            debug_assert!(
-                *last_time <= now,
-                "Time shouldn't move backwards. Last time: {last_time}, new time: {now}"
-            );
+            debug_assert!(*last_time <= now, "Time shouldn't move backwards. Last time: {last_time}, new time: {now}");
         }
         self.total_count += 1;
         self.values.push_back((now, value));
@@ -140,11 +127,7 @@ where
     pub fn mean_time_interval(&self) -> Option<f32> {
         if let (Some(first), Some(last)) = (self.values.front(), self.values.back()) {
             let n = self.len();
-            if n >= 2 {
-                Some((last.0 - first.0) as f32 / ((n - 1) as f32))
-            } else {
-                None
-            }
+            if n >= 2 { Some((last.0 - first.0) as f32 / ((n - 1) as f32)) } else { None }
         } else {
             None
         }
@@ -161,12 +144,7 @@ where
             self.values.pop_front();
         }
         let oldest_allowed_time = now - self.max_age as f64;
-        while self.min_len < self.values.len()
-            && self
-                .values
-                .pop_front_if(|&mut (front_time, _)| front_time < oldest_allowed_time)
-                .is_some()
-        {
+        while self.min_len < self.values.len() && self.values.pop_front_if(|&mut (front_time, _)| front_time < oldest_allowed_time).is_some() {
             // Keep popping while the oldest sample is too old.
         }
     }
@@ -185,11 +163,7 @@ where
 
     pub fn average(&self) -> Option<T> {
         let num = self.len();
-        if num > 0 {
-            Some(self.sum() / (num as f32))
-        } else {
-            None
-        }
+        if num > 0 { Some(self.sum() / (num as f32)) } else { None }
     }
 }
 
@@ -219,11 +193,7 @@ where
     pub fn velocity(&self) -> Option<Vel> {
         if let (Some(first), Some(last)) = (self.values.front(), self.values.back()) {
             let dt = (last.0 - first.0) as f32;
-            if dt > 0.0 {
-                Some((last.1 - first.1) / dt)
-            } else {
-                None
-            }
+            if dt > 0.0 { Some((last.1 - first.1) / dt) } else { None }
         } else {
             None
         }

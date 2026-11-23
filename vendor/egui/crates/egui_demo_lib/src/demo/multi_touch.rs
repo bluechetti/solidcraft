@@ -13,12 +13,7 @@ pub struct MultiTouch {
 
 impl Default for MultiTouch {
     fn default() -> Self {
-        Self {
-            rotation: 0.,
-            translation: Vec2::ZERO,
-            zoom: 1.,
-            last_touch_time: 0.0,
-        }
+        Self { rotation: 0., translation: Vec2::ZERO, zoom: 1., last_touch_time: 0.0 }
     }
 }
 
@@ -45,20 +40,12 @@ impl crate::View for MultiTouch {
         ui.vertical_centered(|ui| {
             ui.add(crate::egui_github_link_file!());
         });
-        ui.strong(
-            "This demo only works on devices with multitouch support (e.g. mobiles, tablets, and trackpads).",
-        );
+        ui.strong("This demo only works on devices with multitouch support (e.g. mobiles, tablets, and trackpads).");
         ui.separator();
         ui.label("Try touch gestures Pinch/Stretch, Rotation, and Pressure with 2+ fingers.");
 
-        let relative_pointer_gesture = ui.input(|i| {
-            i.events.iter().any(|event| {
-                matches!(
-                    event,
-                    Event::MouseWheel { .. } | Event::Zoom { .. } | Event::Rotate { .. }
-                )
-            })
-        });
+        let relative_pointer_gesture =
+            ui.input(|i| i.events.iter().any(|event| matches!(event, Event::MouseWheel { .. } | Event::Zoom { .. } | Event::Rotate { .. })));
         let num_touches = ui.input(|i| i.multi_touch().map_or(0, |mt| mt.num_touches));
         let num_touches_str = format!("{num_touches}-finger touch");
         ui.label(format!(
@@ -72,11 +59,7 @@ impl crate::View for MultiTouch {
             }
         ));
 
-        let color = if ui.visuals().dark_mode {
-            Color32::WHITE
-        } else {
-            Color32::BLACK
-        };
+        let color = if ui.visuals().dark_mode { Color32::WHITE } else { Color32::BLACK };
 
         Frame::canvas(ui.style()).show(ui, |ui| {
             // Note that we use `Sense::drag()` although we do not use any pointer events. With
@@ -89,15 +72,11 @@ impl crate::View for MultiTouch {
             // backend.
 
             // set up the drawing canvas with normalized coordinates:
-            let (response, painter) =
-                ui.allocate_painter(ui.available_size_before_wrap(), Sense::drag());
+            let (response, painter) = ui.allocate_painter(ui.available_size_before_wrap(), Sense::drag());
 
             // normalize painter coordinates to ±1 units in each direction with [0,0] in the center:
             let painter_proportions = response.rect.square_proportions();
-            let to_screen = RectTransform::from_to(
-                Rect::from_min_size(Pos2::ZERO - painter_proportions, 2. * painter_proportions),
-                response.rect,
-            );
+            let to_screen = RectTransform::from_to(Rect::from_min_size(Pos2::ZERO - painter_proportions, 2. * painter_proportions), response.rect);
 
             // check for touch input (or the lack thereof) and update zoom and scale factors, plus
             // color and width:
@@ -124,11 +103,7 @@ impl crate::View for MultiTouch {
             // scaled, rotated, and translated according to the current touch gesture:
             let arrow_start = Pos2::ZERO + arrow_start_offset;
             let arrow_direction = zoom_and_rotate * vec2(1., -1.);
-            painter.arrow(
-                to_screen * arrow_start,
-                to_screen.scale() * arrow_direction,
-                Stroke::new(stroke_width, color),
-            );
+            painter.arrow(to_screen * arrow_start, to_screen.scale() * arrow_direction, Stroke::new(stroke_width, color));
         });
     }
 }
@@ -145,8 +120,7 @@ impl MultiTouch {
             ui.request_repaint();
         } else {
             // seconds after which half the amount of zoom/rotation will be reverted:
-            let half_life =
-                egui::remap_clamp(time_since_last_touch, delay..=1.0, 1.0..=0.0).powf(4.0);
+            let half_life = egui::remap_clamp(time_since_last_touch, delay..=1.0, 1.0..=0.0).powf(4.0);
 
             if half_life <= 1e-3 {
                 self.zoom = 1.0;

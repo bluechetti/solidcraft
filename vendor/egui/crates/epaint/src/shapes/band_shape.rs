@@ -79,18 +79,8 @@ pub struct BandShape {
 
 impl BandShape {
     #[inline]
-    pub fn new(
-        points: Vec<BandPoint>,
-        fill: impl Into<Color32>,
-        stroke: impl Into<Stroke>,
-    ) -> Self {
-        Self {
-            points,
-            fill: fill.into(),
-            stroke: stroke.into(),
-            stroke_kind: StrokeKind::Middle,
-            angle: 0.0,
-        }
+    pub fn new(points: Vec<BandPoint>, fill: impl Into<Color32>, stroke: impl Into<Stroke>) -> Self {
+        Self { points, fill: fill.into(), stroke: stroke.into(), stroke_kind: StrokeKind::Middle, angle: 0.0 }
     }
 
     #[inline]
@@ -118,8 +108,7 @@ impl BandShape {
     pub fn with_angle_and_pivot(mut self, angle: f32, pivot: Pos2) -> Self {
         let pivot = pivot.to_vec2();
         // The points are stored pre-rotation, so undo each rotation to get the local offset:
-        let translation =
-            emath::Rot2::from_angle(-angle) * pivot - emath::Rot2::from_angle(-self.angle) * pivot;
+        let translation = emath::Rot2::from_angle(-angle) * pivot - emath::Rot2::from_angle(-self.angle) * pivot;
         self.angle = angle;
         for point in &mut self.points {
             point.x += translation.x;
@@ -142,8 +131,7 @@ impl BandShape {
 
     /// The visual bounding rectangle, including the stroke width.
     pub fn visual_bounding_rect(&self) -> Rect {
-        if !self.angle.is_finite() || (self.fill == Color32::TRANSPARENT && self.stroke.is_empty())
-        {
+        if !self.angle.is_finite() || (self.fill == Color32::TRANSPARENT && self.stroke.is_empty()) {
             return Rect::NOTHING;
         }
 
@@ -158,8 +146,7 @@ impl BandShape {
             StrokeKind::Inside | StrokeKind::Outside => self.stroke.width,
             StrokeKind::Middle => self.stroke.width / 2.0,
         };
-        rect.expand(stroke_width)
-            .rotate_bb(emath::Rot2::from_angle(self.angle))
+        rect.expand(stroke_width).rotate_bb(emath::Rot2::from_angle(self.angle))
     }
 
     fn local_bounding_rect(&self) -> Rect {
@@ -199,22 +186,13 @@ mod tests {
 
     #[test]
     fn band_point_from_pos_and_width() {
-        assert_eq!(
-            BandPoint::from_pos_and_width(pos2(2.0, 3.0), 4.0),
-            BandPoint::new(2.0, 1.0..=5.0),
-        );
+        assert_eq!(BandPoint::from_pos_and_width(pos2(2.0, 3.0), 4.0), BandPoint::new(2.0, 1.0..=5.0),);
     }
 
     #[test]
     fn transform_preserves_rotation() {
-        let mut band = BandShape::filled(
-            vec![
-                BandPoint::new(0.0, 1.0..=3.0),
-                BandPoint::new(2.0, 2.0..=4.0),
-            ],
-            Color32::WHITE,
-        )
-        .with_angle_and_pivot(core::f32::consts::FRAC_PI_2, Pos2::ZERO);
+        let mut band = BandShape::filled(vec![BandPoint::new(0.0, 1.0..=3.0), BandPoint::new(2.0, 2.0..=4.0)], Color32::WHITE)
+            .with_angle_and_pivot(core::f32::consts::FRAC_PI_2, Pos2::ZERO);
 
         band.transform(TSTransform::from_translation(vec2(2.0, 3.0)));
 
@@ -225,14 +203,8 @@ mod tests {
 
     #[test]
     fn with_angle_and_pivot_preserves_pivot() {
-        let band = BandShape::filled(
-            vec![
-                BandPoint::new(1.0, 0.0..=2.0),
-                BandPoint::new(3.0, 0.0..=2.0),
-            ],
-            Color32::WHITE,
-        )
-        .with_angle_and_pivot(core::f32::consts::FRAC_PI_2, pos2(2.0, 1.0));
+        let band = BandShape::filled(vec![BandPoint::new(1.0, 0.0..=2.0), BandPoint::new(3.0, 0.0..=2.0)], Color32::WHITE)
+            .with_angle_and_pivot(core::f32::consts::FRAC_PI_2, pos2(2.0, 1.0));
 
         assert!((band.points[0].x - 0.0).abs() < 1e-6);
         assert!((band.points[0].y.min + 3.0).abs() < 1e-6);
@@ -243,8 +215,7 @@ mod tests {
     fn with_angle_and_pivot_is_relative_to_the_previous_angle() {
         let points = vec![BandPoint::new(1.0, 0.0..=2.0)];
         let pivot = pos2(2.0, 1.0);
-        let once = BandShape::filled(points.clone(), Color32::WHITE)
-            .with_angle_and_pivot(core::f32::consts::FRAC_PI_2, pivot);
+        let once = BandShape::filled(points.clone(), Color32::WHITE).with_angle_and_pivot(core::f32::consts::FRAC_PI_2, pivot);
         let twice = BandShape::filled(points, Color32::WHITE)
             .with_angle_and_pivot(core::f32::consts::FRAC_PI_4, pivot)
             .with_angle_and_pivot(core::f32::consts::FRAC_PI_2, pivot);

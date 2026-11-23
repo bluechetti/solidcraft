@@ -1,7 +1,4 @@
-use crate::{
-    AtomKind, AtomPaintArgs, ContainerAtom, FontSelection, IdSalt, IntoSizedArgs, IntoSizedResult,
-    SizedAtom, Ui, WidgetAtom,
-};
+use crate::{AtomKind, AtomPaintArgs, ContainerAtom, FontSelection, IdSalt, IntoSizedArgs, IntoSizedResult, SizedAtom, Ui, WidgetAtom};
 use emath::{Align2, NumExt as _, Vec2};
 use epaint::text::TextWrapMode;
 
@@ -55,15 +52,7 @@ pub struct Atom<'a> {
 
 impl Default for Atom<'_> {
     fn default() -> Self {
-        Atom {
-            id: None,
-            size: None,
-            max_size: Vec2::INFINITY,
-            grow: false,
-            shrink: false,
-            align: Align2::CENTER_CENTER,
-            kind: AtomKind::Empty,
-        }
+        Atom { id: None, size: None, max_size: Vec2::INFINITY, grow: false, shrink: false, align: Align2::CENTER_CENTER, kind: AtomKind::Empty }
     }
 }
 
@@ -73,10 +62,7 @@ impl<'a> Atom<'a> {
     /// This will expand in size, allowing all preceding atoms to be left-aligned,
     /// and all following atoms to be right-aligned
     pub fn grow() -> Self {
-        Atom {
-            grow: true,
-            ..Default::default()
-        }
+        Atom { grow: true, ..Default::default() }
     }
 
     /// Create an [`AtomKind::Empty`] with a specific size.
@@ -96,12 +82,7 @@ impl<'a> Atom<'a> {
     /// # });
     /// ```
     pub fn custom(id: IdSalt, size: impl Into<Vec2>) -> Self {
-        Atom {
-            size: Some(size.into()),
-            kind: AtomKind::Empty,
-            id: Some(id),
-            ..Default::default()
-        }
+        Atom { size: Some(size.into()), kind: AtomKind::Empty, id: Some(id), ..Default::default() }
     }
 
     /// Create an [`AtomKind::Paint`] with a specific size.
@@ -121,11 +102,7 @@ impl<'a> Atom<'a> {
     /// # });
     /// ```
     pub fn paint(size: impl Into<Vec2>, func: impl Fn(&Ui, AtomPaintArgs) + 'a) -> Self {
-        Atom {
-            size: Some(size.into()),
-            kind: AtomKind::paint(func),
-            ..Default::default()
-        }
+        Atom { size: Some(size.into()), kind: AtomKind::paint(func), ..Default::default() }
     }
 
     /// Nest a [`WidgetAtom`] (interactive and requests a response) as a single atom.
@@ -135,10 +112,7 @@ impl<'a> Atom<'a> {
     ///
     /// You can get the response by setting an explicit [`crate::Id`] and using [`crate::Context::read_response`]
     pub fn widget(widget: WidgetAtom<'a>) -> Self {
-        Atom {
-            kind: AtomKind::Widget(Box::new(widget)),
-            ..Default::default()
-        }
+        Atom { kind: AtomKind::Widget(Box::new(widget)), ..Default::default() }
     }
 
     /// Nest a [`ContainerAtom`] (a non-interactive atom-based layout) as a single atom.
@@ -147,20 +121,11 @@ impl<'a> Atom<'a> {
     /// the cell the parent computes for it. Unlike [`Self::widget`], a [`ContainerAtom`] has no
     /// id or sense, so it is painted but not interacted with. See [`AtomKind::Container`].
     pub fn container(container: ContainerAtom<'a>) -> Self {
-        Atom {
-            kind: AtomKind::Container(Box::new(container)),
-            ..Default::default()
-        }
+        Atom { kind: AtomKind::Container(Box::new(container)), ..Default::default() }
     }
 
     /// Turn this into a [`SizedAtom`].
-    pub fn into_sized(
-        self,
-        ui: &Ui,
-        mut available_size: Vec2,
-        mut wrap_mode: Option<TextWrapMode>,
-        fallback_font: FontSelection,
-    ) -> SizedAtom<'a> {
+    pub fn into_sized(self, ui: &Ui, mut available_size: Vec2, mut wrap_mode: Option<TextWrapMode>, fallback_font: FontSelection) -> SizedAtom<'a> {
         if !self.shrink && self.max_size.x.is_infinite() {
             wrap_mode = Some(TextWrapMode::Extend);
         }
@@ -175,21 +140,9 @@ impl<'a> Atom<'a> {
         let id = self.id;
 
         let wrap_mode = wrap_mode.unwrap_or_else(|| ui.wrap_mode());
-        let IntoSizedResult {
-            intrinsic_size,
-            sized,
-        } = self.kind.into_sized(
-            ui,
-            IntoSizedArgs {
-                available_size,
-                wrap_mode,
-                fallback_font,
-            },
-        );
+        let IntoSizedResult { intrinsic_size, sized } = self.kind.into_sized(ui, IntoSizedArgs { available_size, wrap_mode, fallback_font });
 
-        let size = self
-            .size
-            .map_or_else(|| sized.size(), |s| s.at_most(self.max_size));
+        let size = self.size.map_or_else(|| sized.size(), |s| s.at_most(self.max_size));
 
         SizedAtom {
             id,
@@ -207,9 +160,6 @@ where
     T: Into<AtomKind<'a>>,
 {
     fn from(value: T) -> Self {
-        Atom {
-            kind: value.into(),
-            ..Default::default()
-        }
+        Atom { kind: value.into(), ..Default::default() }
     }
 }

@@ -1,16 +1,9 @@
 use super::{AppRunner, canvas_content_rect};
 
-pub fn pos_from_mouse_event(
-    canvas: &web_sys::HtmlCanvasElement,
-    event: &web_sys::MouseEvent,
-    ctx: &egui::Context,
-) -> egui::Pos2 {
+pub fn pos_from_mouse_event(canvas: &web_sys::HtmlCanvasElement, event: &web_sys::MouseEvent, ctx: &egui::Context) -> egui::Pos2 {
     let rect = canvas_content_rect(canvas);
     let zoom_factor = ctx.zoom_factor();
-    egui::Pos2 {
-        x: (event.client_x() as f32 - rect.left()) / zoom_factor,
-        y: (event.client_y() as f32 - rect.top()) / zoom_factor,
-    }
+    egui::Pos2 { x: (event.client_x() as f32 - rect.left()) / zoom_factor, y: (event.client_y() as f32 - rect.top()) / zoom_factor }
 }
 
 pub fn button_from_mouse_event(event: &web_sys::MouseEvent) -> Option<egui::PointerButton> {
@@ -27,10 +20,7 @@ pub fn button_from_mouse_event(event: &web_sys::MouseEvent) -> Option<egui::Poin
 /// A single touch is translated to a pointer movement. When a second touch is added, the pointer
 /// should not jump to a different position. Therefore, we do not calculate the average position
 /// of all touches, but we keep using the same touch as long as it is available.
-pub fn primary_touch_pos(
-    runner: &mut AppRunner,
-    event: &web_sys::TouchEvent,
-) -> Option<(egui::Pos2, web_sys::Touch)> {
+pub fn primary_touch_pos(runner: &mut AppRunner, event: &web_sys::TouchEvent) -> Option<(egui::Pos2, web_sys::Touch)> {
     // On touchend we don't get anything in `touches`, but we still get `changed_touches`, so include those:
     let all_touches: Vec<_> = core::iter::chain(
         (0..event.touches().length()).filter_map(|i| event.touches().get(i)),
@@ -40,18 +30,13 @@ pub fn primary_touch_pos(
 
     if let Some(primary_touch) = runner.input.primary_touch {
         // Is the primary touch is gone?
-        if !all_touches
-            .iter()
-            .any(|touch| primary_touch == egui::TouchId::from(touch.identifier()))
-        {
+        if !all_touches.iter().any(|touch| primary_touch == egui::TouchId::from(touch.identifier())) {
             runner.input.primary_touch = None;
         }
     }
 
     if runner.input.primary_touch.is_none() {
-        runner.input.primary_touch = all_touches
-            .first()
-            .map(|touch| egui::TouchId::from(touch.identifier()));
+        runner.input.primary_touch = all_touches.first().map(|touch| egui::TouchId::from(touch.identifier()));
     }
 
     let primary_touch = runner.input.primary_touch;
@@ -60,10 +45,7 @@ pub fn primary_touch_pos(
         for touch in all_touches {
             if primary_touch == egui::TouchId::from(touch.identifier()) {
                 let canvas_rect = canvas_content_rect(runner.canvas());
-                return Some((
-                    pos_from_touch(canvas_rect, &touch, runner.egui_ctx()),
-                    touch,
-                ));
+                return Some((pos_from_touch(canvas_rect, &touch, runner.egui_ctx()), touch));
             }
         }
     }
@@ -71,16 +53,9 @@ pub fn primary_touch_pos(
     None
 }
 
-fn pos_from_touch(
-    canvas_rect: egui::Rect,
-    touch: &web_sys::Touch,
-    egui_ctx: &egui::Context,
-) -> egui::Pos2 {
+fn pos_from_touch(canvas_rect: egui::Rect, touch: &web_sys::Touch, egui_ctx: &egui::Context) -> egui::Pos2 {
     let zoom_factor = egui_ctx.zoom_factor();
-    egui::Pos2 {
-        x: (touch.client_x() as f32 - canvas_rect.left()) / zoom_factor,
-        y: (touch.client_y() as f32 - canvas_rect.top()) / zoom_factor,
-    }
+    egui::Pos2 { x: (touch.client_x() as f32 - canvas_rect.left()) / zoom_factor, y: (touch.client_y() as f32 - canvas_rect.top()) / zoom_factor }
 }
 
 pub fn push_touches(runner: &mut AppRunner, phase: egui::TouchPhase, event: &web_sys::TouchEvent) {

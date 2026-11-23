@@ -7,10 +7,7 @@
 use core::cell::RefCell;
 use std::collections::HashMap;
 
-use egui::{
-    ColorImage, GlyphBitmap, GlyphRasterizer, GlyphRasterizerRequest, MAX_GLYPH_SIZE,
-    RasterizedGlyph, has_emoji_presentation, vec2,
-};
+use egui::{ColorImage, GlyphBitmap, GlyphRasterizer, GlyphRasterizerRequest, MAX_GLYPH_SIZE, RasterizedGlyph, has_emoji_presentation, vec2};
 use wasm_bindgen::JsCast as _;
 use web_sys::{CanvasRenderingContext2d, HtmlCanvasElement};
 
@@ -47,30 +44,13 @@ struct CanvasGlyphs {
 impl CanvasGlyphs {
     fn new() -> Option<Self> {
         let document = web_sys::window()?.document()?;
-        let canvas = document
-            .create_element("canvas")
-            .ok()?
-            .dyn_into::<HtmlCanvasElement>()
-            .ok()?;
-        let context = canvas
-            .get_context("2d")
-            .ok()??
-            .dyn_into::<CanvasRenderingContext2d>()
-            .ok()?;
-        Some(Self {
-            canvas,
-            context,
-            tofu_cache: Default::default(),
-        })
+        let canvas = document.create_element("canvas").ok()?.dyn_into::<HtmlCanvasElement>().ok()?;
+        let context = canvas.get_context("2d").ok()??.dyn_into::<CanvasRenderingContext2d>().ok()?;
+        Some(Self { canvas, context, tofu_cache: Default::default() })
     }
 
     fn rasterize(&mut self, request: &GlyphRasterizerRequest<'_>) -> Option<RasterizedGlyph> {
-        let GlyphRasterizerRequest {
-            cluster,
-            family,
-            font_size_px,
-            subpixel_offset_px,
-        } = request;
+        let GlyphRasterizerRequest { cluster, family, font_size_px, subpixel_offset_px } = request;
 
         if cluster.trim().is_empty() || !font_size_px.is_finite() || *font_size_px <= 0.0 {
             return None;
@@ -78,9 +58,7 @@ impl CanvasGlyphs {
 
         let family = match family {
             egui::FontFamily::Monospace => "monospace",
-            _ => {
-                "system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Noto Color Emoji\""
-            }
+            _ => "system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Noto Color Emoji\"",
         };
         let font = format!("{font_size_px}px {family}");
 
@@ -98,14 +76,7 @@ impl CanvasGlyphs {
         let black = self.draw(cluster, &font, "black", *subpixel_offset_px)?;
         let is_color = is_color(cluster, &white, &black);
 
-        let Drawn {
-            rgba,
-            width,
-            height,
-            left,
-            ascent,
-            advance,
-        } = white;
+        let Drawn { rgba, width, height, left, ascent, advance } = white;
 
         Some(RasterizedGlyph {
             bitmap: GlyphBitmap {
@@ -136,19 +107,11 @@ impl CanvasGlyphs {
         self.tofu_cache
             .get(&key)
             .and_then(Option::as_ref)
-            .is_some_and(|tofu| {
-                tofu.width == drawn.width && tofu.height == drawn.height && tofu.rgba == drawn.rgba
-            })
+            .is_some_and(|tofu| tofu.width == drawn.width && tofu.height == drawn.height && tofu.rgba == drawn.rgba)
     }
 
     /// Draw `text` with the given CSS `font` and `fill_style` and read back the pixels.
-    fn draw(
-        &self,
-        text: &str,
-        font: &str,
-        fill_style: &str,
-        subpixel_offset_px: f32,
-    ) -> Option<Drawn> {
+    fn draw(&self, text: &str, font: &str, fill_style: &str, subpixel_offset_px: f32) -> Option<Drawn> {
         self.context.set_font(font);
         self.context.set_text_baseline("alphabetic");
         let metrics = self.context.measure_text(text).ok()?;
@@ -170,19 +133,12 @@ impl CanvasGlyphs {
         if self.canvas.height() < height {
             self.canvas.set_height(height);
         }
-        self.context
-            .clear_rect(0.0, 0.0, width as f64, height as f64);
+        self.context.clear_rect(0.0, 0.0, width as f64, height as f64);
         self.context.set_font(font);
         self.context.set_text_baseline("alphabetic");
         self.context.set_fill_style_str(fill_style);
         // Canvas positions text by its baseline, while the image starts at its top-left.
-        self.context
-            .fill_text(
-                text,
-                PADDING + left + subpixel_offset_px as f64,
-                PADDING + ascent,
-            )
-            .ok()?;
+        self.context.fill_text(text, PADDING + left + subpixel_offset_px as f64, PADDING + ascent).ok()?;
 
         // `web-sys` changes the signature of `get_image_data` based on `web_sys_unstable_apis`,
         // so we need to call it differently depending on that cfg.
@@ -196,14 +152,7 @@ impl CanvasGlyphs {
         };
         let rgba = image_data.ok()?.data().0;
 
-        Some(Drawn {
-            rgba,
-            width,
-            height,
-            left,
-            ascent,
-            advance: metrics.width(),
-        })
+        Some(Drawn { rgba, width, height, left, ascent, advance: metrics.width() })
     }
 }
 
@@ -244,11 +193,7 @@ fn is_color(cluster: &str, white: &Drawn, black: &Drawn) -> bool {
         }
     }
 
-    if monochrome_votes == color_votes {
-        has_emoji_presentation(cluster)
-    } else {
-        monochrome_votes < color_votes
-    }
+    if monochrome_votes == color_votes { has_emoji_presentation(cluster) } else { monochrome_votes < color_votes }
 }
 
 thread_local! {

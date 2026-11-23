@@ -29,11 +29,7 @@ impl crate::View for About {
 
         ui.vertical_centered(|ui| {
             ui.add_space(4.0);
-            ui.add(
-                egui::Image::new(egui::include_image!("../../data/egui-logo.svg"))
-                    .max_height(30.0)
-                    .tint(ui.visuals().strong_text_color()),
-            );
+            ui.add(egui::Image::new(egui::include_image!("../../data/egui-logo.svg")).max_height(30.0).tint(ui.visuals().strong_text_color()));
             ui.add_space(4.0);
         });
 
@@ -42,7 +38,9 @@ impl crate::View for About {
             on the web it is compiled to WebAssembly and rendered with WebGL or WebGPU.{}",
             if cfg!(target_arch = "wasm32") {
                 " Everything you see is rendered as textured triangles. There is no DOM, HTML, JS or CSS. Just Rust."
-            } else {""}
+            } else {
+                ""
+            }
         ));
 
         ui.add_space(12.0);
@@ -106,13 +104,7 @@ fn about_immediate_mode(ui: &mut egui::Ui) {
 
 fn links(ui: &mut egui::Ui) {
     use egui::special_emojis::GITHUB;
-    ui.hyperlink_to(
-        format!("{GITHUB} github.com/emilk/egui"),
-        "https://github.com/emilk/egui",
-    );
-    ui.hyperlink_to(
-        "@ernerfeldt.bsky.social",
-        "https://bsky.app/profile/ernerfeldt.bsky.social",
-    );
+    ui.hyperlink_to(format!("{GITHUB} github.com/emilk/egui"), "https://github.com/emilk/egui");
+    ui.hyperlink_to("@ernerfeldt.bsky.social", "https://bsky.app/profile/ernerfeldt.bsky.social");
     ui.hyperlink_to("egui documentation", "https://docs.rs/egui/");
 }

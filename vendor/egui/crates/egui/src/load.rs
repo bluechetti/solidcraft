@@ -102,8 +102,7 @@ impl LoadError {
     /// Returns the (approximate) size of the error message in bytes.
     pub fn byte_size(&self) -> usize {
         match self {
-            Self::FormatNotSupported { detected_format }
-            | Self::NoMatchingImageLoader { detected_format } => {
+            Self::FormatNotSupported { detected_format } | Self::NoMatchingImageLoader { detected_format } => {
                 detected_format.as_ref().map_or(0, |s| s.len())
             }
             Self::Loading(message) => message.len(),
@@ -178,15 +177,9 @@ impl SizeHint {
             Self::Scale(scale) => Self::Scale(OrderedFloat(factor * scale.0)),
             Self::Width(width) => Self::Width((factor * width as f32).round() as _),
             Self::Height(height) => Self::Height((factor * height as f32).round() as _),
-            Self::Size {
-                width,
-                height,
-                maintain_aspect_ratio,
-            } => Self::Size {
-                width: (factor * width as f32).round() as _,
-                height: (factor * height as f32).round() as _,
-                maintain_aspect_ratio,
-            },
+            Self::Size { width, height, maintain_aspect_ratio } => {
+                Self::Size { width: (factor * width as f32).round() as _, height: (factor * height as f32).round() as _, maintain_aspect_ratio }
+            }
         }
     }
 }
@@ -314,9 +307,7 @@ pub use crate::generate_loader_id;
 /// This is useful when implementing an [`ImageLoader`].
 pub fn has_extension(uri: &str, extension: &str) -> bool {
     let path = uri.split('#').next().unwrap_or(uri);
-    std::path::Path::new(path)
-        .extension()
-        .is_some_and(|found| found.eq_ignore_ascii_case(extension))
+    std::path::Path::new(path).extension().is_some_and(|found| found.eq_ignore_ascii_case(extension))
 }
 
 pub type BytesLoadResult = Result<BytesPoll>;
@@ -463,19 +454,13 @@ pub struct SizedTexture {
 impl SizedTexture {
     /// Create a [`SizedTexture`] from a texture `id` with a specific `size`.
     pub fn new(id: impl Into<TextureId>, size: impl Into<Vec2>) -> Self {
-        Self {
-            id: id.into(),
-            size: size.into(),
-        }
+        Self { id: id.into(), size: size.into() }
     }
 
     /// Fetch the [id][`SizedTexture::id`] and [size][`SizedTexture::size`] from a [`TextureHandle`].
     pub fn from_handle(handle: &TextureHandle) -> Self {
         let size = handle.size();
-        Self {
-            id: handle.id(),
-            size: Vec2::new(size[0] as f32, size[1] as f32),
-        }
+        Self { id: handle.id(), size: Vec2::new(size[0] as f32, size[1] as f32) }
     }
 }
 
@@ -574,13 +559,7 @@ pub trait TextureLoader {
     /// This may fail with:
     /// - [`LoadError::NotSupported`] if the loader does not support loading `uri`.
     /// - [`LoadError::Loading`] if the loading process failed.
-    fn load(
-        &self,
-        ctx: &Context,
-        uri: &str,
-        texture_options: TextureOptions,
-        size_hint: SizeHint,
-    ) -> TextureLoadResult;
+    fn load(&self, ctx: &Context, uri: &str, texture_options: TextureOptions, size_hint: SizeHint) -> TextureLoadResult;
 
     /// Forget the given `uri`.
     ///
@@ -633,12 +612,7 @@ impl Default for Loaders {
 impl Loaders {
     /// The given pass has just ended.
     pub fn end_pass(&self, pass_index: u64) {
-        let Self {
-            include,
-            bytes,
-            image,
-            texture,
-        } = self;
+        let Self { include, bytes, image, texture } = self;
 
         include.end_pass(pass_index);
         for loader in bytes.lock().iter() {

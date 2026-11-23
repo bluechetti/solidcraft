@@ -15,9 +15,7 @@ pub struct ImageCrateLoader {
 
 impl Default for ImageCrateLoader {
     fn default() -> Self {
-        Self {
-            cache: DecodeCache::new("ImageLoader"),
-        }
+        Self { cache: DecodeCache::new("ImageLoader") }
     }
 }
 
@@ -31,15 +29,11 @@ impl ImageCrateLoader {
 /// or a format registered by an `image` plugin via [`image::hooks::register_decoding_hook`].
 fn is_supported_extension(ext: &str) -> bool {
     // Uses only the enabled image crate features
-    ImageFormat::from_extension(ext).is_some_and(|format| format.reading_enabled())
-        || image::hooks::decoding_hook_registered(OsStr::new(ext))
+    ImageFormat::from_extension(ext).is_some_and(|format| format.reading_enabled()) || image::hooks::decoding_hook_registered(OsStr::new(ext))
 }
 
 fn is_supported_uri(uri: &str) -> bool {
-    let Some(ext) = Path::new(uri)
-        .extension()
-        .and_then(|ext| ext.to_str().map(|ext| ext.to_lowercase()))
-    else {
+    let Some(ext) = Path::new(uri).extension().and_then(|ext| ext.to_str().map(|ext| ext.to_lowercase())) else {
         // `true` because if there's no extension, assume that we support it
         return true;
     };
@@ -51,11 +45,7 @@ fn is_supported_mime(mime: &str) -> bool {
     // some mime types e.g. reflect binary files or mark the content as a download, which
     // may be a valid image or not, in this case, defer the decision on the format guessing
     // or the image crate and return true here
-    let mimes_to_defer = [
-        "application/octet-stream",
-        "application/x-msdownload",
-        "application/force-download",
-    ];
+    let mimes_to_defer = ["application/octet-stream", "application/x-msdownload", "application/force-download"];
     for m in &mimes_to_defer {
         // use contains instead of direct equality, as e.g. encoding info might be appended
         if mime.contains(m) {
@@ -79,9 +69,7 @@ fn is_supported_mime(mime: &str) -> bool {
     };
     let subtype = subtype.split('+').next().unwrap_or(subtype);
     let candidates = [subtype, subtype.strip_prefix("x-").unwrap_or(subtype)];
-    candidates
-        .iter()
-        .any(|ext| image::hooks::decoding_hook_registered(OsStr::new(ext)))
+    candidates.iter().any(|ext| image::hooks::decoding_hook_registered(OsStr::new(ext)))
 }
 
 impl ImageLoader for ImageCrateLoader {
@@ -113,15 +101,9 @@ impl ImageLoader for ImageCrateLoader {
                     if let Some(mime) = mime
                         && !is_supported_mime(&mime)
                     {
-                        return Err(LoadError::FormatNotSupported {
-                            detected_format: Some(mime),
-                        });
+                        return Err(LoadError::FormatNotSupported { detected_format: Some(mime) });
                     }
-                    self.cache.decode(ctx, uri, &bytes, |bytes| {
-                        crate::image::load_image_bytes(bytes)
-                            .map(Arc::new)
-                            .map_err(|err| err.to_string())
-                    })
+                    self.cache.decode(ctx, uri, &bytes, |bytes| crate::image::load_image_bytes(bytes).map(Arc::new).map_err(|err| err.to_string()))
                 }
                 Ok(BytesPoll::Pending { size }) => return Ok(ImagePoll::Pending { size }),
                 Err(err) => return Err(err),
@@ -144,8 +126,7 @@ impl ImageLoader for ImageCrateLoader {
     }
 
     fn byte_size(&self) -> usize {
-        self.cache
-            .byte_size(|image| image.pixels.len() * size_of::<egui::Color32>())
+        self.cache.byte_size(|image| image.pixels.len() * size_of::<egui::Color32>())
     }
 
     fn has_pending(&self) -> bool {
@@ -212,18 +193,11 @@ mod tests {
 
         image::hooks::register_decoding_hook(
             ext.into(),
-            Box::new(|_| {
-                Err(image::ImageError::Unsupported(
-                    image::error::ImageFormatHint::Unknown.into(),
-                ))
-            }),
+            Box::new(|_| Err(image::ImageError::Unsupported(image::error::ImageFormatHint::Unknown.into()))),
         );
 
         assert!(is_supported_uri(&format!("file://test.{ext}")));
-        assert!(is_supported_uri(&format!(
-            "file://TEST.{}",
-            ext.to_uppercase()
-        )));
+        assert!(is_supported_uri(&format!("file://TEST.{}", ext.to_uppercase())));
         assert!(is_supported_mime(&format!("image/{ext}")));
         assert!(is_supported_mime(&format!("image/x-{ext}")));
         assert!(is_supported_mime(&format!("image/{ext}; charset=utf-8")));

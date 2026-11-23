@@ -22,24 +22,14 @@ pub struct CornerRadiusF32 {
 impl From<CornerRadius> for CornerRadiusF32 {
     #[inline]
     fn from(cr: CornerRadius) -> Self {
-        Self {
-            nw: cr.nw as f32,
-            ne: cr.ne as f32,
-            sw: cr.sw as f32,
-            se: cr.se as f32,
-        }
+        Self { nw: cr.nw as f32, ne: cr.ne as f32, sw: cr.sw as f32, se: cr.se as f32 }
     }
 }
 
 impl From<CornerRadiusF32> for CornerRadius {
     #[inline]
     fn from(cr: CornerRadiusF32) -> Self {
-        Self {
-            nw: cr.nw.round() as u8,
-            ne: cr.ne.round() as u8,
-            sw: cr.sw.round() as u8,
-            se: cr.se.round() as u8,
-        }
+        Self { nw: cr.nw.round() as u8, ne: cr.ne.round() as u8, sw: cr.sw.round() as u8, se: cr.se.round() as u8 }
     }
 }
 
@@ -53,34 +43,19 @@ impl Default for CornerRadiusF32 {
 impl From<f32> for CornerRadiusF32 {
     #[inline]
     fn from(radius: f32) -> Self {
-        Self {
-            nw: radius,
-            ne: radius,
-            sw: radius,
-            se: radius,
-        }
+        Self { nw: radius, ne: radius, sw: radius, se: radius }
     }
 }
 
 impl CornerRadiusF32 {
     /// No rounding on any corner.
-    pub const ZERO: Self = Self {
-        nw: 0.0,
-        ne: 0.0,
-        sw: 0.0,
-        se: 0.0,
-    };
+    pub const ZERO: Self = Self { nw: 0.0, ne: 0.0, sw: 0.0, se: 0.0 };
 
     /// Same rounding on all four corners.
     #[inline]
     #[must_use]
     pub const fn same(radius: f32) -> Self {
-        Self {
-            nw: radius,
-            ne: radius,
-            sw: radius,
-            se: radius,
-        }
+        Self { nw: radius, ne: radius, sw: radius, se: radius }
     }
 
     /// Do all corners have the same rounding?
@@ -93,68 +68,42 @@ impl CornerRadiusF32 {
     #[inline]
     #[must_use]
     pub fn at_least(&self, min: f32) -> Self {
-        Self {
-            nw: self.nw.max(min),
-            ne: self.ne.max(min),
-            sw: self.sw.max(min),
-            se: self.se.max(min),
-        }
+        Self { nw: self.nw.max(min), ne: self.ne.max(min), sw: self.sw.max(min), se: self.se.max(min) }
     }
 
     /// Make sure each corner has a rounding of at most this.
     #[inline]
     #[must_use]
     pub fn at_most(&self, max: f32) -> Self {
-        Self {
-            nw: self.nw.min(max),
-            ne: self.ne.min(max),
-            sw: self.sw.min(max),
-            se: self.se.min(max),
-        }
+        Self { nw: self.nw.min(max), ne: self.ne.min(max), sw: self.sw.min(max), se: self.se.min(max) }
     }
 
     /// Set the rounding of the two east (right) corners.
     #[inline]
     #[must_use]
     pub fn with_east(self, radius: f32) -> Self {
-        Self {
-            ne: radius,
-            se: radius,
-            ..self
-        }
+        Self { ne: radius, se: radius, ..self }
     }
 
     /// Set the rounding of the two north (top) corners.
     #[inline]
     #[must_use]
     pub fn with_north(self, radius: f32) -> Self {
-        Self {
-            nw: radius,
-            ne: radius,
-            ..self
-        }
+        Self { nw: radius, ne: radius, ..self }
     }
 
     /// Set the rounding of the two south (bottom) corners.
     #[inline]
     #[must_use]
     pub fn with_south(self, radius: f32) -> Self {
-        Self {
-            sw: radius,
-            se: radius,
-            ..self
-        }
+        Self { sw: radius, se: radius, ..self }
     }
 
     /// Set the rounding of the two west (left) corners.
     #[inline]
     #[must_use]
     pub fn with_west(self, radius: f32) -> Self {
-        Self {
-            nw: radius,
-            sw: radius,
-            ..self
-        }
+        Self { nw: radius, sw: radius, ..self }
     }
 }
 
@@ -164,12 +113,7 @@ impl core::ops::Add for CornerRadiusF32 {
     /// Saturates at zero: no corner radius will go negative.
     #[inline]
     fn add(self, rhs: Self) -> Self {
-        Self {
-            nw: (self.nw + rhs.nw).max(0.0),
-            ne: (self.ne + rhs.ne).max(0.0),
-            sw: (self.sw + rhs.sw).max(0.0),
-            se: (self.se + rhs.se).max(0.0),
-        }
+        Self { nw: (self.nw + rhs.nw).max(0.0), ne: (self.ne + rhs.ne).max(0.0), sw: (self.sw + rhs.sw).max(0.0), se: (self.se + rhs.se).max(0.0) }
     }
 }
 
@@ -195,12 +139,7 @@ impl core::ops::Sub for CornerRadiusF32 {
     /// Saturates at zero: no corner radius will go negative.
     #[inline]
     fn sub(self, rhs: Self) -> Self {
-        Self {
-            nw: (self.nw - rhs.nw).max(0.0),
-            ne: (self.ne - rhs.ne).max(0.0),
-            sw: (self.sw - rhs.sw).max(0.0),
-            se: (self.se - rhs.se).max(0.0),
-        }
+        Self { nw: (self.nw - rhs.nw).max(0.0), ne: (self.ne - rhs.ne).max(0.0), sw: (self.sw - rhs.sw).max(0.0), se: (self.se - rhs.se).max(0.0) }
     }
 }
 
@@ -224,24 +163,14 @@ impl core::ops::Div<f32> for CornerRadiusF32 {
     type Output = Self;
     #[inline]
     fn div(self, rhs: f32) -> Self {
-        Self {
-            nw: self.nw / rhs,
-            ne: self.ne / rhs,
-            sw: self.sw / rhs,
-            se: self.se / rhs,
-        }
+        Self { nw: self.nw / rhs, ne: self.ne / rhs, sw: self.sw / rhs, se: self.se / rhs }
     }
 }
 
 impl core::ops::DivAssign<f32> for CornerRadiusF32 {
     #[inline]
     fn div_assign(&mut self, rhs: f32) {
-        *self = Self {
-            nw: self.nw / rhs,
-            ne: self.ne / rhs,
-            sw: self.sw / rhs,
-            se: self.se / rhs,
-        };
+        *self = Self { nw: self.nw / rhs, ne: self.ne / rhs, sw: self.sw / rhs, se: self.se / rhs };
     }
 }
 
@@ -249,24 +178,14 @@ impl core::ops::Mul<f32> for CornerRadiusF32 {
     type Output = Self;
     #[inline]
     fn mul(self, rhs: f32) -> Self {
-        Self {
-            nw: self.nw * rhs,
-            ne: self.ne * rhs,
-            sw: self.sw * rhs,
-            se: self.se * rhs,
-        }
+        Self { nw: self.nw * rhs, ne: self.ne * rhs, sw: self.sw * rhs, se: self.se * rhs }
     }
 }
 
 impl core::ops::MulAssign<f32> for CornerRadiusF32 {
     #[inline]
     fn mul_assign(&mut self, rhs: f32) {
-        *self = Self {
-            nw: self.nw * rhs,
-            ne: self.ne * rhs,
-            sw: self.sw * rhs,
-            se: self.se * rhs,
-        };
+        *self = Self { nw: self.nw * rhs, ne: self.ne * rhs, sw: self.sw * rhs, se: self.se * rhs };
     }
 }
 
@@ -276,14 +195,8 @@ mod tests {
 
     #[test]
     fn add_and_sub_saturate_at_zero() {
-        assert_eq!(
-            CornerRadiusF32::same(2.0) + CornerRadiusF32::same(-5.0),
-            CornerRadiusF32::ZERO
-        );
-        assert_eq!(
-            CornerRadiusF32::same(2.0) - CornerRadiusF32::same(5.0),
-            CornerRadiusF32::ZERO
-        );
+        assert_eq!(CornerRadiusF32::same(2.0) + CornerRadiusF32::same(-5.0), CornerRadiusF32::ZERO);
+        assert_eq!(CornerRadiusF32::same(2.0) - CornerRadiusF32::same(5.0), CornerRadiusF32::ZERO);
 
         let mut cr = CornerRadiusF32::same(1.0);
         cr += -3.0;

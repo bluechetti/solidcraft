@@ -29,16 +29,9 @@ pub fn capture() -> String {
             }
             let file_and_line = file_and_line.unwrap_or_default();
 
-            let name = symbol
-                .name()
-                .map(|name| clean_symbol_name(name.to_string()))
-                .unwrap_or_default();
+            let name = symbol.name().map(|name| clean_symbol_name(name.to_string())).unwrap_or_default();
 
-            frames.push(Frame {
-                depth,
-                name,
-                file_and_line,
-            });
+            frames.push(Frame { depth, name, file_and_line });
         });
 
         depth += 1; // note: we can resolve multiple symbols on the same frame.
@@ -66,10 +59,7 @@ pub fn capture() -> String {
 
     /// Is this the name of some sort of useful entry point?
     fn is_start_name(name: &str) -> bool {
-        name == "main"
-            || name == "_main"
-            || name.starts_with("eframe::run_native")
-            || name.starts_with("egui::context::Context::run")
+        name == "main" || name == "_main" || name.starts_with("eframe::run_native") || name.starts_with("egui::context::Context::run")
     }
 
     let mut has_kept_any_start_names = false;
@@ -89,27 +79,10 @@ pub fn capture() -> String {
         }
 
         // Remove frames that are part of egui itself, since they are not useful to the user.
-        let skip_crates = [
-            "alloc",
-            "backtrace",
-            "core",
-            "eframe",
-            "egui_extras",
-            "egui_plot",
-            "egui",
-            "epaint",
-            "std",
-            "winit",
-        ];
+        let skip_crates = ["alloc", "backtrace", "core", "eframe", "egui_extras", "egui_plot", "egui", "epaint", "std", "winit"];
         for crate_name in skip_crates {
             let name = frame.name.trim_start_matches('<');
-            if name.starts_with(crate_name)
-                && name
-                    .as_bytes()
-                    .get(crate_name.len())
-                    .copied()
-                    .is_none_or(|b| b.is_ascii_punctuation() && b != b'_')
-            {
+            if name.starts_with(crate_name) && name.as_bytes().get(crate_name.len()).copied().is_none_or(|b| b.is_ascii_punctuation() && b != b'_') {
                 return false;
             }
         }
@@ -144,22 +117,14 @@ pub fn capture() -> String {
         let mut last_depth = frames[0].depth;
 
         for frame in &frames {
-            let Frame {
-                depth,
-                name,
-                file_and_line,
-            } = frame;
+            let Frame { depth, name, file_and_line } = frame;
 
             if frame.depth + 1 < last_depth || last_depth + 1 < frame.depth {
                 // Show that some frames were elided
                 writeln!(formatted, "{:widest_depth$}  …", "").ok();
             }
 
-            writeln!(
-                formatted,
-                "{depth:widest_depth$}: {file_and_line:widest_file_line$}  {name}"
-            )
-            .ok();
+            writeln!(formatted, "{depth:widest_depth$}: {file_and_line:widest_file_line$}  {name}").ok();
 
             last_depth = frame.depth;
         }
@@ -184,10 +149,7 @@ fn clean_symbol_name(mut s: String) -> String {
 
 #[test]
 fn test_clean_symbol_name() {
-    assert_eq!(
-        clean_symbol_name("my_crate::my_function::h3bedd97b1e03baa5".to_owned()),
-        "my_crate::my_function"
-    );
+    assert_eq!(clean_symbol_name("my_crate::my_function::h3bedd97b1e03baa5".to_owned()), "my_crate::my_function");
 }
 
 /// Shorten a path to a Rust source file from a callstack.
@@ -228,15 +190,9 @@ fn shorten_source_file_path(path: &std::path::Path) -> String {
 #[test]
 fn test_shorten_path() {
     for (before, after) in [
-        (
-            "/Users/emilk/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-1.24.1/src/runtime/runtime.rs",
-            "tokio-1.24.1/src/runtime/runtime.rs",
-        ),
+        ("/Users/emilk/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-1.24.1/src/runtime/runtime.rs", "tokio-1.24.1/src/runtime/runtime.rs"),
         ("crates/rerun/src/main.rs", "rerun/src/main.rs"),
-        (
-            "/rustc/d5a82bbd26e1ad8b7401f6a718a9c57c96905483/library/core/src/ops/function.rs",
-            "core/src/ops/function.rs",
-        ),
+        ("/rustc/d5a82bbd26e1ad8b7401f6a718a9c57c96905483/library/core/src/ops/function.rs", "core/src/ops/function.rs"),
         ("/weird/path/file.rs", "/weird/path/file.rs"),
     ] {
         use core::str::FromStr as _;

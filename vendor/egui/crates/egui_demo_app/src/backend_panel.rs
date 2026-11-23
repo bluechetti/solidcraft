@@ -59,8 +59,7 @@ pub struct BackendPanel {
 
 impl BackendPanel {
     pub fn update(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
-        self.frame_history
-            .on_new_frame(ctx.input(|i| i.time), frame.info().cpu_usage);
+        self.frame_history.on_new_frame(ctx.input(|i| i.time), frame.info().cpu_usage);
 
         match self.run_mode {
             RunMode::Continuous => {
@@ -103,7 +102,8 @@ impl BackendPanel {
         {
             ui.separator();
             let mut screen_reader = ui.options(|o| o.screen_reader);
-            ui.checkbox(&mut screen_reader, "🔈 Screen reader").on_hover_text("Experimental feature: checking this will turn on the screen reader on supported platforms");
+            ui.checkbox(&mut screen_reader, "🔈 Screen reader")
+                .on_hover_text("Experimental feature: checking this will turn on the screen reader on supported platforms");
             ui.options_mut(|o| o.screen_reader = screen_reader);
         }
 
@@ -128,17 +128,12 @@ impl BackendPanel {
         ui.horizontal(|ui| {
             let run_mode = &mut self.run_mode;
             ui.label("Mode:");
-            ui.radio_value(run_mode, RunMode::Reactive, "Reactive")
-                .on_hover_text("Repaint when there are animations or input (e.g. mouse movement)");
-            ui.radio_value(run_mode, RunMode::Continuous, "Continuous")
-                .on_hover_text("Repaint everything each frame");
+            ui.radio_value(run_mode, RunMode::Reactive, "Reactive").on_hover_text("Repaint when there are animations or input (e.g. mouse movement)");
+            ui.radio_value(run_mode, RunMode::Continuous, "Continuous").on_hover_text("Repaint everything each frame");
         });
 
         if self.run_mode == RunMode::Continuous {
-            ui.label(format!(
-                "Repainting the UI each frame. FPS: {:.1}",
-                self.frame_history.fps()
-            ));
+            ui.label(format!("Repainting the UI each frame. FPS: {:.1}", self.frame_history.fps()));
         } else {
             ui.label("Only running UI code when there are animations or input.");
 
@@ -154,10 +149,7 @@ impl BackendPanel {
                         ui.label("Total ui passes:");
                         ui.monospace(ui.ctx().cumulative_pass_nr().to_string());
                     });
-                    if ui
-                        .button("Wait 2s, then request repaint after another 3s")
-                        .clicked()
-                    {
+                    if ui.button("Wait 2s, then request repaint after another 3s").clicked() {
                         log::info!("Waiting 2s before requesting repaint…");
                         let ctx = ui.ctx().clone();
                         call_after_delay(core::time::Duration::from_secs(2), move || {
@@ -185,10 +177,7 @@ fn integration_ui(ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         ui.label("egui running inside ");
-        ui.hyperlink_to(
-            "eframe",
-            "https://github.com/emilk/egui/tree/main/crates/eframe",
-        );
+        ui.hyperlink_to("eframe", "https://github.com/emilk/egui/tree/main/crates/eframe");
         ui.label(".");
     });
 
@@ -327,36 +316,18 @@ fn integration_ui(ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         ui.horizontal(|ui| {
             {
                 let mut fullscreen = ui.input(|i| i.viewport().fullscreen.unwrap_or(false));
-                if ui
-                    .checkbox(&mut fullscreen, "🔳 Fullscreen (F11)")
-                    .on_hover_text("Fullscreen the window")
-                    .changed()
-                {
+                if ui.checkbox(&mut fullscreen, "🔳 Fullscreen (F11)").on_hover_text("Fullscreen the window").changed() {
                     ui.send_viewport_cmd(egui::ViewportCommand::Fullscreen(fullscreen));
                 }
             }
 
             let mut size = None;
-            egui::ComboBox::from_id_salt("viewport-size-combo")
-                .selected_text("Resize to…")
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(
-                        &mut size,
-                        Some(egui::vec2(375.0, 667.0)),
-                        "📱 iPhone SE 2nd Gen",
-                    );
-                    ui.selectable_value(&mut size, Some(egui::vec2(393.0, 852.0)), "📱 iPhone 15");
-                    ui.selectable_value(
-                        &mut size,
-                        Some(egui::vec2(1280.0, 720.0)),
-                        "🖥️ Desktop 720p",
-                    );
-                    ui.selectable_value(
-                        &mut size,
-                        Some(egui::vec2(1920.0, 1080.0)),
-                        "🖥️ Desktop 1080p",
-                    );
-                });
+            egui::ComboBox::from_id_salt("viewport-size-combo").selected_text("Resize to…").show_ui(ui, |ui| {
+                ui.selectable_value(&mut size, Some(egui::vec2(375.0, 667.0)), "📱 iPhone SE 2nd Gen");
+                ui.selectable_value(&mut size, Some(egui::vec2(393.0, 852.0)), "📱 iPhone 15");
+                ui.selectable_value(&mut size, Some(egui::vec2(1280.0, 720.0)), "🖥️ Desktop 720p");
+                ui.selectable_value(&mut size, Some(egui::vec2(1920.0, 1080.0)), "🖥️ Desktop 1080p");
+            });
 
             if let Some(size) = size {
                 ui.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
@@ -371,46 +342,38 @@ fn integration_ui(ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
 fn wgpu_surface_config_ui(ui: &mut egui::Ui, cfg: &mut eframe::SurfaceConfig) {
     use eframe::wgpu::PresentMode;
 
-    egui::Grid::new("wgpu_surface_config")
-        .num_columns(2)
-        .show(ui, |ui| {
-            ui.label("Present mode:");
-            egui::ComboBox::from_id_salt("wgpu_present_mode")
-                .selected_text(format!("{:?}", cfg.present_mode))
-                .show_ui(ui, |ui| {
-                    for mode in [
-                        PresentMode::AutoVsync,
-                        PresentMode::AutoNoVsync,
-                        PresentMode::Fifo,
-                        PresentMode::FifoRelaxed,
-                        PresentMode::Immediate,
-                        PresentMode::Mailbox,
-                    ] {
-                        ui.selectable_value(&mut cfg.present_mode, mode, format!("{mode:?}"));
-                    }
-                });
-            ui.end_row();
-
-            ui.label("Desired max frame latency:");
-            egui::ComboBox::from_id_salt("wgpu_desired_max_frame_latency")
-                .selected_text(match cfg.desired_maximum_frame_latency {
-                    None => "Default".to_owned(),
-                    Some(n) => n.to_string(),
-                })
-                .show_ui(ui, |ui| {
-                    ui.weak("Lower value = lower latency");
-                    ui.selectable_value(&mut cfg.desired_maximum_frame_latency, None, "Default");
-                    for n in [0_u32, 1, 2, 3] {
-                        ui.selectable_value(
-                            &mut cfg.desired_maximum_frame_latency,
-                            Some(n),
-                            n.to_string(),
-                        );
-                    }
-                    ui.weak("Higher value = higher throughput/FPS");
-                });
-            ui.end_row();
+    egui::Grid::new("wgpu_surface_config").num_columns(2).show(ui, |ui| {
+        ui.label("Present mode:");
+        egui::ComboBox::from_id_salt("wgpu_present_mode").selected_text(format!("{:?}", cfg.present_mode)).show_ui(ui, |ui| {
+            for mode in [
+                PresentMode::AutoVsync,
+                PresentMode::AutoNoVsync,
+                PresentMode::Fifo,
+                PresentMode::FifoRelaxed,
+                PresentMode::Immediate,
+                PresentMode::Mailbox,
+            ] {
+                ui.selectable_value(&mut cfg.present_mode, mode, format!("{mode:?}"));
+            }
         });
+        ui.end_row();
+
+        ui.label("Desired max frame latency:");
+        egui::ComboBox::from_id_salt("wgpu_desired_max_frame_latency")
+            .selected_text(match cfg.desired_maximum_frame_latency {
+                None => "Default".to_owned(),
+                Some(n) => n.to_string(),
+            })
+            .show_ui(ui, |ui| {
+                ui.weak("Lower value = lower latency");
+                ui.selectable_value(&mut cfg.desired_maximum_frame_latency, None, "Default");
+                for n in [0_u32, 1, 2, 3] {
+                    ui.selectable_value(&mut cfg.desired_maximum_frame_latency, Some(n), n.to_string());
+                }
+                ui.weak("Higher value = higher throughput/FPS");
+            });
+        ui.end_row();
+    });
 }
 
 // ----------------------------------------------------------------------------
@@ -435,23 +398,11 @@ impl Default for EguiWindows {
 
 impl EguiWindows {
     fn none() -> Self {
-        Self {
-            settings: false,
-            inspection: false,
-            memory: false,
-            output_events: false,
-            output_event_history: Default::default(),
-        }
+        Self { settings: false, inspection: false, memory: false, output_events: false, output_event_history: Default::default() }
     }
 
     fn checkboxes(&mut self, ui: &mut egui::Ui) {
-        let Self {
-            settings,
-            inspection,
-            memory,
-            output_events,
-            output_event_history: _,
-        } = self;
+        let Self { settings, inspection, memory, output_events, output_event_history: _ } = self;
 
         ui.checkbox(settings, "🔧 Settings");
         ui.checkbox(inspection, "🔍 Inspection");
@@ -460,13 +411,7 @@ impl EguiWindows {
     }
 
     fn windows(&mut self, ctx: &egui::Context) {
-        let Self {
-            settings,
-            inspection,
-            memory,
-            output_events,
-            output_event_history,
-        } = self;
+        let Self { settings, inspection, memory, output_events, output_event_history } = self;
 
         ctx.output(|o| {
             for event in &o.events {
@@ -477,48 +422,33 @@ impl EguiWindows {
             output_event_history.pop_front();
         }
 
-        egui::Window::new("🔧 Settings")
-            .open(settings)
-            .vscroll(true)
-            .show(ctx, |ui| {
-                ctx.settings_ui(ui);
-            });
+        egui::Window::new("🔧 Settings").open(settings).vscroll(true).show(ctx, |ui| {
+            ctx.settings_ui(ui);
+        });
 
-        egui::Window::new("🔍 Inspection")
-            .open(inspection)
-            .vscroll(true)
-            .show(ctx, |ui| {
-                ctx.inspection_ui(ui);
-            });
+        egui::Window::new("🔍 Inspection").open(inspection).vscroll(true).show(ctx, |ui| {
+            ctx.inspection_ui(ui);
+        });
 
-        egui::Window::new("📝 Memory")
-            .open(memory)
-            .resizable(false)
-            .show(ctx, |ui| {
-                ctx.memory_ui(ui);
-            });
+        egui::Window::new("📝 Memory").open(memory).resizable(false).show(ctx, |ui| {
+            ctx.memory_ui(ui);
+        });
 
-        egui::Window::new("📤 Output Events")
-            .open(output_events)
-            .resizable(true)
-            .default_width(520.0)
-            .show(ctx, |ui| {
-                ui.label(
-                    "Recent output events from egui. \
+        egui::Window::new("📤 Output Events").open(output_events).resizable(true).default_width(520.0).show(ctx, |ui| {
+            ui.label(
+                "Recent output events from egui. \
             These are emitted when you interact with widgets, or move focus between them with TAB. \
             They can be hooked up to a screen reader on supported platforms.",
-                );
+            );
 
-                ui.separator();
+            ui.separator();
 
-                egui::ScrollArea::vertical()
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        for event in output_event_history {
-                            ui.label(format!("{event:?}"));
-                        }
-                    });
+            egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
+                for event in output_event_history {
+                    ui.label(format!("{event:?}"));
+                }
             });
+        });
     }
 }
 
@@ -543,11 +473,6 @@ fn call_after_delay(delay: core::time::Duration, f: impl FnOnce() + Send + 'stat
     let window = web_sys::window().unwrap();
     let closure = Closure::once(f);
     let delay_ms = delay.as_millis() as _;
-    window
-        .set_timeout_with_callback_and_timeout_and_arguments_0(
-            closure.as_ref().unchecked_ref(),
-            delay_ms,
-        )
-        .unwrap();
+    window.set_timeout_with_callback_and_timeout_and_arguments_0(closure.as_ref().unchecked_ref(), delay_ms).unwrap();
     closure.forget(); // We must forget it, or else the callback is canceled on drop
 }

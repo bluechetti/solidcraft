@@ -9,10 +9,7 @@ use eframe::egui::{self, ViewportCommand};
 
 fn main() -> eframe::Result {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
-    let viewport = egui::ViewportBuilder::default()
-        .with_inner_size([400.0, 100.0])
-        .with_min_inner_size([400.0, 100.0])
-        .with_transparent(true); // To have rounded corners we need transparency
+    let viewport = egui::ViewportBuilder::default().with_inner_size([400.0, 100.0]).with_min_inner_size([400.0, 100.0]).with_transparent(true); // To have rounded corners we need transparency
 
     let viewport = cfg_select! {
         target_os = "macos" => {
@@ -27,10 +24,7 @@ fn main() -> eframe::Result {
         }
     };
 
-    let options = eframe::NativeOptions {
-        viewport,
-        ..Default::default()
-    };
+    let options = eframe::NativeOptions { viewport, ..Default::default() };
     eframe::run_native(
         "Custom window frame", // unused title
         options,
@@ -57,12 +51,7 @@ impl eframe::App for MyApp {
     }
 }
 
-fn custom_window_frame(
-    frame: &eframe::Frame,
-    ui: &mut egui::Ui,
-    title: &str,
-    add_contents: impl FnOnce(&mut egui::Ui),
-) {
+fn custom_window_frame(frame: &eframe::Frame, ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&mut egui::Ui)) {
     use egui::UiBuilder;
 
     let panel_frame = egui::Frame::new()
@@ -96,37 +85,19 @@ fn custom_window_frame(
     });
 }
 
-fn title_bar_ui(
-    frame: &eframe::Frame,
-    ui: &mut egui::Ui,
-    title_bar_rect: eframe::epaint::Rect,
-    title: &str,
-) {
+fn title_bar_ui(frame: &eframe::Frame, ui: &mut egui::Ui, title_bar_rect: eframe::epaint::Rect, title: &str) {
     use egui::{Align2, FontId, Id, PointerButton, Sense, UiBuilder, vec2};
 
     let painter = ui.painter();
 
-    let title_bar_response = ui.interact(
-        title_bar_rect,
-        Id::unique("title_bar"),
-        Sense::click_and_drag(),
-    );
+    let title_bar_response = ui.interact(title_bar_rect, Id::unique("title_bar"), Sense::click_and_drag());
 
     // Paint the title:
-    painter.text(
-        title_bar_rect.center(),
-        Align2::CENTER_CENTER,
-        title,
-        FontId::proportional(20.0),
-        ui.style().visuals.text_color(),
-    );
+    painter.text(title_bar_rect.center(), Align2::CENTER_CENTER, title, FontId::proportional(20.0), ui.style().visuals.text_color());
 
     // Paint the line under the title:
     painter.line_segment(
-        [
-            title_bar_rect.left_bottom() + vec2(1.0, 0.0),
-            title_bar_rect.right_bottom() + vec2(-1.0, 0.0),
-        ],
+        [title_bar_rect.left_bottom() + vec2(1.0, 0.0), title_bar_rect.right_bottom() + vec2(-1.0, 0.0)],
         ui.visuals().widgets.noninteractive.bg_stroke,
     );
 
@@ -142,25 +113,16 @@ fn title_bar_ui(
 
     if cfg!(target_os = "macos") {
         // Use the native traffic lights instead of our own buttons:
-        frame.set_traffic_lights_position(
-            ui.ctx(),
-            title_bar_rect.y_range(),
-            title_bar_rect.left() + 12.0,
-        );
+        frame.set_traffic_lights_position(ui.ctx(), title_bar_rect.y_range(), title_bar_rect.left() + 12.0);
         return;
     }
 
-    ui.scope_builder(
-        UiBuilder::new()
-            .max_rect(title_bar_rect)
-            .layout(egui::Layout::right_to_left(egui::Align::Center)),
-        |ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-            ui.visuals_mut().button_frame = false;
-            ui.add_space(8.0);
-            close_maximize_minimize(ui);
-        },
-    );
+    ui.scope_builder(UiBuilder::new().max_rect(title_bar_rect).layout(egui::Layout::right_to_left(egui::Align::Center)), |ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        ui.visuals_mut().button_frame = false;
+        ui.add_space(8.0);
+        close_maximize_minimize(ui);
+    });
 }
 
 /// Show some close/maximize/minimize buttons for the native window.
@@ -169,33 +131,25 @@ fn close_maximize_minimize(ui: &mut egui::Ui) {
 
     let button_height = 12.0;
 
-    let close_response = ui
-        .add(Button::new(RichText::new("❌").size(button_height)))
-        .on_hover_text("Close the window");
+    let close_response = ui.add(Button::new(RichText::new("❌").size(button_height))).on_hover_text("Close the window");
     if close_response.clicked() {
         ui.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
     let is_maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
     if is_maximized {
-        let maximized_response = ui
-            .add(Button::new(RichText::new("🗗").size(button_height)))
-            .on_hover_text("Restore window");
+        let maximized_response = ui.add(Button::new(RichText::new("🗗").size(button_height))).on_hover_text("Restore window");
         if maximized_response.clicked() {
             ui.send_viewport_cmd(ViewportCommand::Maximized(false));
         }
     } else {
-        let maximized_response = ui
-            .add(Button::new(RichText::new("🗗").size(button_height)))
-            .on_hover_text("Maximize window");
+        let maximized_response = ui.add(Button::new(RichText::new("🗗").size(button_height))).on_hover_text("Maximize window");
         if maximized_response.clicked() {
             ui.send_viewport_cmd(ViewportCommand::Maximized(true));
         }
     }
 
-    let minimized_response = ui
-        .add(Button::new(RichText::new("🗕").size(button_height)))
-        .on_hover_text("Minimize the window");
+    let minimized_response = ui.add(Button::new(RichText::new("🗕").size(button_height))).on_hover_text("Minimize the window");
     if minimized_response.clicked() {
         ui.send_viewport_cmd(ViewportCommand::Minimized(true));
     }

@@ -8,16 +8,10 @@ use epaint::{PaintCallbackInfo, Primitive, Vertex, emath::NumExt as _};
 use wgpu::util::DeviceExt as _;
 
 // Only implements Send + Sync on wasm32 in order to allow storing wgpu resources on the type map.
-#[cfg(not(all(
-    target_arch = "wasm32",
-    not(feature = "fragile-send-sync-non-atomic-wasm"),
-)))]
+#[cfg(not(all(target_arch = "wasm32", not(feature = "fragile-send-sync-non-atomic-wasm"),)))]
 /// You can use this for storage when implementing [`CallbackTrait`].
 pub type CallbackResources = type_map::concurrent::TypeMap;
-#[cfg(all(
-    target_arch = "wasm32",
-    not(feature = "fragile-send-sync-non-atomic-wasm"),
-))]
+#[cfg(all(target_arch = "wasm32", not(feature = "fragile-send-sync-non-atomic-wasm"),))]
 /// You can use this for storage when implementing [`CallbackTrait`].
 pub type CallbackResources = type_map::TypeMap;
 
@@ -35,14 +29,8 @@ impl Callback {
     }
 
     /// Creates a new [`epaint::PaintCallback`] from a callback trait instance.
-    pub fn new_paint_callback(
-        rect: epaint::emath::Rect,
-        callback: impl CallbackTrait + 'static,
-    ) -> epaint::PaintCallback {
-        epaint::PaintCallback {
-            rect,
-            callback: std::sync::Arc::new(Self(Box::new(callback))),
-        }
+    pub fn new_paint_callback(rect: epaint::emath::Rect, callback: impl CallbackTrait + 'static) -> epaint::PaintCallback {
+        epaint::PaintCallback { rect, callback: std::sync::Arc::new(Self(Box::new(callback))) }
     }
 }
 
@@ -117,12 +105,7 @@ pub trait CallbackTrait: Send + Sync + std::any::Any {
     ///
     /// It is given access to the [`wgpu::RenderPass`] so that it can issue draw commands
     /// into the same [`wgpu::RenderPass`] that is used for all other egui elements.
-    fn paint(
-        &self,
-        info: PaintCallbackInfo,
-        render_pass: &mut wgpu::RenderPass<'static>,
-        callback_resources: &CallbackResources,
-    );
+    fn paint(&self, info: PaintCallbackInfo, render_pass: &mut wgpu::RenderPass<'static>, callback_resources: &CallbackResources);
 }
 
 /// Information about the screen used for rendering.
@@ -160,10 +143,7 @@ pub trait FrameCompositor: Send + Sync {
 impl ScreenDescriptor {
     /// size in "logical" points
     fn screen_size_in_points(&self) -> [f32; 2] {
-        [
-            self.size_in_pixels[0] as f32 / self.pixels_per_point,
-            self.size_in_pixels[1] as f32 / self.pixels_per_point,
-        ]
+        [self.size_in_pixels[0] as f32 / self.pixels_per_point, self.size_in_pixels[1] as f32 / self.pixels_per_point]
     }
 }
 
@@ -242,22 +222,12 @@ impl RendererOptions {
     /// Set options that produce the most predicatable output.
     ///
     /// Useful for image snapshot tests.
-    pub const PREDICTABLE: Self = Self {
-        msaa_samples: 1,
-        depth_stencil_format: None,
-        dithering: false,
-        predictable_texture_filtering: true,
-    };
+    pub const PREDICTABLE: Self = Self { msaa_samples: 1, depth_stencil_format: None, dithering: false, predictable_texture_filtering: true };
 }
 
 impl Default for RendererOptions {
     fn default() -> Self {
-        Self {
-            msaa_samples: 0,
-            depth_stencil_format: None,
-            dithering: true,
-            predictable_texture_filtering: false,
-        }
+        Self { msaa_samples: 0, depth_stencil_format: None, dithering: true, predictable_texture_filtering: false }
     }
 }
 
@@ -305,17 +275,10 @@ impl Renderer {
     ///
     /// `output_color_format` should preferably be [`wgpu::TextureFormat::Rgba8Unorm`] or
     /// [`wgpu::TextureFormat::Bgra8Unorm`], i.e. in gamma-space.
-    pub fn new(
-        device: &wgpu::Device,
-        output_color_format: wgpu::TextureFormat,
-        options: RendererOptions,
-    ) -> Self {
+    pub fn new(device: &wgpu::Device, output_color_format: wgpu::TextureFormat, options: RendererOptions) -> Self {
         profiling::function_scope!();
 
-        let shader = wgpu::ShaderModuleDescriptor {
-            label: Some("egui"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("egui.wgsl"))),
-        };
+        let shader = wgpu::ShaderModuleDescriptor { label: Some("egui"), source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!("egui.wgsl"))) };
         let module = {
             profiling::scope!("create_shader_module");
             device.create_shader_module(shader)
@@ -340,9 +303,7 @@ impl Renderer {
                     visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         has_dynamic_offset: false,
-                        min_binding_size: NonZeroU64::new(
-                            core::mem::size_of::<UniformBuffer>() as _
-                        ),
+                        min_binding_size: NonZeroU64::new(core::mem::size_of::<UniformBuffer>() as _),
                         ty: wgpu::BufferBindingType::Uniform,
                     },
                     count: None,
@@ -357,11 +318,7 @@ impl Renderer {
                 layout: &uniform_bind_group_layout,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &uniform_buffer,
-                        offset: 0,
-                        size: None,
-                    }),
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding { buffer: &uniform_buffer, offset: 0, size: None }),
                 }],
             })
         };
@@ -392,9 +349,7 @@ impl Renderer {
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             has_dynamic_offset: false,
-                            min_binding_size: NonZeroU64::new(
-                                (core::mem::size_of::<u32>() * 4) as _,
-                            ),
+                            min_binding_size: NonZeroU64::new((core::mem::size_of::<u32>() * 4) as _),
                             ty: wgpu::BufferBindingType::Uniform,
                         },
                         count: None,
@@ -414,22 +369,17 @@ impl Renderer {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("egui_pipeline_layout"),
-            bind_group_layouts: &[
-                Some(&uniform_bind_group_layout),
-                Some(&texture_bind_group_layout),
-            ],
+            bind_group_layouts: &[Some(&uniform_bind_group_layout), Some(&texture_bind_group_layout)],
             immediate_size: 0,
         });
 
-        let depth_stencil = options
-            .depth_stencil_format
-            .map(|format| wgpu::DepthStencilState {
-                format,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Always),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            });
+        let depth_stencil = options.depth_stencil_format.map(|format| wgpu::DepthStencilState {
+            format,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::Always),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        });
 
         let pipeline = {
             profiling::scope!("create_render_pipeline");
@@ -447,7 +397,7 @@ impl Renderer {
                         // 2: uint color
                         attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x2, 2 => Uint32],
                     })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default()
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
@@ -459,11 +409,7 @@ impl Renderer {
                     strip_index_format: None,
                 },
                 depth_stencil,
-                multisample: wgpu::MultisampleState {
-                    alpha_to_coverage_enabled: false,
-                    count: options.msaa_samples.max(1),
-                    mask: !0,
-                },
+                multisample: wgpu::MultisampleState { alpha_to_coverage_enabled: false, count: options.msaa_samples.max(1), mask: !0 },
 
                 fragment: Some(wgpu::FragmentState {
                     module: &module,
@@ -489,18 +435,15 @@ impl Renderer {
                         }),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default()
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 }),
                 multiview_mask: None,
                 cache: None,
-            }
-        )
+            })
         };
 
-        const VERTEX_BUFFER_START_CAPACITY: wgpu::BufferAddress =
-            (core::mem::size_of::<Vertex>() * 1024) as _;
-        const INDEX_BUFFER_START_CAPACITY: wgpu::BufferAddress =
-            (core::mem::size_of::<u32>() * 1024 * 3) as _;
+        const VERTEX_BUFFER_START_CAPACITY: wgpu::BufferAddress = (core::mem::size_of::<Vertex>() * 1024) as _;
+        const INDEX_BUFFER_START_CAPACITY: wgpu::BufferAddress = (core::mem::size_of::<u32>() * 1024 * 3) as _;
 
         Self {
             pipeline,
@@ -540,12 +483,7 @@ impl Renderer {
     ///
     /// # Panic
     /// Always ensure that [`Renderer::update_buffers`] has been called otherwise calling [`Renderer::render`] will panic!
-    pub fn render(
-        &self,
-        render_pass: &mut wgpu::RenderPass<'static>,
-        paint_jobs: &[epaint::ClippedPrimitive],
-        screen_descriptor: &ScreenDescriptor,
-    ) {
+    pub fn render(&self, render_pass: &mut wgpu::RenderPass<'static>, paint_jobs: &[epaint::ClippedPrimitive], screen_descriptor: &ScreenDescriptor) {
         self.render_with_mesh_offset(render_pass, paint_jobs, screen_descriptor, 0);
     }
 
@@ -575,20 +513,9 @@ impl Renderer {
         let mut index_buffer_slices = self.index_buffer.slices.iter().skip(mesh_offset);
         let mut vertex_buffer_slices = self.vertex_buffer.slices.iter().skip(mesh_offset);
 
-        for epaint::ClippedPrimitive {
-            clip_rect,
-            primitive,
-        } in paint_jobs
-        {
+        for epaint::ClippedPrimitive { clip_rect, primitive } in paint_jobs {
             if needs_reset {
-                render_pass.set_viewport(
-                    0.0,
-                    0.0,
-                    size_in_pixels[0] as f32,
-                    size_in_pixels[1] as f32,
-                    0.0,
-                    1.0,
-                );
+                render_pass.set_viewport(0.0, 0.0, size_in_pixels[0] as f32, size_in_pixels[1] as f32, 0.0, 1.0);
                 render_pass.set_pipeline(&self.pipeline);
                 render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
                 needs_reset = false;
@@ -601,12 +528,8 @@ impl Renderer {
                     // Skip rendering zero-sized clip areas.
                     if let Primitive::Mesh(_) = primitive {
                         // If this is a mesh, we need to advance the index and vertex buffer iterators:
-                        index_buffer_slices
-                            .next()
-                            .expect("You must call .update_buffers() before .render()");
-                        vertex_buffer_slices
-                            .next()
-                            .expect("You must call .update_buffers() before .render()");
+                        index_buffer_slices.next().expect("You must call .update_buffers() before .render()");
+                        vertex_buffer_slices.next().expect("You must call .update_buffers() before .render()");
                     }
                     continue;
                 }
@@ -616,27 +539,17 @@ impl Renderer {
 
             match primitive {
                 Primitive::Mesh(mesh) => {
-                    let index_buffer_slice = index_buffer_slices
-                        .next()
-                        .expect("You must call .update_buffers() before .render()");
-                    let vertex_buffer_slice = vertex_buffer_slices
-                        .next()
-                        .expect("You must call .update_buffers() before .render()");
+                    let index_buffer_slice = index_buffer_slices.next().expect("You must call .update_buffers() before .render()");
+                    let vertex_buffer_slice = vertex_buffer_slices.next().expect("You must call .update_buffers() before .render()");
 
                     if let Some(Texture { bind_group, .. }) = self.textures.get(&mesh.texture_id) {
                         render_pass.set_bind_group(1, bind_group, &[]);
                         render_pass.set_index_buffer(
-                            self.index_buffer.buffer.slice(
-                                index_buffer_slice.start as u64..index_buffer_slice.end as u64,
-                            ),
+                            self.index_buffer.buffer.slice(index_buffer_slice.start as u64..index_buffer_slice.end as u64),
                             wgpu::IndexFormat::Uint32,
                         );
-                        render_pass.set_vertex_buffer(
-                            0,
-                            self.vertex_buffer.buffer.slice(
-                                vertex_buffer_slice.start as u64..vertex_buffer_slice.end as u64,
-                            ),
-                        );
+                        render_pass
+                            .set_vertex_buffer(0, self.vertex_buffer.buffer.slice(vertex_buffer_slice.start as u64..vertex_buffer_slice.end as u64));
                         render_pass.draw_indexed(0..mesh.indices.len() as u32, 0, 0..1);
                     } else {
                         log::warn!("Missing texture: {:?}", mesh.texture_id);
@@ -648,12 +561,7 @@ impl Renderer {
                         continue;
                     };
 
-                    let info = PaintCallbackInfo {
-                        viewport: callback.rect,
-                        clip_rect: *clip_rect,
-                        pixels_per_point,
-                        screen_size_px: size_in_pixels,
-                    };
+                    let info = PaintCallbackInfo { viewport: callback.rect, clip_rect: *clip_rect, pixels_per_point, screen_size_px: size_in_pixels };
 
                     let viewport_px = info.viewport_in_pixels();
                     if viewport_px.width_px > 0 && viewport_px.height_px > 0 {
@@ -688,31 +596,17 @@ impl Renderer {
     }
 
     /// Should be called before [`Self::render`].
-    pub fn update_texture(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        id: epaint::TextureId,
-        image_delta: &epaint::ImageDelta,
-    ) {
+    pub fn update_texture(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, id: epaint::TextureId, image_delta: &epaint::ImageDelta) {
         profiling::function_scope!();
 
         let width = image_delta.image.width() as u32;
         let height = image_delta.image.height() as u32;
 
-        let size = wgpu::Extent3d {
-            width,
-            height,
-            depth_or_array_layers: 1,
-        };
+        let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
 
         let data_color32 = match &image_delta.image {
             epaint::ImageData::Color(image) => {
-                assert_eq!(
-                    width as usize * height as usize,
-                    image.pixels.len(),
-                    "Mismatch between texture size and texel count"
-                );
+                assert_eq!(width as usize * height as usize, image.pixels.len(), "Mismatch between texture size and texel count");
                 Cow::Borrowed(&image.pixels)
             }
         };
@@ -721,18 +615,9 @@ impl Renderer {
         let queue_write_data_to_texture = |texture, origin| {
             profiling::scope!("write_texture");
             queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture,
-                    mip_level: 0,
-                    origin,
-                    aspect: wgpu::TextureAspect::All,
-                },
+                wgpu::TexelCopyTextureInfo { texture, mip_level: 0, origin, aspect: wgpu::TextureAspect::All },
                 data_bytes,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4 * width),
-                    rows_per_image: Some(height),
-                },
+                wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * width), rows_per_image: Some(height) },
                 size,
             );
         };
@@ -743,32 +628,18 @@ impl Renderer {
 
         let (texture, origin, bind_group) = if let Some(pos) = image_delta.pos {
             // update the existing texture
-            let Texture {
-                texture,
-                bind_group,
-                options,
-            } = self
-                .textures
-                .remove(&id)
-                .expect("Tried to update a texture that has not been allocated yet.");
+            let Texture { texture, bind_group, options } =
+                self.textures.remove(&id).expect("Tried to update a texture that has not been allocated yet.");
             let texture = texture.expect("Tried to update user texture.");
             let options = options.expect("Tried to update user texture.");
-            let origin = wgpu::Origin3d {
-                x: pos[0] as u32,
-                y: pos[1] as u32,
-                z: 0,
-            };
+            let origin = wgpu::Origin3d { x: pos[0] as u32, y: pos[1] as u32, z: 0 };
 
             (
                 texture,
                 origin,
                 // If the TextureOptions are the same as the previous ones, we can reuse the bind group. Otherwise we
                 // have to recreate it.
-                if image_delta.options == options {
-                    Some(bind_group)
-                } else {
-                    None
-                },
+                if image_delta.options == options { Some(bind_group) } else { None },
             )
         } else {
             // allocate a new texture
@@ -790,32 +661,19 @@ impl Renderer {
         };
 
         let bind_group = bind_group.unwrap_or_else(|| {
-            let nearest =
-                image_delta.options.magnification == epaint::textures::TextureFilter::Nearest;
+            let nearest = image_delta.options.magnification == epaint::textures::TextureFilter::Nearest;
             let wrap_mode = wrap_mode_flag(image_delta.options.wrap_mode);
-            let sampler = self
-                .samplers
-                .entry(image_delta.options)
-                .or_insert_with(|| create_sampler(image_delta.options, device));
+            let sampler = self.samplers.entry(image_delta.options).or_insert_with(|| create_sampler(image_delta.options, device));
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label,
                 layout: &self.texture_bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(
-                            &texture.create_view(&wgpu::TextureViewDescriptor::default()),
-                        ),
+                        resource: wgpu::BindingResource::TextureView(&texture.create_view(&wgpu::TextureViewDescriptor::default())),
                     },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: self.texture_flag_buffers[texture_flags(nearest, wrap_mode)]
-                            .as_entire_binding(),
-                    },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(sampler) },
+                    wgpu::BindGroupEntry { binding: 2, resource: self.texture_flag_buffers[texture_flags(nearest, wrap_mode)].as_entire_binding() },
                 ],
             })
         });
@@ -831,14 +689,7 @@ impl Renderer {
             texture.height(),
         );
 
-        self.textures.insert(
-            id,
-            Texture {
-                texture: Some(texture),
-                bind_group,
-                options: Some(image_delta.options),
-            },
-        );
+        self.textures.insert(id, Texture { texture: Some(texture), bind_group, options: Some(image_delta.options) });
     }
 
     pub fn free_texture(&mut self, id: &epaint::TextureId) {
@@ -920,40 +771,20 @@ impl Renderer {
 
         let nearest = sampler_descriptor.mag_filter == wgpu::FilterMode::Nearest;
         let wrap_mode = address_mode_wrap_flag(sampler_descriptor.address_mode_u);
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            compare: None,
-            ..sampler_descriptor
-        });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor { compare: None, ..sampler_descriptor });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(format!("egui_user_image_{}", self.next_user_texture_id).as_str()),
             layout: &self.texture_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(texture),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.texture_flag_buffers[texture_flags(nearest, wrap_mode)]
-                        .as_entire_binding(),
-                },
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(texture) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+                wgpu::BindGroupEntry { binding: 2, resource: self.texture_flag_buffers[texture_flags(nearest, wrap_mode)].as_entire_binding() },
             ],
         });
 
         let id = epaint::TextureId::User(self.next_user_texture_id);
-        self.textures.insert(
-            id,
-            Texture {
-                texture: None,
-                bind_group,
-                options: None,
-            },
-        );
+        self.textures.insert(id, Texture { texture: None, bind_group, options: None });
         self.next_user_texture_id += 1;
 
         id
@@ -973,38 +804,20 @@ impl Renderer {
     ) {
         profiling::function_scope!();
 
-        let Texture {
-            bind_group: user_texture_binding,
-            ..
-        } = self
-            .textures
-            .get_mut(&id)
-            .expect("Tried to update a texture that has not been allocated yet.");
+        let Texture { bind_group: user_texture_binding, .. } =
+            self.textures.get_mut(&id).expect("Tried to update a texture that has not been allocated yet.");
 
         let nearest = sampler_descriptor.mag_filter == wgpu::FilterMode::Nearest;
         let wrap_mode = address_mode_wrap_flag(sampler_descriptor.address_mode_u);
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            compare: None,
-            ..sampler_descriptor
-        });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor { compare: None, ..sampler_descriptor });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some(format!("egui_user_image_{}", self.next_user_texture_id).as_str()),
             layout: &self.texture_bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(texture),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: self.texture_flag_buffers[texture_flags(nearest, wrap_mode)]
-                        .as_entire_binding(),
-                },
+                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(texture) },
+                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&sampler) },
+                wgpu::BindGroupEntry { binding: 2, resource: self.texture_flag_buffers[texture_flags(nearest, wrap_mode)].as_entire_binding() },
             ],
         });
 
@@ -1038,11 +851,7 @@ impl Renderer {
         };
         if uniform_buffer_content != self.previous_uniform_buffer_content {
             profiling::scope!("update uniforms");
-            queue.write_buffer(
-                &self.uniform_buffer,
-                0,
-                bytemuck::cast_slice(&[uniform_buffer_content]),
-            );
+            queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniform_buffer_content]));
             self.previous_uniform_buffer_content = uniform_buffer_content;
         }
 
@@ -1050,19 +859,15 @@ impl Renderer {
         let mut callbacks = Vec::new();
         let (vertex_count, index_count) = {
             profiling::scope!("count_vertices_indices");
-            paint_jobs.iter().fold((0, 0), |acc, clipped_primitive| {
-                match &clipped_primitive.primitive {
-                    Primitive::Mesh(mesh) => {
-                        (acc.0 + mesh.vertices.len(), acc.1 + mesh.indices.len())
+            paint_jobs.iter().fold((0, 0), |acc, clipped_primitive| match &clipped_primitive.primitive {
+                Primitive::Mesh(mesh) => (acc.0 + mesh.vertices.len(), acc.1 + mesh.indices.len()),
+                Primitive::Callback(callback) => {
+                    if let Some(c) = callback.callback.downcast_ref::<Callback>() {
+                        callbacks.push(c.0.as_ref());
+                    } else {
+                        log::warn!("Unknown paint callback: expected `egui_wgpu::Callback`");
                     }
-                    Primitive::Callback(callback) => {
-                        if let Some(c) = callback.callback.downcast_ref::<Callback>() {
-                            callbacks.push(c.0.as_ref());
-                        } else {
-                            log::warn!("Unknown paint callback: expected `egui_wgpu::Callback`");
-                        }
-                        acc
-                    }
+                    acc
                 }
             })
         };
@@ -1075,8 +880,7 @@ impl Renderer {
             let required_index_buffer_size = (core::mem::size_of::<u32>() * index_count) as u64;
             if self.index_buffer.capacity < required_index_buffer_size {
                 // Resize index buffer if needed.
-                self.index_buffer.capacity =
-                    (self.index_buffer.capacity * 2).at_least(required_index_buffer_size);
+                self.index_buffer.capacity = (self.index_buffer.capacity * 2).at_least(required_index_buffer_size);
                 self.index_buffer.buffer = create_index_buffer(device, self.index_buffer.capacity);
             }
 
@@ -1103,9 +907,7 @@ impl Renderer {
                     Primitive::Mesh(mesh) => {
                         let size = mesh.indices.len() * core::mem::size_of::<u32>();
                         let slice = index_offset..(size + index_offset);
-                        index_buffer_staging
-                            .slice(slice.clone())
-                            .copy_from_slice(bytemuck::cast_slice(&mesh.indices));
+                        index_buffer_staging.slice(slice.clone()).copy_from_slice(bytemuck::cast_slice(&mesh.indices));
                         self.index_buffer.slices.push(slice);
                         index_offset += size;
                     }
@@ -1118,14 +920,11 @@ impl Renderer {
 
             self.vertex_buffer.slices.clear();
 
-            let required_vertex_buffer_size =
-                (core::mem::size_of::<Vertex>() * vertex_count) as u64;
+            let required_vertex_buffer_size = (core::mem::size_of::<Vertex>() * vertex_count) as u64;
             if self.vertex_buffer.capacity < required_vertex_buffer_size {
                 // Resize vertex buffer if needed.
-                self.vertex_buffer.capacity =
-                    (self.vertex_buffer.capacity * 2).at_least(required_vertex_buffer_size);
-                self.vertex_buffer.buffer =
-                    create_vertex_buffer(device, self.vertex_buffer.capacity);
+                self.vertex_buffer.capacity = (self.vertex_buffer.capacity * 2).at_least(required_vertex_buffer_size);
+                self.vertex_buffer.buffer = create_vertex_buffer(device, self.vertex_buffer.capacity);
             }
 
             let vertex_buffer_staging = queue.write_buffer_with(
@@ -1151,9 +950,7 @@ impl Renderer {
                     Primitive::Mesh(mesh) => {
                         let size = mesh.vertices.len() * core::mem::size_of::<Vertex>();
                         let slice = vertex_offset..(size + vertex_offset);
-                        vertex_buffer_staging
-                            .slice(slice.clone())
-                            .copy_from_slice(bytemuck::cast_slice(&mesh.vertices));
+                        vertex_buffer_staging.slice(slice.clone()).copy_from_slice(bytemuck::cast_slice(&mesh.vertices));
                         self.vertex_buffer.slices.push(slice);
                         vertex_offset += size;
                     }
@@ -1166,24 +963,13 @@ impl Renderer {
         {
             profiling::scope!("prepare callbacks");
             for callback in &callbacks {
-                user_cmd_bufs.extend(callback.prepare(
-                    device,
-                    queue,
-                    screen_descriptor,
-                    encoder,
-                    &mut self.callback_resources,
-                ));
+                user_cmd_bufs.extend(callback.prepare(device, queue, screen_descriptor, encoder, &mut self.callback_resources));
             }
         }
         {
             profiling::scope!("finish prepare callbacks");
             for callback in &callbacks {
-                user_cmd_bufs.extend(callback.finish_prepare(
-                    device,
-                    queue,
-                    encoder,
-                    &mut self.callback_resources,
-                ));
+                user_cmd_bufs.extend(callback.finish_prepare(device, queue, encoder, &mut self.callback_resources));
             }
         }
 
@@ -1218,9 +1004,7 @@ fn address_mode_wrap_flag(address_mode: wgpu::AddressMode) -> u32 {
     match address_mode {
         wgpu::AddressMode::Repeat => WRAP_MODE_REPEAT,
         wgpu::AddressMode::MirrorRepeat => WRAP_MODE_MIRRORED_REPEAT,
-        wgpu::AddressMode::ClampToEdge | wgpu::AddressMode::ClampToBorder => {
-            WRAP_MODE_CLAMP_TO_EDGE
-        }
+        wgpu::AddressMode::ClampToEdge | wgpu::AddressMode::ClampToBorder => WRAP_MODE_CLAMP_TO_EDGE,
     }
 }
 
@@ -1234,10 +1018,7 @@ fn texture_flags(nearest: bool, wrap_mode: u32) -> usize {
     (nearest | (wrap_mode << 1)) as usize
 }
 
-fn create_sampler(
-    options: epaint::textures::TextureOptions,
-    device: &wgpu::Device,
-) -> wgpu::Sampler {
+fn create_sampler(options: epaint::textures::TextureOptions, device: &wgpu::Device) -> wgpu::Sampler {
     let mag_filter = match options.magnification {
         epaint::textures::TextureFilter::Nearest => wgpu::FilterMode::Nearest,
         epaint::textures::TextureFilter::Linear => wgpu::FilterMode::Linear,
@@ -1252,9 +1033,7 @@ fn create_sampler(
         epaint::textures::TextureWrapMode::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
     };
     device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some(&format!(
-            "egui sampler (mag: {mag_filter:?}, min {min_filter:?})"
-        )),
+        label: Some(&format!("egui sampler (mag: {mag_filter:?}, min {min_filter:?})")),
         mag_filter,
         min_filter,
         address_mode_u: address_mode,
@@ -1311,12 +1090,7 @@ impl ScissorRect {
         let clip_max_x = clip_max_x.clamp(clip_min_x, target_size[0]);
         let clip_max_y = clip_max_y.clamp(clip_min_y, target_size[1]);
 
-        Self {
-            x: clip_min_x,
-            y: clip_min_y,
-            width: clip_max_x - clip_min_x,
-            height: clip_max_y - clip_min_y,
-        }
+        Self { x: clip_min_x, y: clip_min_y, width: clip_max_x - clip_min_x, height: clip_max_y - clip_min_y }
     }
 }
 
@@ -1324,13 +1098,7 @@ impl ScissorRect {
 // Deliberately not a `#[test]`: tests never run on wasm, but `cargo check` does.
 // On wasm this only holds with `fragile-send-sync-non-atomic-wasm` and without threads;
 // look at the feature flag for an explanation.
-#[cfg(any(
-    not(target_arch = "wasm32"),
-    all(
-        feature = "fragile-send-sync-non-atomic-wasm",
-        not(target_feature = "atomics")
-    ),
-))]
+#[cfg(any(not(target_arch = "wasm32"), all(feature = "fragile-send-sync-non-atomic-wasm", not(target_feature = "atomics")),))]
 const _: () = {
     const fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<Renderer>();

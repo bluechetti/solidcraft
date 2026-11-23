@@ -2,10 +2,7 @@
 
 use alloc::sync::Arc;
 
-use egui::{
-    Color32, ColorImage, FontPriority, GlyphBitmap, GlyphRasterizer, GlyphRasterizerRequest,
-    MAX_GLYPH_SIZE, RasterizedGlyph, Vec2, vec2,
-};
+use egui::{Color32, ColorImage, FontPriority, GlyphBitmap, GlyphRasterizer, GlyphRasterizerRequest, MAX_GLYPH_SIZE, RasterizedGlyph, Vec2, vec2};
 use resvg::{
     tiny_skia::Pixmap,
     usvg::{Color, Group, Node, Paint, Transform, Tree},
@@ -61,13 +58,7 @@ impl SvgGlyph {
 
     /// Use an already parsed SVG.
     pub fn from_tree(tree: Tree) -> Self {
-        Self {
-            is_color: has_color(tree.root()),
-            tree: Arc::new(tree),
-            height_em: 1.0,
-            baseline_offset_em: 0.0,
-            advance_em: None,
-        }
+        Self { is_color: has_color(tree.root()), tree: Arc::new(tree), height_em: 1.0, baseline_offset_em: 0.0, advance_em: None }
     }
 
     /// Height of the rendered SVG, in em (fractions of the font size).
@@ -116,13 +107,7 @@ impl SvgGlyph {
     pub fn rasterize(&self, font_size_px: f32) -> Option<RasterizedGlyph> {
         profiling::function_scope!();
 
-        let Self {
-            tree,
-            height_em,
-            baseline_offset_em,
-            advance_em,
-            is_color,
-        } = self;
+        let Self { tree, height_em, baseline_offset_em, advance_em, is_color } = self;
 
         if !font_size_px.is_finite() || font_size_px <= 0.0 {
             return None;
@@ -133,9 +118,7 @@ impl SvgGlyph {
             return None;
         }
         let height_px = height_em * font_size_px;
-        let size_px = (source_size * (height_px / source_size.y))
-            .round()
-            .max(Vec2::splat(1.0));
+        let size_px = (source_size * (height_px / source_size.y)).round().max(Vec2::splat(1.0));
         let [width, height] = [size_px.x as usize, size_px.y as usize];
         if MAX_GLYPH_SIZE < width || MAX_GLYPH_SIZE < height {
             log::warn!("SVG glyph of {width}x{height} px is too big for the font atlas");
@@ -143,11 +126,7 @@ impl SvgGlyph {
         }
 
         let mut pixmap = Pixmap::new(width as u32, height as u32)?;
-        resvg::render(
-            tree,
-            Transform::from_scale(size_px.x / source_size.x, size_px.y / source_size.y),
-            &mut pixmap.as_mut(),
-        );
+        resvg::render(tree, Transform::from_scale(size_px.x / source_size.x, size_px.y / source_size.y), &mut pixmap.as_mut());
 
         let mut image = ColorImage::from_rgba_premultiplied([width, height], pixmap.data());
         if !is_color {
@@ -158,19 +137,9 @@ impl SvgGlyph {
         }
 
         let advance_px = advance_em.map_or(size_px.x, |advance_em| advance_em * font_size_px);
-        let offset_px = vec2(
-            (advance_px - size_px.x) / 2.0,
-            -(baseline_offset_em * font_size_px + size_px.y),
-        );
+        let offset_px = vec2((advance_px - size_px.x) / 2.0, -(baseline_offset_em * font_size_px + size_px.y));
 
-        Some(RasterizedGlyph {
-            bitmap: GlyphBitmap {
-                image,
-                offset_px,
-                is_color: *is_color,
-            },
-            advance_px,
-        })
+        Some(RasterizedGlyph { bitmap: GlyphBitmap { image, offset_px, is_color: *is_color }, advance_px })
     }
 
     /// A [`GlyphRasterizer`] that renders this SVG for the given grapheme cluster
@@ -184,13 +153,12 @@ impl SvgGlyph {
     pub fn into_rasterizer(self, cluster: impl Into<String>) -> GlyphRasterizer {
         let cluster: String = cluster.into();
         let key = format!("egui_extras::SvgGlyph {cluster}");
-        GlyphRasterizer::new(key, move |request: &GlyphRasterizerRequest<'_>| {
-            if request.cluster == cluster {
-                self.rasterize(request.font_size_px)
-            } else {
-                None
-            }
-        })
+        GlyphRasterizer::new(
+            key,
+            move |request: &GlyphRasterizerRequest<'_>| {
+                if request.cluster == cluster { self.rasterize(request.font_size_px) } else { None }
+            },
+        )
         .with_priority(FontPriority::Highest)
     }
 }
@@ -200,11 +168,7 @@ fn has_color(group: &Group) -> bool {
     group.children().iter().any(|node| match node {
         Node::Group(group) => has_color(group),
         Node::Path(path) => {
-            path.fill()
-                .is_some_and(|fill| paint_has_color(fill.paint()))
-                || path
-                    .stroke()
-                    .is_some_and(|stroke| paint_has_color(stroke.paint()))
+            path.fill().is_some_and(|fill| paint_has_color(fill.paint())) || path.stroke().is_some_and(|stroke| paint_has_color(stroke.paint()))
         }
         Node::Image(_) => true,
         Node::Text(text) => has_color(text.flattened()),
@@ -214,12 +178,8 @@ fn has_color(group: &Group) -> bool {
 fn paint_has_color(paint: &Paint) -> bool {
     match paint {
         Paint::Color(color) => !is_gray(*color),
-        Paint::LinearGradient(gradient) => {
-            gradient.stops().iter().any(|stop| !is_gray(stop.color()))
-        }
-        Paint::RadialGradient(gradient) => {
-            gradient.stops().iter().any(|stop| !is_gray(stop.color()))
-        }
+        Paint::LinearGradient(gradient) => gradient.stops().iter().any(|stop| !is_gray(stop.color())),
+        Paint::RadialGradient(gradient) => gradient.stops().iter().any(|stop| !is_gray(stop.color())),
         Paint::Pattern(pattern) => has_color(pattern.root()),
     }
 }
@@ -235,10 +195,7 @@ mod tests {
 
     /// A 10x20 rectangle.
     fn rect_svg(fill: &str) -> Vec<u8> {
-        format!(
-            r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="20"><rect width="10" height="20" fill="{fill}"/></svg>"#
-        )
-        .into_bytes()
+        format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="20"><rect width="10" height="20" fill="{fill}"/></svg>"#).into_bytes()
     }
 
     fn red_rect() -> SvgGlyph {
@@ -254,14 +211,7 @@ mod tests {
         let glyph = gray_rect().rasterize(40.0).unwrap();
         assert_eq!(glyph.bitmap.image.size, [20, 40]);
         assert!(!glyph.bitmap.is_color);
-        assert!(
-            glyph
-                .bitmap
-                .image
-                .pixels
-                .iter()
-                .all(|&p| p == Color32::WHITE)
-        );
+        assert!(glyph.bitmap.image.pixels.iter().all(|&p| p == Color32::WHITE));
         assert_eq!(glyph.bitmap.offset_px, vec2(0.0, -40.0));
         assert_eq!(glyph.advance_px, 20.0);
     }
@@ -275,22 +225,8 @@ mod tests {
 
     #[test]
     fn color_detection_can_be_overridden() {
-        assert!(
-            !red_rect()
-                .with_color(false)
-                .rasterize(40.0)
-                .unwrap()
-                .bitmap
-                .is_color
-        );
-        assert!(
-            gray_rect()
-                .with_color(true)
-                .rasterize(40.0)
-                .unwrap()
-                .bitmap
-                .is_color
-        );
+        assert!(!red_rect().with_color(false).rasterize(40.0).unwrap().bitmap.is_color);
+        assert!(gray_rect().with_color(true).rasterize(40.0).unwrap().bitmap.is_color);
     }
 
     #[test]
@@ -309,19 +245,10 @@ mod tests {
 
     #[test]
     fn height_advance_and_baseline_offset() {
-        let glyph = red_rect()
-            .with_height(0.5)
-            .with_advance(1.0)
-            .with_baseline_offset(0.25)
-            .rasterize(40.0)
-            .unwrap();
+        let glyph = red_rect().with_height(0.5).with_advance(1.0).with_baseline_offset(0.25).rasterize(40.0).unwrap();
         assert_eq!(glyph.bitmap.image.size, [10, 20]);
         assert_eq!(glyph.advance_px, 40.0);
-        assert_eq!(
-            glyph.bitmap.offset_px,
-            vec2(15.0, -30.0),
-            "Centered in the advance, 10 px above the baseline"
-        );
+        assert_eq!(glyph.bitmap.offset_px, vec2(15.0, -30.0), "Centered in the advance, 10 px above the baseline");
     }
 
     #[test]
@@ -335,12 +262,8 @@ mod tests {
     fn rasterizer_only_handles_its_cluster() {
         let rasterizer = red_rect().into_rasterizer("…");
         assert_eq!(rasterizer.priority, FontPriority::Highest);
-        let request = |cluster| GlyphRasterizerRequest {
-            cluster,
-            family: &egui::FontFamily::Proportional,
-            font_size_px: 20.0,
-            subpixel_offset_px: 0.0,
-        };
+        let request =
+            |cluster| GlyphRasterizerRequest { cluster, family: &egui::FontFamily::Proportional, font_size_px: 20.0, subpixel_offset_px: 0.0 };
         assert!((rasterizer.rasterize)(&request("…")).is_some());
         assert!((rasterizer.rasterize)(&request("a")).is_none());
     }
@@ -349,13 +272,8 @@ mod tests {
     fn overrides_glyph_in_layout() {
         use egui::epaint::text::{FontDefinitions, FontId, Fonts, TextOptions};
 
-        let mut fonts = Fonts::new(TextOptions::default(), FontDefinitions::default())
-            .with_glyph_rasterizer(red_rect().into_rasterizer("…"));
-        let galley = fonts.with_pixels_per_point(1.0).layout_no_wrap(
-            "…".to_owned(),
-            FontId::proportional(20.0),
-            Color32::WHITE,
-        );
+        let mut fonts = Fonts::new(TextOptions::default(), FontDefinitions::default()).with_glyph_rasterizer(red_rect().into_rasterizer("…"));
+        let galley = fonts.with_pixels_per_point(1.0).layout_no_wrap("…".to_owned(), FontId::proportional(20.0), Color32::WHITE);
         let glyph = galley.rows[0].row.glyphs[0];
         assert_eq!(glyph.chr, '…');
         assert_eq!(glyph.advance_width, 10.0);

@@ -103,10 +103,14 @@ pub const TABLE: &[(&str, Class)] = &[
     ("viewport-gpu", Class::Shared),
     // the viewport in an egui window: egui-wgpu paint callbacks and install (#12943)
     ("viewport-egui", Class::Shared),
+    // the views of a design as plain data: kinds, the set a design keeps open, the saved form (no UI toolkit)
+    ("views", Class::Shared),
     // apps and tooling
     ("solidcraft", Class::Exempt),
     ("cli", Class::Exempt),
     ("web", Class::Exempt),
+    // the UI kit's component gallery (docs.solidcraft.io/kit/), desktop and browser
+    ("ui-kit-gallery", Class::Exempt),
     ("xtask", Class::Exempt),
     // build tooling: no code, only the third-party features the whole workspace turns on, so
     // building any mix of crates compiles them the same way (`cargo hakari generate`)

@@ -27,51 +27,26 @@ struct ValueAnim {
 
 impl AnimationManager {
     /// See [`crate::Context::animate_bool`] for documentation
-    pub fn animate_bool(
-        &mut self,
-        input: &InputState,
-        animation_time: f32,
-        id: Id,
-        value: bool,
-    ) -> f32 {
+    pub fn animate_bool(&mut self, input: &InputState, animation_time: f32, id: Id, value: bool) -> f32 {
         let (start, end) = if value { (0.0, 1.0) } else { (1.0, 0.0) };
         match self.bools.get_mut(&id) {
             None => {
-                self.bools.insert(
-                    id,
-                    BoolAnim {
-                        last_value: end,
-                        last_tick: input.time - input.stable_dt as f64,
-                    },
-                );
+                self.bools.insert(id, BoolAnim { last_value: end, last_tick: input.time - input.stable_dt as f64 });
                 end
             }
             Some(anim) => {
-                let BoolAnim {
-                    last_value,
-                    last_tick,
-                } = anim;
+                let BoolAnim { last_value, last_tick } = anim;
                 let current_time = input.time;
                 let elapsed = ((current_time - *last_tick) as f32).at_most(input.stable_dt);
                 let new_value = *last_value + (end - start) * elapsed / animation_time;
-                *last_value = if new_value.is_finite() {
-                    new_value.clamp(0.0, 1.0)
-                } else {
-                    end
-                };
+                *last_value = if new_value.is_finite() { new_value.clamp(0.0, 1.0) } else { end };
                 *last_tick = current_time;
                 *last_value
             }
         }
     }
 
-    pub fn animate_value(
-        &mut self,
-        input: &InputState,
-        animation_time: f32,
-        id: Id,
-        value: f32,
-    ) -> f32 {
+    pub fn animate_value(&mut self, input: &InputState, animation_time: f32, id: Id, value: f32) -> f32 {
         match self.values.get_mut(&id) {
             None => {
                 self.values.insert(
@@ -96,11 +71,7 @@ impl AnimationManager {
                 // On the frame we toggle we don't want to return the old value,
                 // so we extrapolate forwards by half a frame:
                 let time_since_toggle = time_since_toggle + input.predicted_dt * 0.5;
-                let current_value = remap_clamp(
-                    time_since_toggle,
-                    0.0..=animation_time,
-                    anim.from_value..=anim.to_value,
-                );
+                let current_value = remap_clamp(time_since_toggle, 0.0..=animation_time, anim.from_value..=anim.to_value);
                 if anim.to_value != value {
                     anim.from_value = current_value; // start new animation from current position of playing animation
                     anim.to_value = value;

@@ -47,8 +47,7 @@ pub struct RasterizedGlyph {
 }
 
 /// The callback of a [`GlyphRasterizer`].
-type RasterizeFn =
-    dyn for<'a> Fn(&GlyphRasterizerRequest<'a>) -> Option<RasterizedGlyph> + Send + Sync;
+type RasterizeFn = dyn for<'a> Fn(&GlyphRasterizerRequest<'a>) -> Option<RasterizedGlyph> + Send + Sync;
 
 /// Rasterizes grapheme clusters using something other than the installed fonts,
 /// e.g. the browser on web, or your own custom glyphs.
@@ -99,16 +98,9 @@ impl GlyphRasterizer {
     /// See [`Self::with_priority`].
     pub fn new(
         key: impl Into<Arc<str>>,
-        rasterize: impl for<'a> Fn(&GlyphRasterizerRequest<'a>) -> Option<RasterizedGlyph>
-        + Send
-        + Sync
-        + 'static,
+        rasterize: impl for<'a> Fn(&GlyphRasterizerRequest<'a>) -> Option<RasterizedGlyph> + Send + Sync + 'static,
     ) -> Self {
-        Self {
-            key: key.into(),
-            rasterize: Arc::new(rasterize),
-            priority: FontPriority::Lowest,
-        }
+        Self { key: key.into(), rasterize: Arc::new(rasterize), priority: FontPriority::Lowest }
     }
 
     /// Should this rasterizer be asked before ([`FontPriority::Highest`])
@@ -135,10 +127,7 @@ impl GlyphRasterizer {
 
 impl core::fmt::Debug for GlyphRasterizer {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("GlyphRasterizer")
-            .field("priority", &self.priority)
-            .field("key", &self.key)
-            .finish_non_exhaustive()
+        f.debug_struct("GlyphRasterizer").field("priority", &self.priority).field("key", &self.key).finish_non_exhaustive()
     }
 }
 
@@ -153,10 +142,7 @@ impl core::fmt::Debug for GlyphRasterizer {
 ///
 /// Used by `eframe`'s web glyph rasterizer to guess whether a browser-drawn glyph is color.
 pub fn has_emoji_presentation(cluster: &str) -> bool {
-    use unicode_properties::emoji::{
-        EmojiStatus, UnicodeEmoji as _, is_emoji_presentation_selector,
-        is_text_presentation_selector,
-    };
+    use unicode_properties::emoji::{EmojiStatus, UnicodeEmoji as _, is_emoji_presentation_selector, is_text_presentation_selector};
 
     if cluster.is_ascii() {
         return false; // Fast path: no ASCII character has emoji presentation.

@@ -30,22 +30,14 @@ impl CaptureState {
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("texture_copy"),
             layout: None,
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
+            vertex: wgpu::VertexState { module: &shader, entry_point: Some("vs_main"), compilation_options: Default::default(), buffers: &[] },
             fragment: Some(wgpu::FragmentState {
                 module: &shader,
                 entry_point: Some("fs_main"),
                 compilation_options: Default::default(),
                 targets: &[Some(format.into())],
             }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
+            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, ..Default::default() },
             depth_stencil: None,
             multisample: MultisampleState::default(),
             multiview_mask: None,
@@ -54,15 +46,9 @@ impl CaptureState {
 
         let bind_group_layout = pipeline.get_bind_group_layout(0);
 
-        let (texture, padding, bind_group) =
-            Self::create_texture(device, size, format, &bind_group_layout);
+        let (texture, padding, bind_group) = Self::create_texture(device, size, format, &bind_group_layout);
 
-        Self {
-            padding,
-            texture,
-            pipeline,
-            bind_group,
-        }
+        Self { padding, texture, pipeline, bind_group }
     }
 
     fn create_texture(
@@ -78,9 +64,7 @@ impl CaptureState {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
 
@@ -90,10 +74,7 @@ impl CaptureState {
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&view),
-            }],
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) }],
             label: None,
         });
 
@@ -104,12 +85,7 @@ impl CaptureState {
     pub fn update(&mut self, device: &wgpu::Device, size: wgpu::Extent3d) {
         if self.texture.size() != size {
             let format = self.texture.format();
-            let (new_texture, padding, bind_group) = Self::create_texture(
-                device,
-                size,
-                format,
-                &self.pipeline.get_bind_group_layout(0),
-            );
+            let (new_texture, padding, bind_group) = Self::create_texture(device, size, format, &self.pipeline.get_bind_group_layout(0));
             self.texture = new_texture;
             self.padding = padding;
             self.bind_group = bind_group;
@@ -149,11 +125,7 @@ impl CaptureState {
             tex.as_image_copy(),
             wgpu::TexelCopyBufferInfo {
                 buffer: &buffer,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(padding.padded_bytes_per_row),
-                    rows_per_image: None,
-                },
+                layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(padding.padded_bytes_per_row), rows_per_image: None },
             },
             tex_extent,
         );
@@ -166,10 +138,7 @@ impl CaptureState {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &output_frame.texture.create_view(&Default::default()),
                     resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: StoreOp::Store,
-                    },
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT), store: StoreOp::Store },
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: None,
@@ -202,9 +171,7 @@ impl CaptureState {
             wgpu::TextureFormat::Rgba8Unorm => [0, 1, 2, 3],
             wgpu::TextureFormat::Bgra8Unorm => [2, 1, 0, 3],
             _ => {
-                log::error!(
-                    "Screen can't be captured unless the surface format is Rgba8Unorm or Bgra8Unorm. Current surface format is {format:?}"
-                );
+                log::error!("Screen can't be captured unless the surface format is Rgba8Unorm or Bgra8Unorm. Current surface format is {format:?}");
                 return;
             }
         };
@@ -226,21 +193,13 @@ impl CaptureState {
             for padded_row in mapped_range.chunks(padding.padded_bytes_per_row as usize) {
                 let row = &padded_row[..padding.unpadded_bytes_per_row as usize];
                 for color in row.chunks(4) {
-                    pixels.push(epaint::Color32::from_rgba_premultiplied(
-                        color[to_rgba[0]],
-                        color[to_rgba[1]],
-                        color[to_rgba[2]],
-                        color[to_rgba[3]],
-                    ));
+                    pixels.push(epaint::Color32::from_rgba_premultiplied(color[to_rgba[0]], color[to_rgba[1]], color[to_rgba[2]], color[to_rgba[3]]));
                 }
             }
             drop(mapped_range);
             buffer.unmap();
 
-            let image = Arc::new(ColorImage::new(
-                [tex_extent.width as usize, tex_extent.height as usize],
-                pixels,
-            ));
+            let image = Arc::new(ColorImage::new([tex_extent.width as usize, tex_extent.height as usize], pixels));
             for callback in callbacks {
                 callback.complete(Arc::clone(&image));
             }
@@ -258,11 +217,7 @@ impl BufferPadding {
     fn new(width: u32) -> Self {
         let bytes_per_pixel = core::mem::size_of::<u32>() as u32;
         let unpadded_bytes_per_row = width * bytes_per_pixel;
-        let padded_bytes_per_row =
-            wgpu::util::align_to(unpadded_bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-        Self {
-            unpadded_bytes_per_row,
-            padded_bytes_per_row,
-        }
+        let padded_bytes_per_row = wgpu::util::align_to(unpadded_bytes_per_row, wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        Self { unpadded_bytes_per_row, padded_bytes_per_row }
     }
 }

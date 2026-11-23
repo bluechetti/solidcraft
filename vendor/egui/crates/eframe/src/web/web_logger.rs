@@ -27,10 +27,7 @@ impl log::Log for WebLogger {
             "wgpu_hal",
         ];
 
-        if CRATES_AT_INFO_LEVEL
-            .iter()
-            .any(|crate_name| metadata.target().starts_with(crate_name))
-        {
+        if CRATES_AT_INFO_LEVEL.iter().any(|crate_name| metadata.target().starts_with(crate_name)) {
             return metadata.level() <= log::LevelFilter::Info;
         }
 
@@ -113,11 +110,7 @@ mod console {
 #[allow(clippy::allow_attributes, dead_code)] // only used on web and in tests
 fn shorten_file_path(file_path: &str) -> &str {
     if let Some(i) = file_path.rfind("/src/") {
-        if let Some(prev_slash) = file_path[..i].rfind('/') {
-            &file_path[prev_slash + 1..]
-        } else {
-            file_path
-        }
+        if let Some(prev_slash) = file_path[..i].rfind('/') { &file_path[prev_slash + 1..] } else { file_path }
     } else {
         file_path
     }
@@ -126,15 +119,9 @@ fn shorten_file_path(file_path: &str) -> &str {
 #[test]
 fn test_shorten_file_path() {
     for (before, after) in [
-        (
-            "/Users/emilk/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-1.24.1/src/runtime/runtime.rs",
-            "tokio-1.24.1/src/runtime/runtime.rs",
-        ),
+        ("/Users/emilk/.cargo/registry/src/github.com-1ecc6299db9ec823/tokio-1.24.1/src/runtime/runtime.rs", "tokio-1.24.1/src/runtime/runtime.rs"),
         ("crates/rerun/src/main.rs", "rerun/src/main.rs"),
-        (
-            "/rustc/d5a82bbd26e1ad8b7401f6a718a9c57c96905483/library/core/src/ops/function.rs",
-            "core/src/ops/function.rs",
-        ),
+        ("/rustc/d5a82bbd26e1ad8b7401f6a718a9c57c96905483/library/core/src/ops/function.rs", "core/src/ops/function.rs"),
         ("/weird/path/file.rs", "/weird/path/file.rs"),
     ] {
         assert_eq!(shorten_file_path(before), after);

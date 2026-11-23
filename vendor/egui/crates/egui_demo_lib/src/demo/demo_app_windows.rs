@@ -135,11 +135,7 @@ impl DemoGroups {
     }
 
     pub fn checkboxes(&mut self, ui: &mut Ui, open: &mut BTreeSet<String>) {
-        let Self {
-            about: _,
-            demos,
-            tests,
-        } = self;
+        let Self { about: _, demos, tests } = self;
 
         ui.vertical_centered(|ui| {
             ui.strong("Demos");
@@ -155,11 +151,7 @@ impl DemoGroups {
     }
 
     pub fn windows(&mut self, ui: &mut Ui, open: &mut BTreeSet<String>) {
-        let Self {
-            about,
-            demos,
-            tests,
-        } = self;
+        let Self { about, demos, tests } = self;
         {
             let mut is_open = open.contains(about.name());
             about.show(ui, &mut is_open);
@@ -195,23 +187,12 @@ impl Default for DemoWindows {
         set_open(&mut open, About::default().name(), true);
 
         // Explains egui very well
-        set_open(
-            &mut open,
-            super::code_example::CodeExample::default().name(),
-            true,
-        );
+        set_open(&mut open, super::code_example::CodeExample::default().name(), true);
 
         // Shows off the features
-        set_open(
-            &mut open,
-            super::widget_gallery::WidgetGallery::default().name(),
-            true,
-        );
+        set_open(&mut open, super::widget_gallery::WidgetGallery::default().name(), true);
 
-        Self {
-            groups: Default::default(),
-            open,
-        }
+        Self { groups: Default::default(), open }
     }
 }
 
@@ -240,20 +221,15 @@ impl DemoWindows {
         if self.about_is_open() {
             let mut close = false;
 
-            egui::ScrollArea::vertical()
-                .auto_shrink(false)
-                .show(ui, |ui| {
-                    self.groups.about.ui(ui);
-                    ui.add_space(12.0);
-                    ui.vertical_centered_justified(|ui| {
-                        if ui
-                            .button(egui::RichText::new("Continue to the demo!").size(20.0))
-                            .clicked()
-                        {
-                            close = true;
-                        }
-                    });
+            egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+                self.groups.about.ui(ui);
+                ui.add_space(12.0);
+                ui.vertical_centered_justified(|ui| {
+                    if ui.button(egui::RichText::new("Continue to the demo!").size(20.0)).clicked() {
+                        close = true;
+                    }
                 });
+            });
 
             if close {
                 set_open(&mut self.open, About::default().name(), false);
@@ -266,55 +242,39 @@ impl DemoWindows {
 
     fn mobile_top_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("menu_bar").show(ui, |ui| {
-            menu::MenuBar::new()
-                .config(menu::MenuConfig::new().style(StyleModifier::default()))
-                .ui(ui, |ui| {
-                    let font_size = 16.5;
+            menu::MenuBar::new().config(menu::MenuConfig::new().style(StyleModifier::default())).ui(ui, |ui| {
+                let font_size = 16.5;
 
-                    ui.menu_button(egui::RichText::new("⏷ demos").size(font_size), |ui| {
-                        self.demo_list_ui(ui);
-                    });
-
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        use egui::special_emojis::GITHUB;
-                        ui.hyperlink_to(
-                            egui::RichText::new("🦋").size(font_size),
-                            "https://bsky.app/profile/ernerfeldt.bsky.social",
-                        );
-                        ui.hyperlink_to(
-                            egui::RichText::new(GITHUB).size(font_size),
-                            "https://github.com/emilk/egui",
-                        );
-                    });
+                ui.menu_button(egui::RichText::new("⏷ demos").size(font_size), |ui| {
+                    self.demo_list_ui(ui);
                 });
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    use egui::special_emojis::GITHUB;
+                    ui.hyperlink_to(egui::RichText::new("🦋").size(font_size), "https://bsky.app/profile/ernerfeldt.bsky.social");
+                    ui.hyperlink_to(egui::RichText::new(GITHUB).size(font_size), "https://github.com/emilk/egui");
+                });
+            });
         });
     }
 
     fn desktop_ui(&mut self, ui: &mut egui::Ui) {
-        egui::Panel::right("egui_demo_panel")
-            .resizable(false)
-            .default_size(160.0)
-            .min_size(160.0)
-            .show(ui, |ui| {
-                ui.vertical_centered_justified(|ui| {
-                    ui.add_space(4.0);
-                    ui.add(
-                        egui::Image::new(egui::include_image!("../../data/egui-logo.svg"))
-                            .max_height(32.0)
-                            .tint(ui.visuals().strong_text_color()),
-                    );
-
-                    ui.add_space(4.0);
-
-                    self.groups.about_egui_checkbox(ui, &mut self.open);
-                });
+        egui::Panel::right("egui_demo_panel").resizable(false).default_size(160.0).min_size(160.0).show(ui, |ui| {
+            ui.vertical_centered_justified(|ui| {
+                ui.add_space(4.0);
+                ui.add(egui::Image::new(egui::include_image!("../../data/egui-logo.svg")).max_height(32.0).tint(ui.visuals().strong_text_color()));
 
                 ui.add_space(4.0);
 
-                ui.separator();
-
-                self.demo_list_ui(ui);
+                self.groups.about_egui_checkbox(ui, &mut self.open);
             });
+
+            ui.add_space(4.0);
+
+            ui.separator();
+
+            self.demo_list_ui(ui);
+        });
 
         egui::Panel::top("menu_bar").show(ui, |ui| {
             menu::MenuBar::new().ui(ui, |ui| {
@@ -342,10 +302,8 @@ impl DemoWindows {
 // ----------------------------------------------------------------------------
 
 fn file_menu_button(ui: &mut Ui) {
-    let organize_shortcut =
-        egui::KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, egui::Key::O);
-    let reset_shortcut =
-        egui::KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, egui::Key::R);
+    let organize_shortcut = egui::KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, egui::Key::O);
+    let reset_shortcut = egui::KeyboardShortcut::new(Modifiers::CTRL | Modifiers::SHIFT, egui::Key::R);
 
     // NOTE: we must check the shortcuts OUTSIDE of the actual "File" menu,
     // or else they would only be checked if the "File" menu was actually open!
@@ -365,29 +323,17 @@ fn file_menu_button(ui: &mut Ui) {
         #[cfg(not(target_arch = "wasm32"))]
         {
             egui::gui_zoom::zoom_menu_buttons(ui);
-            ui.weak(format!(
-                "Current zoom: {:.0}%",
-                100.0 * ui.ctx().zoom_factor()
-            ))
-            .on_hover_text("The UI zoom level, on top of the operating system's default value");
+            ui.weak(format!("Current zoom: {:.0}%", 100.0 * ui.ctx().zoom_factor()))
+                .on_hover_text("The UI zoom level, on top of the operating system's default value");
             ui.separator();
         }
 
-        if ui
-            .add(
-                egui::Button::new("Organize Windows")
-                    .shortcut_text(ui.ctx().format_shortcut(&organize_shortcut)),
-            )
-            .clicked()
-        {
+        if ui.add(egui::Button::new("Organize Windows").shortcut_text(ui.ctx().format_shortcut(&organize_shortcut))).clicked() {
             ui.memory_mut(|mem| mem.reset_areas());
         }
 
         if ui
-            .add(
-                egui::Button::new("Reset egui memory")
-                    .shortcut_text(ui.ctx().format_shortcut(&reset_shortcut)),
-            )
+            .add(egui::Button::new("Reset egui memory").shortcut_text(ui.ctx().format_shortcut(&reset_shortcut)))
             .on_hover_text("Forget scroll, positions, sizes etc")
             .clicked()
         {
@@ -405,11 +351,7 @@ mod tests {
 
     #[test]
     fn demos_should_match_snapshot() {
-        let DemoGroups {
-            demos,
-            tests,
-            about: _,
-        } = DemoGroups::default();
+        let DemoGroups { demos, tests, about: _ } = DemoGroups::default();
         let demos = demos + tests;
 
         let mut results = SnapshotResults::new();
@@ -422,12 +364,10 @@ mod tests {
 
             let name = remove_leading_emoji(demo.name());
 
-            let mut harness = HarnessBuilder::default()
-                .with_size(Vec2::splat(2048.0))
-                .build_ui(|ui| {
-                    egui_extras::install_image_loaders(ui);
-                    demo.show(ui, &mut true);
-                });
+            let mut harness = HarnessBuilder::default().with_size(Vec2::splat(2048.0)).build_ui(|ui| {
+                egui_extras::install_image_loaders(ui);
+                demo.show(ui, &mut true);
+            });
 
             // Resize to fit every window, plus some margin:
             harness.set_size(harness.ctx.globally_used_rect().max.to_vec2() + Vec2::splat(16.0));

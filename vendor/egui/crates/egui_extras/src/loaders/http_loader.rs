@@ -17,16 +17,10 @@ impl File {
         if !response.ok {
             match response.text() {
                 Some(response_text) => {
-                    return Err(format!(
-                        "failed to load {uri:?}: {} {} {response_text}",
-                        response.status, response.status_text
-                    ));
+                    return Err(format!("failed to load {uri:?}: {} {} {response_text}", response.status, response.status_text));
                 }
                 None => {
-                    return Err(format!(
-                        "failed to load {uri:?}: {} {}",
-                        response.status, response.status_text
-                    ));
+                    return Err(format!("failed to load {uri:?}: {} {}", response.status, response.status_text));
                 }
             }
         }
@@ -51,12 +45,7 @@ impl EhttpLoader {
 
     /// Provide a request template to modify requests before they're sent,
     /// e.g. to add headers.
-    pub fn with_request_template<
-        F: Fn(ehttp::Request) -> ehttp::Request + Send + Sync + 'static,
-    >(
-        mut self,
-        request_template: F,
-    ) -> Self {
+    pub fn with_request_template<F: Fn(ehttp::Request) -> ehttp::Request + Send + Sync + 'static>(mut self, request_template: F) -> Self {
         self.request_template = Some(Box::new(request_template));
         self
     }
@@ -81,11 +70,7 @@ impl BytesLoader for EhttpLoader {
         let mut cache = self.cache.lock();
         if let Some(entry) = cache.get(uri).cloned() {
             match entry {
-                Poll::Ready(Ok(file)) => Ok(BytesPoll::Ready {
-                    size: None,
-                    bytes: Bytes::Shared(file.bytes),
-                    mime: file.mime,
-                }),
+                Poll::Ready(Ok(file)) => Ok(BytesPoll::Ready { size: None, bytes: Bytes::Shared(file.bytes), mime: file.mime }),
                 Poll::Ready(Err(err)) => Err(LoadError::Loading(err)),
                 Poll::Pending => Ok(BytesPoll::Pending { size: None }),
             }
@@ -115,9 +100,7 @@ impl BytesLoader for EhttpLoader {
                         };
                         let repaint = {
                             let mut cache = cache.lock();
-                            if let std::collections::hash_map::Entry::Occupied(mut entry) =
-                                cache.entry(uri.clone())
-                            {
+                            if let std::collections::hash_map::Entry::Occupied(mut entry) = cache.entry(uri.clone()) {
                                 let entry = entry.get_mut();
                                 *entry = Poll::Ready(result);
                                 log::trace!("Finished loading {uri:?}");
@@ -155,9 +138,7 @@ impl BytesLoader for EhttpLoader {
             .lock()
             .values()
             .map(|entry| match entry {
-                Poll::Ready(Ok(file)) => {
-                    file.bytes.len() + file.mime.as_ref().map_or(0, |m| m.len())
-                }
+                Poll::Ready(Ok(file)) => file.bytes.len() + file.mime.as_ref().map_or(0, |m| m.len()),
                 Poll::Ready(Err(err)) => err.len(),
                 _ => 0,
             })

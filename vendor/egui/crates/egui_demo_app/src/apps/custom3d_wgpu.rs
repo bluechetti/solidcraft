@@ -77,24 +77,13 @@ impl Custom3d {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("custom3d"),
             layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
-            }],
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: uniform_buffer.as_entire_binding() }],
         });
 
         // Because the graphics pipeline must have the same lifetime as the egui render pass,
         // instead of storing the pipeline in our `Custom3D` struct, we insert it into the
         // `paint_callback_resources` type map, which is stored alongside the render pass.
-        wgpu_render_state
-            .renderer
-            .write()
-            .callback_resources
-            .insert(TriangleRenderResources {
-                pipeline,
-                bind_group,
-                uniform_buffer,
-            });
+        wgpu_render_state.renderer.write().callback_resources.insert(TriangleRenderResources { pipeline, bind_group, uniform_buffer });
 
         Some(Self { angle: 0.0 })
     }
@@ -111,9 +100,7 @@ impl crate::DemoApp for Custom3d {
                     ui.hyperlink_to("WGPU", "https://wgpu.rs");
                     ui.label(" (Portable Rust graphics API awesomeness)");
                 });
-                ui.label(
-                    "It's not a very impressive demo, but it shows you can embed 3D inside of egui.",
-                );
+                ui.label("It's not a very impressive demo, but it shows you can embed 3D inside of egui.");
 
                 egui::Frame::canvas(ui.style()).show(ui, |ui| {
                     self.custom_painting(ui);
@@ -163,12 +150,7 @@ impl egui_wgpu::CallbackTrait for CustomTriangleCallback {
         Vec::new()
     }
 
-    fn paint(
-        &self,
-        _info: egui::PaintCallbackInfo,
-        render_pass: &mut wgpu::RenderPass<'static>,
-        resources: &egui_wgpu::CallbackResources,
-    ) {
+    fn paint(&self, _info: egui::PaintCallbackInfo, render_pass: &mut wgpu::RenderPass<'static>, resources: &egui_wgpu::CallbackResources) {
         let resources: &TriangleRenderResources = resources.get().unwrap();
         resources.paint(render_pass);
     }
@@ -176,14 +158,10 @@ impl egui_wgpu::CallbackTrait for CustomTriangleCallback {
 
 impl Custom3d {
     fn custom_painting(&mut self, ui: &mut egui::Ui) {
-        let (rect, response) =
-            ui.allocate_exact_size(egui::Vec2::splat(300.0), egui::Sense::drag());
+        let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(300.0), egui::Sense::drag());
 
         self.angle += response.drag_motion().x * 0.01;
-        ui.painter().add(egui_wgpu::Callback::new_paint_callback(
-            rect,
-            CustomTriangleCallback { angle: self.angle },
-        ));
+        ui.painter().add(egui_wgpu::Callback::new_paint_callback(rect, CustomTriangleCallback { angle: self.angle }));
     }
 }
 
@@ -196,11 +174,7 @@ struct TriangleRenderResources {
 impl TriangleRenderResources {
     fn prepare(&self, _device: &wgpu::Device, queue: &wgpu::Queue, angle: f32) {
         // Update our uniform buffer with the angle from the UI
-        queue.write_buffer(
-            &self.uniform_buffer,
-            0,
-            bytemuck::cast_slice(&[angle, 0.0, 0.0, 0.0]),
-        );
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[angle, 0.0, 0.0, 0.0]));
     }
 
     fn paint(&self, render_pass: &mut wgpu::RenderPass<'_>) {

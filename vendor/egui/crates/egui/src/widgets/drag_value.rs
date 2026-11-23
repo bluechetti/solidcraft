@@ -1,6 +1,6 @@
 use crate::{
-    Atom, AtomExt as _, Atoms, Button, CursorIcon, Id, IdSalt, IntoAtoms, Key, Modifiers,
-    NumExt as _, Response, RichText, Sense, TextEdit, TextWrapMode, Ui, Widget, WidgetInfo,
+    Atom, AtomExt as _, Atoms, Button, CursorIcon, Id, IdSalt, IntoAtoms, Key, Modifiers, NumExt as _, Response, RichText, Sense, TextEdit,
+    TextWrapMode, Ui, Widget, WidgetInfo,
     class::{ClassName, Classes, HasClasses},
     emath, text,
 };
@@ -80,11 +80,7 @@ impl<'a> DragValue<'a> {
             value.to_f64()
         });
 
-        if Num::INTEGRAL {
-            slf.max_decimals(0).range(Num::MIN..=Num::MAX).speed(0.25)
-        } else {
-            slf
-        }
+        if Num::INTEGRAL { slf.max_decimals(0).range(Num::MIN..=Num::MAX).speed(0.25) } else { slf }
     }
 
     /// Creates a drag value over a value that cannot be borrowed directly.
@@ -279,10 +275,7 @@ impl<'a> DragValue<'a> {
     ///     }));
     /// # });
     /// ```
-    pub fn custom_formatter(
-        mut self,
-        formatter: impl 'a + Fn(f64, RangeInclusive<usize>) -> String,
-    ) -> Self {
+    pub fn custom_formatter(mut self, formatter: impl 'a + Fn(f64, RangeInclusive<usize>) -> String) -> Self {
         self.format = self.format.custom_formatter(formatter);
         self
     }
@@ -407,25 +400,8 @@ impl<'a> DragValue<'a> {
 impl Widget for DragValue<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
         let mut atoms = self.atoms();
-        let Self {
-            mut get_set_value,
-            speed,
-            range,
-            clamp_existing_to_range,
-            format,
-            classes,
-            min_size,
-            clip_text,
-        } = self;
-        let ValueFormat {
-            prefix,
-            suffix,
-            min_decimals,
-            max_decimals,
-            custom_formatter,
-            custom_parser,
-            update_while_editing,
-        } = format;
+        let Self { mut get_set_value, speed, range, clamp_existing_to_range, format, classes, min_size, clip_text } = self;
+        let ValueFormat { prefix, suffix, min_decimals, max_decimals, custom_formatter, custom_parser, update_while_editing } = format;
 
         let prefix_text = prefix.text().unwrap_or_default().into_owned();
         let suffix_text = suffix.text().unwrap_or_default().into_owned();
@@ -433,10 +409,7 @@ impl Widget for DragValue<'_> {
         // A prefix or suffix is the visible label of the value, so it names the widget.
         // `Response::labelled_by` replaces this name with an explicit label.
         let label = {
-            let parts: Vec<&str> = [prefix_text.trim(), suffix_text.trim()]
-                .into_iter()
-                .filter(|part| !part.is_empty())
-                .collect();
+            let parts: Vec<&str> = [prefix_text.trim(), suffix_text.trim()].into_iter().filter(|part| !part.is_empty()).collect();
             (!parts.is_empty()).then(|| parts.join(" "))
         };
 
@@ -467,9 +440,7 @@ impl Widget for DragValue<'_> {
 
         let auto_decimals = (aim_rad / speed.abs()).log10().ceil().clamp(0.0, 15.0) as usize;
         let auto_decimals = auto_decimals + is_slow_speed as usize;
-        let max_decimals = max_decimals
-            .unwrap_or(auto_decimals + 2)
-            .at_least(min_decimals);
+        let max_decimals = max_decimals.unwrap_or(auto_decimals + 2).at_least(min_decimals);
         let auto_decimals = auto_decimals.clamp(min_decimals, max_decimals);
 
         let change = ui.input_mut(|input| {
@@ -490,8 +461,8 @@ impl Widget for DragValue<'_> {
             }
 
             use accesskit::Action;
-            change += input.num_accesskit_action_requests(id, Action::Increment) as f64
-                - input.num_accesskit_action_requests(id, Action::Decrement) as f64;
+            change +=
+                input.num_accesskit_action_requests(id, Action::Increment) as f64 - input.num_accesskit_action_requests(id, Action::Decrement) as f64;
 
             change
         });
@@ -521,10 +492,7 @@ impl Widget for DragValue<'_> {
 
         let value_text = match custom_formatter {
             Some(custom_formatter) => custom_formatter(value, auto_decimals..=max_decimals),
-            None => ui
-                .style()
-                .number_formatter
-                .format(value, auto_decimals..=max_decimals),
+            None => ui.style().number_formatter.format(value, auto_decimals..=max_decimals),
         };
 
         let text_style = ui.style().drag_value_text_style.clone();
@@ -533,10 +501,7 @@ impl Widget for DragValue<'_> {
             let edit_state = ui.data_mut(|data| data.remove_temp::<EditState>(id));
             // Ignore the text if the value was changed by something else while we were editing it,
             // or we would revert that change.
-            if let Some(value_text) = edit_state
-                .filter(|edit_state| edit_state.value == old_value)
-                .map(|edit_state| edit_state.text)
-            {
+            if let Some(value_text) = edit_state.filter(|edit_state| edit_state.value == old_value).map(|edit_state| edit_state.text) {
                 // We were editing the value as text last frame, but lost focus.
                 // Make sure we applied the last text value:
                 let parsed_value = parse(custom_parser.as_ref(), &value_text);
@@ -548,133 +513,121 @@ impl Widget for DragValue<'_> {
             }
         }
 
-        let mut response = if is_kb_editing {
-            // Keep editing the text from last frame, unless the value was changed by
-            // something else in the meantime, in which case the text is stale.
-            let mut value_text = ui
-                .data_mut(|data| data.remove_temp::<EditState>(id))
-                .filter(|edit_state| edit_state.value == old_value)
-                .map_or_else(|| value_text.clone(), |edit_state| edit_state.text);
-            let mut response = ui.add(
-                TextEdit::singleline(&mut value_text)
-                    .with_classes(classes)
-                    .clip_text(clip_text)
-                    .align(ui.layout().align2())
-                    .min_size(min_size.unwrap_or_else(|| ui.spacing().interact_size))
-                    .id(id)
-                    .desired_width(0.0) // as small as possible, like the button
-                    .font(text_style),
-            );
+        let mut response =
+            if is_kb_editing {
+                // Keep editing the text from last frame, unless the value was changed by
+                // something else in the meantime, in which case the text is stale.
+                let mut value_text = ui
+                    .data_mut(|data| data.remove_temp::<EditState>(id))
+                    .filter(|edit_state| edit_state.value == old_value)
+                    .map_or_else(|| value_text.clone(), |edit_state| edit_state.text);
+                let mut response = ui.add(
+                    TextEdit::singleline(&mut value_text)
+                        .with_classes(classes)
+                        .clip_text(clip_text)
+                        .align(ui.layout().align2())
+                        .min_size(min_size.unwrap_or_else(|| ui.spacing().interact_size))
+                        .id(id)
+                        .desired_width(0.0) // as small as possible, like the button
+                        .font(text_style),
+                );
 
-            // Select all text when the edit gains focus.
-            if ui.memory_mut(|mem| mem.gained_focus(id)) {
-                select_all_text(ui, id, response.id, &value_text);
-            }
-
-            let update = if update_while_editing {
-                // Update when the edit content has changed.
-                response.changed()
-            } else {
-                // Update only when the edit has lost focus.
-                response.lost_focus() && !ui.input(|i| i.key_pressed(Key::Escape))
-            };
-            if update {
-                let parsed_value = parse(custom_parser.as_ref(), &value_text);
-                if let Some(mut parsed_value) = parsed_value {
-                    // User edits always clamps:
-                    parsed_value = clamp_value_to_range(parsed_value, range.clone());
-                    set(&mut get_set_value, parsed_value);
+                // Select all text when the edit gains focus.
+                if ui.memory_mut(|mem| mem.gained_focus(id)) {
+                    select_all_text(ui, id, response.id, &value_text);
                 }
-            }
-            // The `TextEdit` reports every keystroke as a change, but the `DragValue`
-            // has only changed if its value did, which is checked further down.
-            // Otherwise `changed()` fires while typing even with `update_while_editing(false)`.
-            response.flags.remove(crate::response::Flags::CHANGED);
-            // Remember the value the text belongs to, so that next frame we can tell
-            // whether the value was changed by us or by something else.
-            let edit_state = EditState {
-                text: value_text,
-                value: get(&mut get_set_value),
-            };
-            ui.data_mut(|data| data.insert_temp(id, edit_state));
-            response
-        } else {
-            atoms.map_atoms(|atom| {
-                if atom.id == Some(atom_id) {
-                    RichText::new(value_text.clone())
-                        .text_style(text_style.clone())
-                        .into()
+
+                let update = if update_while_editing {
+                    // Update when the edit content has changed.
+                    response.changed()
                 } else {
-                    atom
+                    // Update only when the edit has lost focus.
+                    response.lost_focus() && !ui.input(|i| i.key_pressed(Key::Escape))
+                };
+                if update {
+                    let parsed_value = parse(custom_parser.as_ref(), &value_text);
+                    if let Some(mut parsed_value) = parsed_value {
+                        // User edits always clamps:
+                        parsed_value = clamp_value_to_range(parsed_value, range.clone());
+                        set(&mut get_set_value, parsed_value);
+                    }
                 }
-            });
-            let button = Button::new(atoms)
-                .with_classes(classes)
-                .wrap_mode(TextWrapMode::Extend)
-                .sense(Sense::click_and_drag())
-                .gap(0.0)
-                .min_size(min_size.unwrap_or_else(|| ui.spacing().interact_size)); // TODO(emilk): find some more generic solution to `min_size`
-
-            let cursor_icon = if value <= *range.start() {
-                CursorIcon::ResizeEast
-            } else if value < *range.end() {
-                CursorIcon::ResizeHorizontal
+                // The `TextEdit` reports every keystroke as a change, but the `DragValue`
+                // has only changed if its value did, which is checked further down.
+                // Otherwise `changed()` fires while typing even with `update_while_editing(false)`.
+                response.flags.remove(crate::response::Flags::CHANGED);
+                // Remember the value the text belongs to, so that next frame we can tell
+                // whether the value was changed by us or by something else.
+                let edit_state = EditState { text: value_text, value: get(&mut get_set_value) };
+                ui.data_mut(|data| data.insert_temp(id, edit_state));
+                response
             } else {
-                CursorIcon::ResizeWest
-            };
+                atoms.map_atoms(|atom| {
+                    if atom.id == Some(atom_id) { RichText::new(value_text.clone()).text_style(text_style.clone()).into() } else { atom }
+                });
+                let button = Button::new(atoms)
+                    .with_classes(classes)
+                    .wrap_mode(TextWrapMode::Extend)
+                    .sense(Sense::click_and_drag())
+                    .gap(0.0)
+                    .min_size(min_size.unwrap_or_else(|| ui.spacing().interact_size)); // TODO(emilk): find some more generic solution to `min_size`
 
-            let response = ui.add(button);
-            let mut response = response.on_hover_cursor(cursor_icon);
+                let cursor_icon = if value <= *range.start() {
+                    CursorIcon::ResizeEast
+                } else if value < *range.end() {
+                    CursorIcon::ResizeHorizontal
+                } else {
+                    CursorIcon::ResizeWest
+                };
 
-            if ui.style().explanation_tooltips {
-                response = response.on_hover_text(format!(
-                    "{}\nDrag to edit or click to enter a value.\nPress 'Shift' while dragging for better control.",
-                    value as f32, // Show full precision value on-hover. TODO(emilk): figure out f64 vs f32
-                ));
-            }
+                let response = ui.add(button);
+                let mut response = response.on_hover_cursor(cursor_icon);
 
-            if ui.input(|i| i.pointer.any_pressed() || i.pointer.any_released()) {
-                // Reset memory of preciely dagged value.
-                ui.data_mut(|data| data.remove::<f64>(id));
-            }
-
-            if response.clicked() {
-                ui.data_mut(|data| data.remove::<EditState>(id));
-                ui.memory_mut(|mem| mem.request_focus(id));
-                select_all_text(ui, id, response.id, &value_text);
-            } else if response.dragged() {
-                ui.set_cursor_icon(cursor_icon);
-
-                let mdelta = response.drag_delta();
-                let delta_points = mdelta.x - mdelta.y; // Increase to the right and up
-
-                let speed = if is_slow_speed { speed / 10.0 } else { speed };
-
-                let delta_value = delta_points as f64 * speed;
-
-                if delta_value != 0.0 {
-                    // Since we round the value being dragged, we need to store the full precision value in memory:
-                    let precise_value = ui.data_mut(|data| data.get_temp::<f64>(id));
-                    let precise_value = precise_value.unwrap_or(value);
-                    let precise_value = precise_value + delta_value;
-
-                    let aim_delta = aim_rad * speed;
-                    let rounded_new_value = emath::smart_aim::best_in_range_f64(
-                        precise_value - aim_delta,
-                        precise_value + aim_delta,
-                    );
-                    let rounded_new_value =
-                        emath::round_to_decimals(rounded_new_value, auto_decimals);
-                    // Dragging will always clamp the value to the range.
-                    let rounded_new_value = clamp_value_to_range(rounded_new_value, range.clone());
-                    set(&mut get_set_value, rounded_new_value);
-
-                    ui.data_mut(|data| data.insert_temp::<f64>(id, precise_value));
+                if ui.style().explanation_tooltips {
+                    response = response.on_hover_text(format!(
+                        "{}\nDrag to edit or click to enter a value.\nPress 'Shift' while dragging for better control.",
+                        value as f32, // Show full precision value on-hover. TODO(emilk): figure out f64 vs f32
+                    ));
                 }
-            }
 
-            response
-        };
+                if ui.input(|i| i.pointer.any_pressed() || i.pointer.any_released()) {
+                    // Reset memory of preciely dagged value.
+                    ui.data_mut(|data| data.remove::<f64>(id));
+                }
+
+                if response.clicked() {
+                    ui.data_mut(|data| data.remove::<EditState>(id));
+                    ui.memory_mut(|mem| mem.request_focus(id));
+                    select_all_text(ui, id, response.id, &value_text);
+                } else if response.dragged() {
+                    ui.set_cursor_icon(cursor_icon);
+
+                    let mdelta = response.drag_delta();
+                    let delta_points = mdelta.x - mdelta.y; // Increase to the right and up
+
+                    let speed = if is_slow_speed { speed / 10.0 } else { speed };
+
+                    let delta_value = delta_points as f64 * speed;
+
+                    if delta_value != 0.0 {
+                        // Since we round the value being dragged, we need to store the full precision value in memory:
+                        let precise_value = ui.data_mut(|data| data.get_temp::<f64>(id));
+                        let precise_value = precise_value.unwrap_or(value);
+                        let precise_value = precise_value + delta_value;
+
+                        let aim_delta = aim_rad * speed;
+                        let rounded_new_value = emath::smart_aim::best_in_range_f64(precise_value - aim_delta, precise_value + aim_delta);
+                        let rounded_new_value = emath::round_to_decimals(rounded_new_value, auto_decimals);
+                        // Dragging will always clamp the value to the range.
+                        let rounded_new_value = clamp_value_to_range(rounded_new_value, range.clone());
+                        set(&mut get_set_value, rounded_new_value);
+
+                        ui.data_mut(|data| data.insert_temp::<f64>(id, precise_value));
+                    }
+                }
+
+                response
+            };
 
         if get(&mut get_set_value) != old_value {
             response.mark_changed();
@@ -777,9 +730,7 @@ pub(crate) fn clamp_value_to_range(x: f64, range: RangeInclusive<f64>) -> f64 {
 /// Select all text in the `DragValue` text edit widget.
 fn select_all_text(ui: &Ui, widget_id: Id, response_id: Id, value_text: &str) {
     let mut state = TextEdit::load_state(ui.ctx(), widget_id).unwrap_or_default();
-    state
-        .cursor
-        .set_char_range(Some(text::CCursorRange::select_all_str(value_text)));
+    state.cursor.set_char_range(Some(text::CCursorRange::select_all_str(value_text)));
     state.store(ui.ctx(), response_id);
 }
 
@@ -799,12 +750,7 @@ mod tests {
 
     macro_rules! total_assert_eq {
         ($a:expr, $b:expr) => {
-            assert!(
-                matches!($a.total_cmp(&$b), core::cmp::Ordering::Equal),
-                "{} != {}",
-                $a,
-                $b
-            );
+            assert!(matches!($a.total_cmp(&$b), core::cmp::Ordering::Equal), "{} != {}", $a, $b);
         };
     }
 
@@ -828,27 +774,11 @@ mod tests {
 
         assert_eq!(super::default_parser("1.23"), Some(1.230));
 
-        assert_eq!(
-            super::default_parser(" 1.23 "),
-            Some(1.230),
-            "We should handle leading and trailing spaces"
-        );
+        assert_eq!(super::default_parser(" 1.23 "), Some(1.230), "We should handle leading and trailing spaces");
 
-        assert_eq!(
-            super::default_parser("1 234 567"),
-            Some(1_234_567.0),
-            "We should handle thousands separators using half-space"
-        );
+        assert_eq!(super::default_parser("1 234 567"), Some(1_234_567.0), "We should handle thousands separators using half-space");
 
-        assert_eq!(
-            super::default_parser("-1.23"),
-            Some(-1.23),
-            "Should handle normal hyphen as minus character"
-        );
-        assert_eq!(
-            super::default_parser("−1.23"),
-            Some(-1.23),
-            "Should handle special minus character (https://www.compart.com/en/unicode/U+2212)"
-        );
+        assert_eq!(super::default_parser("-1.23"), Some(-1.23), "Should handle normal hyphen as minus character");
+        assert_eq!(super::default_parser("−1.23"), Some(-1.23), "Should handle special minus character (https://www.compart.com/en/unicode/U+2212)");
     }
 }

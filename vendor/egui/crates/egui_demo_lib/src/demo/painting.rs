@@ -10,10 +10,7 @@ pub struct Painting {
 
 impl Default for Painting {
     fn default() -> Self {
-        Self {
-            lines: Default::default(),
-            stroke: Stroke::new(1.0, Color32::from_rgb(25, 200, 100)),
-        }
+        Self { lines: Default::default(), stroke: Stroke::new(1.0, Color32::from_rgb(25, 200, 100)) }
     }
 }
 
@@ -31,13 +28,9 @@ impl Painting {
     }
 
     pub fn ui_content(&mut self, ui: &mut Ui) -> egui::Response {
-        let (mut response, painter) =
-            ui.allocate_painter(ui.available_size_before_wrap(), Sense::drag());
+        let (mut response, painter) = ui.allocate_painter(ui.available_size_before_wrap(), Sense::drag());
 
-        let to_screen = emath::RectTransform::from_to(
-            Rect::from_min_size(Pos2::ZERO, response.rect.square_proportions()),
-            response.rect,
-        );
+        let to_screen = emath::RectTransform::from_to(Rect::from_min_size(Pos2::ZERO, response.rect.square_proportions()), response.rect);
         let from_screen = to_screen.inverse();
 
         if self.lines.is_empty() {
@@ -57,14 +50,10 @@ impl Painting {
             response.mark_changed();
         }
 
-        let shapes = self
-            .lines
-            .iter()
-            .filter(|line| line.len() >= 2)
-            .map(|line| {
-                let points: Vec<Pos2> = line.iter().map(|p| to_screen * *p).collect();
-                egui::Shape::line(points, self.stroke)
-            });
+        let shapes = self.lines.iter().filter(|line| line.len() >= 2).map(|line| {
+            let points: Vec<Pos2> = line.iter().map(|p| to_screen * *p).collect();
+            egui::Shape::line(points, self.stroke)
+        });
 
         painter.extend(shapes);
 

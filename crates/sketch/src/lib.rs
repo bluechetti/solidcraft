@@ -91,8 +91,8 @@ pub use solver::solve_after_edit_with_analysis;
 pub use solver::{
     Analysis, CONSISTENT, DrivingValues, Hold, MAX_ADDS_RANK_VARS, MAX_COMPONENT_VARS, MAX_MOVES_VARS, SolveReport, SolveStatus, adds_rank,
     constraint_residual, determined_by, fillets_kept, first_order_moves, flips_from_stored, keep_point_order, keep_sides_at_zero, measure_dimension,
-    move_line_towards, move_point_towards, point_along, solve, solve_after_edit, solve_after_link_move, solve_after_value_edit, solve_holding,
-    solve_with,
+    move_line_towards, move_point_towards, point_along, side_flips_from_stored, solve, solve_after_edit, solve_after_link_move,
+    solve_after_value_edit, solve_holding, solve_with,
 };
 pub use text::{
     MAX_TEXT_CHARS, TextAlign, TextMetrics, TextStyle, TextVerticalAlign, saved_text_geometry, text_geometry, text_geometry_in, text_geometry_styled,

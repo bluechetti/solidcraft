@@ -146,9 +146,7 @@ impl WheelState {
                     MouseWheelUnit::Page => viewport_rect.height() * delta,
                 };
 
-                let is_horizontal = self
-                    .modifiers
-                    .matches_any(options.horizontal_scroll_modifier);
+                let is_horizontal = self.modifiers.matches_any(options.horizontal_scroll_modifier);
                 let is_vertical = self.modifiers.matches_any(options.vertical_scroll_modifier);
 
                 if is_horizontal && !is_vertical {
@@ -214,12 +212,8 @@ impl WheelState {
     /// and on others (e.g. some mouse wheels on Wayland) we get a start but no stop event,
     /// so we rely on a timer.
     fn is_scroll_action_over(&self, time: f64) -> bool {
-        let timeout = if self.status == Status::InTouch && self.source == MouseWheelSource::Trackpad
-        {
-            RESTING_FINGER_TIMEOUT
-        } else {
-            SCROLL_ACTION_TIMEOUT
-        };
+        let timeout =
+            if self.status == Status::InTouch && self.source == MouseWheelSource::Trackpad { RESTING_FINGER_TIMEOUT } else { SCROLL_ACTION_TIMEOUT };
         self.status != Status::Static && timeout < time - self.last_wheel_event
     }
 
@@ -234,44 +228,35 @@ impl WheelState {
     }
 
     pub fn ui(&self, ui: &mut crate::Ui) {
-        let Self {
-            status,
-            source,
-            modifiers,
-            last_wheel_event,
-            unprocessed_wheel_delta,
-            smooth_wheel_delta,
-        } = self;
+        let Self { status, source, modifiers, last_wheel_event, unprocessed_wheel_delta, smooth_wheel_delta } = self;
 
         let time = ui.input(|i| i.time);
 
-        crate::Grid::new("ScrollState")
-            .num_columns(2)
-            .show(ui, |ui| {
-                ui.label("status");
-                ui.monospace(format!("{status:?}"));
-                ui.end_row();
+        crate::Grid::new("ScrollState").num_columns(2).show(ui, |ui| {
+            ui.label("status");
+            ui.monospace(format!("{status:?}"));
+            ui.end_row();
 
-                ui.label("source");
-                ui.monospace(format!("{source:?}"));
-                ui.end_row();
+            ui.label("source");
+            ui.monospace(format!("{source:?}"));
+            ui.end_row();
 
-                ui.label("modifiers");
-                ui.monospace(format!("{modifiers:?}"));
-                ui.end_row();
+            ui.label("modifiers");
+            ui.monospace(format!("{modifiers:?}"));
+            ui.end_row();
 
-                ui.label("last_wheel_event");
-                ui.monospace(format!("{:.1}s ago", time - *last_wheel_event));
-                ui.end_row();
+            ui.label("last_wheel_event");
+            ui.monospace(format!("{:.1}s ago", time - *last_wheel_event));
+            ui.end_row();
 
-                ui.label("unprocessed_wheel_delta");
-                ui.monospace(unprocessed_wheel_delta.to_string());
-                ui.end_row();
+            ui.label("unprocessed_wheel_delta");
+            ui.monospace(unprocessed_wheel_delta.to_string());
+            ui.end_row();
 
-                ui.label("smooth_wheel_delta");
-                ui.monospace(smooth_wheel_delta.to_string());
-                ui.end_row();
-            });
+            ui.label("smooth_wheel_delta");
+            ui.monospace(smooth_wheel_delta.to_string());
+            ui.end_row();
+        });
     }
 }
 
@@ -279,37 +264,24 @@ impl WheelState {
 mod tests {
     use emath::{Vec2, vec2};
 
-    use crate::{
-        Context, Event, Modifiers, MouseWheelSource, MouseWheelUnit, RawInput, TouchPhase,
-    };
+    use crate::{Context, Event, Modifiers, MouseWheelSource, MouseWheelUnit, RawInput, TouchPhase};
 
     fn wheel(phase: TouchPhase, modifiers: Modifiers) -> Event {
         wheel_from(phase, MouseWheelSource::Unknown, modifiers)
     }
 
     fn wheel_from(phase: TouchPhase, source: MouseWheelSource, modifiers: Modifiers) -> Event {
-        Event::MouseWheel {
-            unit: MouseWheelUnit::Point,
-            delta: vec2(0.0, -5.0),
-            phase,
-            source,
-            modifiers,
-        }
+        Event::MouseWheel { unit: MouseWheelUnit::Point, delta: vec2(0.0, -5.0), phase, source, modifiers }
     }
 
     /// Runs one frame, and returns `(smooth_scroll_delta, zoom_delta, is_scrolling)`.
     fn run_frame(ctx: &Context, time: f64, events: Vec<Event>) -> (Vec2, f32, bool) {
-        let input = RawInput {
-            time: Some(time),
-            events,
-            ..Default::default()
-        };
+        let input = RawInput { time: Some(time), events, ..Default::default() };
         let mut result = None;
         let output = ctx.run_ui(input, |ui| {
             // Only the first pass sees the events:
             if result.is_none() {
-                result =
-                    Some(ui.input(|i| (i.smooth_scroll_delta(), i.zoom_delta(), i.is_scrolling())));
+                result = Some(ui.input(|i| (i.smooth_scroll_delta(), i.zoom_delta(), i.is_scrolling())));
             }
         });
         output.drop_without_applying_deltas();
@@ -323,49 +295,27 @@ mod tests {
     fn modifiers_should_not_stick_when_touch_phase_end_never_arrives() {
         let ctx = Context::default();
 
-        let (scroll, zoom, _) = run_frame(
-            &ctx,
-            0.0,
-            vec![
-                wheel(TouchPhase::Start, Modifiers::COMMAND),
-                wheel(TouchPhase::Move, Modifiers::COMMAND),
-            ],
-        );
+        let (scroll, zoom, _) = run_frame(&ctx, 0.0, vec![wheel(TouchPhase::Start, Modifiers::COMMAND), wheel(TouchPhase::Move, Modifiers::COMMAND)]);
         assert_eq!(scroll, Vec2::ZERO, "ctrl+scroll should not scroll");
         assert!(zoom != 1.0, "ctrl+scroll should zoom");
 
         // Let go of ctrl, and scroll again a while later.
         // No frame runs in-between, like in a reactive app that has been idle:
-        let (scroll, zoom, _) =
-            run_frame(&ctx, 1.0, vec![wheel(TouchPhase::Move, Modifiers::NONE)]);
+        let (scroll, zoom, _) = run_frame(&ctx, 1.0, vec![wheel(TouchPhase::Move, Modifiers::NONE)]);
         assert_eq!(zoom, 1.0, "scrolling without ctrl should not zoom");
-        assert_eq!(
-            scroll,
-            vec2(0.0, -5.0),
-            "scrolling without ctrl should scroll"
-        );
+        assert_eq!(scroll, vec2(0.0, -5.0), "scrolling without ctrl should scroll");
     }
 
     #[test]
     fn scroll_action_should_end_when_touch_phase_end_never_arrives() {
         let ctx = Context::default();
 
-        let (_, _, is_scrolling) = run_frame(
-            &ctx,
-            0.0,
-            vec![
-                wheel(TouchPhase::Start, Modifiers::NONE),
-                wheel(TouchPhase::Move, Modifiers::NONE),
-            ],
-        );
+        let (_, _, is_scrolling) = run_frame(&ctx, 0.0, vec![wheel(TouchPhase::Start, Modifiers::NONE), wheel(TouchPhase::Move, Modifiers::NONE)]);
         assert!(is_scrolling, "we just scrolled");
 
         // `is_scrolling` hides tooltips, so it must not stay `true` forever:
         let (_, _, is_scrolling) = run_frame(&ctx, 1.0, vec![]);
-        assert!(
-            !is_scrolling,
-            "no scroll events for a second: the scroll action is over"
-        );
+        assert!(!is_scrolling, "no scroll events for a second: the scroll action is over");
     }
 
     /// Letting go of a modifier during a (momentum) scroll should not change what the scroll does.
@@ -375,43 +325,19 @@ mod tests {
     fn modifiers_should_stick_until_touch_phase_end() {
         let ctx = Context::default();
 
-        let (scroll, _, _) = run_frame(
-            &ctx,
-            0.0,
-            vec![
-                wheel(TouchPhase::Start, Modifiers::SHIFT),
-                wheel(TouchPhase::Move, Modifiers::SHIFT),
-            ],
-        );
-        assert_eq!(
-            scroll,
-            vec2(-5.0, 0.0),
-            "shift+scroll should scroll horizontally"
-        );
+        let (scroll, _, _) = run_frame(&ctx, 0.0, vec![wheel(TouchPhase::Start, Modifiers::SHIFT), wheel(TouchPhase::Move, Modifiers::SHIFT)]);
+        assert_eq!(scroll, vec2(-5.0, 0.0), "shift+scroll should scroll horizontally");
 
         // Let go of shift while the scroll events keep coming:
-        let (scroll, _, is_scrolling) =
-            run_frame(&ctx, 0.05, vec![wheel(TouchPhase::Move, Modifiers::NONE)]);
+        let (scroll, _, is_scrolling) = run_frame(&ctx, 0.05, vec![wheel(TouchPhase::Move, Modifiers::NONE)]);
         assert_eq!(scroll, vec2(-5.0, 0.0), "should still scroll horizontally");
         assert!(is_scrolling, "the scroll action is still going");
 
-        let (_, _, is_scrolling) =
-            run_frame(&ctx, 0.1, vec![wheel(TouchPhase::End, Modifiers::NONE)]);
+        let (_, _, is_scrolling) = run_frame(&ctx, 0.1, vec![wheel(TouchPhase::End, Modifiers::NONE)]);
         assert!(!is_scrolling, "the scroll action ended");
 
-        let (scroll, _, _) = run_frame(
-            &ctx,
-            0.2,
-            vec![
-                wheel(TouchPhase::Start, Modifiers::NONE),
-                wheel(TouchPhase::Move, Modifiers::NONE),
-            ],
-        );
-        assert_eq!(
-            scroll,
-            vec2(0.0, -5.0),
-            "a new scroll action without shift is vertical"
-        );
+        let (scroll, _, _) = run_frame(&ctx, 0.2, vec![wheel(TouchPhase::Start, Modifiers::NONE), wheel(TouchPhase::Move, Modifiers::NONE)]);
+        assert_eq!(scroll, vec2(0.0, -5.0), "a new scroll action without shift is vertical");
     }
 
     /// Fingers resting on a trackpad produce no events, but the scroll action is still going.
@@ -420,23 +346,13 @@ mod tests {
         let ctx = Context::default();
         let finger = MouseWheelSource::Trackpad;
 
-        run_frame(
-            &ctx,
-            0.0,
-            vec![
-                wheel_from(TouchPhase::Start, finger, Modifiers::NONE),
-                wheel_from(TouchPhase::Move, finger, Modifiers::NONE),
-            ],
-        );
+        run_frame(&ctx, 0.0, vec![wheel_from(TouchPhase::Start, finger, Modifiers::NONE), wheel_from(TouchPhase::Move, finger, Modifiers::NONE)]);
 
         let (_, _, is_scrolling) = run_frame(&ctx, 0.5, vec![]);
         assert!(is_scrolling, "fingers are resting on the trackpad");
 
         let (_, _, is_scrolling) = run_frame(&ctx, 1.5, vec![]);
-        assert!(
-            !is_scrolling,
-            "but we give up eventually, in case the end got lost"
-        );
+        assert!(!is_scrolling, "but we give up eventually, in case the end got lost");
 
         // Without a known finger source, the short timeout applies:
         run_frame(&ctx, 2.0, vec![wheel(TouchPhase::Start, Modifiers::NONE)]);

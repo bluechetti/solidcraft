@@ -267,17 +267,9 @@ impl Color32 {
     /// This is perceptually even, and faster that [`Self::linear_multiply`].
     #[inline]
     pub fn gamma_multiply(self, factor: f32) -> Self {
-        debug_assert!(
-            0.0 <= factor && factor.is_finite(),
-            "factor should be finite, but was {factor}"
-        );
+        debug_assert!(0.0 <= factor && factor.is_finite(), "factor should be finite, but was {factor}");
         let Self([r, g, b, a]) = self;
-        Self([
-            (r as f32 * factor + 0.5) as u8,
-            (g as f32 * factor + 0.5) as u8,
-            (b as f32 * factor + 0.5) as u8,
-            (a as f32 * factor + 0.5) as u8,
-        ])
+        Self([(r as f32 * factor + 0.5) as u8, (g as f32 * factor + 0.5) as u8, (b as f32 * factor + 0.5) as u8, (a as f32 * factor + 0.5) as u8])
     }
 
     /// Multiply with 127 to make color half as opaque, perceptually.
@@ -303,10 +295,7 @@ impl Color32 {
     /// You likely want to use [`Self::gamma_multiply`] instead.
     #[inline]
     pub fn linear_multiply(self, factor: f32) -> Self {
-        debug_assert!(
-            0.0 <= factor && factor.is_finite(),
-            "factor should be finite, but was {factor}"
-        );
+        debug_assert!(0.0 <= factor && factor.is_finite(), "factor should be finite, but was {factor}");
         // As an unfortunate side-effect of using premultiplied alpha
         // we need a somewhat expensive conversion to linear space and back.
         Rgba::from(self).multiply(factor).into()
@@ -319,12 +308,7 @@ impl Color32 {
     #[inline]
     pub fn to_normalized_gamma_f32(self) -> [f32; 4] {
         let Self([r, g, b, a]) = self;
-        [
-            r as f32 / 255.0,
-            g as f32 / 255.0,
-            b as f32 / 255.0,
-            a as f32 / 255.0,
-        ]
+        [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, a as f32 / 255.0]
     }
 
     /// Lerp this color towards `other` by `t` in gamma space.
@@ -373,12 +357,7 @@ impl core::ops::Add for Color32 {
 
     #[inline]
     fn add(self, other: Self) -> Self {
-        Self([
-            self[0].saturating_add(other[0]),
-            self[1].saturating_add(other[1]),
-            self[2].saturating_add(other[2]),
-            self[3].saturating_add(other[3]),
-        ])
+        Self([self[0].saturating_add(other[0]), self[1].saturating_add(other[1]), self[2].saturating_add(other[2]), self[3].saturating_add(other[3])])
     }
 }
 
@@ -412,31 +391,19 @@ mod test {
         let opaque = Color32::from_rgb(40, 50, 60);
         let additive = Color32::from_rgb(255, 127, 10).additive();
         assert_eq!(additive.blend(opaque), opaque, "opaque on top of additive");
-        assert_eq!(
-            opaque.blend(additive),
-            Color32::from_rgb(255, 177, 70),
-            "additive on top of opaque"
-        );
+        assert_eq!(opaque.blend(additive), Color32::from_rgb(255, 177, 70), "additive on top of opaque");
     }
 
     #[test]
     fn test_color32_blend_vs_gamma_blend() {
         let opaque = Color32::from_rgb(0x60, 0x60, 0x60);
         let transparent = Color32::from_rgba_unmultiplied(168, 65, 65, 79);
-        assert_eq!(
-            transparent.blend(opaque),
-            opaque,
-            "Opaque on top of transparent"
-        );
+        assert_eq!(transparent.blend(opaque), opaque, "Opaque on top of transparent");
         // Blending in gamma-space is the de-facto standard almost everywhere.
         // Browsers and most image editors do it, and so it is what users expect.
         assert_eq!(
             opaque.blend(transparent),
-            Color32::from_rgb(
-                blend(0x60, 168, 79),
-                blend(0x60, 65, 79),
-                blend(0x60, 65, 79)
-            ),
+            Color32::from_rgb(blend(0x60, 168, 79), blend(0x60, 65, 79), blend(0x60, 65, 79)),
             "Transparent on top of opaque"
         );
 
@@ -474,23 +441,11 @@ mod test {
     #[test]
     fn from_black_white_alpha() {
         for a in 0..=255 {
-            assert_eq!(
-                Color32::from_white_alpha(a),
-                Color32::from_rgba_unmultiplied(255, 255, 255, a)
-            );
-            assert_eq!(
-                Color32::from_white_alpha(a),
-                Color32::WHITE.gamma_multiply_u8(a)
-            );
+            assert_eq!(Color32::from_white_alpha(a), Color32::from_rgba_unmultiplied(255, 255, 255, a));
+            assert_eq!(Color32::from_white_alpha(a), Color32::WHITE.gamma_multiply_u8(a));
 
-            assert_eq!(
-                Color32::from_black_alpha(a),
-                Color32::from_rgba_unmultiplied(0, 0, 0, a)
-            );
-            assert_eq!(
-                Color32::from_black_alpha(a),
-                Color32::BLACK.gamma_multiply_u8(a)
-            );
+            assert_eq!(Color32::from_black_alpha(a), Color32::from_rgba_unmultiplied(0, 0, 0, a));
+            assert_eq!(Color32::from_black_alpha(a), Color32::BLACK.gamma_multiply_u8(a));
         }
     }
 
@@ -505,10 +460,7 @@ mod test {
             assert_eq!(constfn, original);
         }
 
-        assert_eq!(
-            Color32::from(Rgba::from_rgba_unmultiplied(1.0, 0.0, 0.0, 0.5)),
-            Color32::from_rgba_unmultiplied(255, 0, 0, 128)
-        );
+        assert_eq!(Color32::from(Rgba::from_rgba_unmultiplied(1.0, 0.0, 0.0, 0.5)), Color32::from_rgba_unmultiplied(255, 0, 0, 128));
     }
 
     #[test]

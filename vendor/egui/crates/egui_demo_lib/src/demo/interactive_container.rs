@@ -14,15 +14,13 @@ impl crate::Demo for InteractiveContainerDemo {
     }
 
     fn show(&mut self, ui: &mut egui::Ui, open: &mut bool) {
-        egui::Window::new(self.name())
-            .open(open)
-            .resizable(false)
-            .default_width(250.0)
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| {
+        egui::Window::new(self.name()).open(open).resizable(false).default_width(250.0).constrain_to(ui.available_rect_before_wrap()).show(
+            ui,
+            |ui| {
                 use crate::View as _;
                 self.ui(ui);
-            });
+            },
+        );
     }
 }
 
@@ -40,45 +38,34 @@ impl crate::View for InteractiveContainerDemo {
         });
 
         let response = ui
-            .scope_builder(
-                UiBuilder::new()
-                    .id_salt("interactive_container")
-                    .sense(Sense::click()),
-                |ui| {
-                    let response = ui.response();
-                    let visuals = ui.style().interact(&response);
-                    let text_color = visuals.text_color();
+            .scope_builder(UiBuilder::new().id_salt("interactive_container").sense(Sense::click()), |ui| {
+                let response = ui.response();
+                let visuals = ui.style().interact(&response);
+                let text_color = visuals.text_color();
 
-                    Frame::canvas(ui.style())
-                        .fill(visuals.bg_fill.gamma_multiply(0.3))
-                        .stroke(Stroke::new(1.0, visuals.bg_stroke.color))
-                        .inner_margin(ui.spacing().menu_margin)
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
+                Frame::canvas(ui.style())
+                    .fill(visuals.bg_fill.gamma_multiply(0.3))
+                    .stroke(Stroke::new(1.0, visuals.bg_stroke.color))
+                    .inner_margin(ui.spacing().menu_margin)
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
 
-                            ui.add_space(32.0);
-                            ui.vertical_centered(|ui| {
-                                Label::new(
-                                    RichText::new(format!("{}", self.count))
-                                        .color(text_color)
-                                        .size(32.0),
-                                )
-                                .selectable(false)
-                                .ui(ui);
-                            });
-                            ui.add_space(32.0);
-
-                            ui.horizontal(|ui| {
-                                if ui.button("Reset").clicked() {
-                                    self.count = 0;
-                                }
-                                if ui.button("+ 100").clicked() {
-                                    self.count += 100;
-                                }
-                            });
+                        ui.add_space(32.0);
+                        ui.vertical_centered(|ui| {
+                            Label::new(RichText::new(format!("{}", self.count)).color(text_color).size(32.0)).selectable(false).ui(ui);
                         });
-                },
-            )
+                        ui.add_space(32.0);
+
+                        ui.horizontal(|ui| {
+                            if ui.button("Reset").clicked() {
+                                self.count = 0;
+                            }
+                            if ui.button("+ 100").clicked() {
+                                self.count += 100;
+                            }
+                        });
+                    });
+            })
             .response;
 
         if response.clicked() {

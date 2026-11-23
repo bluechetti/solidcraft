@@ -39,9 +39,7 @@ impl Spinner {
         if ui.is_rect_visible(rect) {
             ui.request_repaint(); // because it is animated
 
-            let color = self
-                .color
-                .unwrap_or_else(|| ui.visuals().strong_text_color());
+            let color = self.color.unwrap_or_else(|| ui.visuals().strong_text_color());
             let radius = (rect.height().min(rect.width()) * 0.5) - 2.0;
             let n_points = (radius.round() as u32).clamp(8, 128);
             let time = ui.input(|i| i.time);
@@ -54,17 +52,14 @@ impl Spinner {
                     rect.center() + radius * vec2(cos as f32, sin as f32)
                 })
                 .collect();
-            ui.painter()
-                .add(Shape::line(points, Stroke::new(3.0, color)));
+            ui.painter().add(Shape::line(points, Stroke::new(3.0, color)));
         }
     }
 }
 
 impl Widget for Spinner {
     fn ui(self, ui: &mut Ui) -> Response {
-        let size = self
-            .size
-            .unwrap_or_else(|| ui.style().spacing.interact_size.y);
+        let size = self.size.unwrap_or_else(|| ui.style().spacing.interact_size.y);
         let (rect, response) = ui.allocate_exact_size(vec2(size, size), Sense::hover());
         response.widget_info(|| WidgetInfo::new(Role::ProgressIndicator));
         self.paint_at(ui, rect);

@@ -117,11 +117,9 @@ impl crate::View for WindowOptions {
                     ui.checkbox(title_bar, "title_bar");
                     ui.checkbox(closable, "closable");
                     ui.checkbox(collapsible, "collapsible");
-                    ui.checkbox(movable, "movable")
-                        .on_hover_text("Can the window be moved by dragging?");
+                    ui.checkbox(movable, "movable").on_hover_text("Can the window be moved by dragging?");
                     ui.checkbox(resizable, "resizable");
-                    ui.checkbox(constrain, "constrain")
-                        .on_hover_text("Constrain window to the screen");
+                    ui.checkbox(constrain, "constrain").on_hover_text("Constrain window to the screen");
                     ui.checkbox(&mut scroll2[0], "hscroll");
                     ui.checkbox(&mut scroll2[1], "vscroll");
                 });
@@ -146,26 +144,20 @@ impl crate::View for WindowOptions {
                     });
                     ui.horizontal(|ui| {
                         ui.label("Offset:");
-                        ui.add(egui::DragValue::new(&mut anchor_offset.x))
-                            .on_hover_text("Offset x");
-                        ui.add(egui::DragValue::new(&mut anchor_offset.y))
-                            .on_hover_text("Offset y");
+                        ui.add(egui::DragValue::new(&mut anchor_offset.x)).on_hover_text("Offset x");
+                        ui.add(egui::DragValue::new(&mut anchor_offset.y)).on_hover_text("Offset y");
                     });
                 });
             });
         });
 
         ui.horizontal(|ui| {
-            ui.label("Drag to move:")
-                .on_hover_text("Where the user can grab the window to move it");
-            ui.selectable_value(drag_area, WindowDrag::Off, "Off")
-                .on_hover_text("The window cannot be dragged to move it (same as movable = false)");
+            ui.label("Drag to move:").on_hover_text("Where the user can grab the window to move it");
+            ui.selectable_value(drag_area, WindowDrag::Off, "Off").on_hover_text("The window cannot be dragged to move it (same as movable = false)");
             ui.selectable_value(drag_area, WindowDrag::OnTouch, "OnTouch")
                 .on_hover_text("Anywhere on touch screens, title-bar only otherwise (default)");
-            ui.selectable_value(drag_area, WindowDrag::TitleBar, "TitleBar")
-                .on_hover_text("Only the title bar moves the window");
-            ui.selectable_value(drag_area, WindowDrag::Anywhere, "Anywhere")
-                .on_hover_text("Drag anywhere on the window to move it");
+            ui.selectable_value(drag_area, WindowDrag::TitleBar, "TitleBar").on_hover_text("Only the title bar moves the window");
+            ui.selectable_value(drag_area, WindowDrag::Anywhere, "Anywhere").on_hover_text("Drag anywhere on the window to move it");
         });
 
         ui.separator();
@@ -178,11 +170,7 @@ impl crate::View for WindowOptions {
                 self.disabled_time = ui.input(|i| i.time);
             }
             egui::reset_button(ui, self, "Reset");
-            if ui
-                .button("Close")
-                .on_hover_text("You can collapse / close Windows via Ui::close")
-                .clicked()
-            {
+            if ui.button("Close").on_hover_text("You can collapse / close Windows via Ui::close").clicked() {
                 // Calling close would close the collapsible within the window
                 // ui.close();
                 // Instead, we close the window itself

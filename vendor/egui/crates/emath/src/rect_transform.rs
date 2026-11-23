@@ -40,27 +40,18 @@ impl RectTransform {
 
     /// Transforms the given coordinate in the `from` space to the `to` space.
     pub fn transform_pos(&self, pos: Pos2) -> Pos2 {
-        pos2(
-            remap(pos.x, self.from.x_range(), self.to.x_range()),
-            remap(pos.y, self.from.y_range(), self.to.y_range()),
-        )
+        pos2(remap(pos.x, self.from.x_range(), self.to.x_range()), remap(pos.y, self.from.y_range(), self.to.y_range()))
     }
 
     /// Transforms the given rectangle in the `in`-space to a rectangle in the `out`-space.
     pub fn transform_rect(&self, rect: Rect) -> Rect {
-        Rect {
-            min: self.transform_pos(rect.min),
-            max: self.transform_pos(rect.max),
-        }
+        Rect { min: self.transform_pos(rect.min), max: self.transform_pos(rect.max) }
     }
 
     /// Transforms the given coordinate in the `from` space to the `to` space,
     /// clamping if necessary.
     pub fn transform_pos_clamped(&self, pos: Pos2) -> Pos2 {
-        pos2(
-            remap_clamp(pos.x, self.from.x_range(), self.to.x_range()),
-            remap_clamp(pos.y, self.from.y_range(), self.to.y_range()),
-        )
+        pos2(remap_clamp(pos.x, self.from.x_range(), self.to.x_range()), remap_clamp(pos.y, self.from.y_range(), self.to.y_range()))
     }
 }
 

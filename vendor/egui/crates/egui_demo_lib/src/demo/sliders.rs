@@ -44,33 +44,16 @@ impl crate::Demo for Sliders {
     }
 
     fn show(&mut self, ui: &mut egui::Ui, open: &mut bool) {
-        egui::Window::new(self.name())
-            .open(open)
-            .resizable(false)
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| {
-                use crate::View as _;
-                self.ui(ui);
-            });
+        egui::Window::new(self.name()).open(open).resizable(false).constrain_to(ui.available_rect_before_wrap()).show(ui, |ui| {
+            use crate::View as _;
+            self.ui(ui);
+        });
     }
 }
 
 impl crate::View for Sliders {
     fn ui(&mut self, ui: &mut Ui) {
-        let Self {
-            min,
-            max,
-            logarithmic,
-            clamping,
-            smart_aim,
-            step,
-            use_steps,
-            integer,
-            vertical,
-            value,
-            trailing_fill,
-            handle_shape,
-        } = self;
+        let Self { min, max, logarithmic, clamping, smart_aim, step, use_steps, integer, vertical, value, trailing_fill, handle_shape } = self;
 
         ui.label("You can click a slider value to edit it with the keyboard.");
 
@@ -85,11 +68,7 @@ impl crate::View for Sliders {
         *min = min.clamp(type_min, type_max);
         *max = max.clamp(type_min, type_max);
 
-        let orientation = if *vertical {
-            SliderOrientation::Vertical
-        } else {
-            SliderOrientation::Horizontal
-        };
+        let orientation = if *vertical { SliderOrientation::Vertical } else { SliderOrientation::Horizontal };
 
         let istep = if *use_steps { *step } else { 0.0 };
         if *integer {

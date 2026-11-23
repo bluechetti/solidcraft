@@ -1,8 +1,7 @@
 use criterion::{Criterion, criterion_group, criterion_main};
 
 use epaint::{
-    ClippedShape, Color32, Mesh, PathStroke, Pos2, Rect, Shape, Stroke, TessellationOptions,
-    Tessellator, TextureAtlas, Vec2, pos2, tessellator::Path,
+    ClippedShape, Color32, Mesh, PathStroke, Pos2, Rect, Shape, Stroke, TessellationOptions, Tessellator, TextureAtlas, Vec2, pos2, tessellator::Path,
 };
 
 use core::hint::black_box;
@@ -18,12 +17,7 @@ fn single_dashed_lines(c: &mut Criterion) {
             let line = [pos2(0.0, 0.0), pos2(50.0, 0.0), pos2(100.0, 1.0)];
 
             for _ in 0..100 {
-                v.extend(Shape::dashed_line(
-                    &line,
-                    Stroke::new(1.5, Color32::RED),
-                    10.0,
-                    2.5,
-                ));
+                v.extend(Shape::dashed_line(&line, Stroke::new(1.5, Color32::RED), 10.0, 2.5));
             }
 
             black_box(v);
@@ -58,12 +52,7 @@ fn tessellate_circles(c: &mut Criterion) {
                 clipped_shapes.push(ClippedShape::new(clip_rect, shape));
             }
         }
-        assert_eq!(
-            clipped_shapes.len(),
-            100_000,
-            "length of clipped shapes should be 100k, but was {}",
-            clipped_shapes.len()
-        );
+        assert_eq!(clipped_shapes.len(), 100_000, "length of clipped shapes should be 100k, but was {}", clipped_shapes.len());
 
         let pixels_per_point = 2.0;
         let options = TessellationOptions::default();
@@ -73,12 +62,7 @@ fn tessellate_circles(c: &mut Criterion) {
         let prepared_discs = atlas.prepared_discs();
 
         b.iter(|| {
-            let mut tessellator = Tessellator::new(
-                pixels_per_point,
-                options,
-                font_tex_size,
-                prepared_discs.clone(),
-            );
+            let mut tessellator = Tessellator::new(pixels_per_point, options, font_tex_size, prepared_discs.clone());
             let clipped_primitives = tessellator.tessellate_shapes(clipped_shapes.clone());
             black_box(clipped_primitives);
         });

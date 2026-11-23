@@ -33,29 +33,16 @@ impl crate::Demo for TextLayoutDemo {
     }
 
     fn show(&mut self, ui: &mut egui::Ui, open: &mut bool) {
-        egui::Window::new(self.name())
-            .open(open)
-            .resizable(true)
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| {
-                use crate::View as _;
-                self.ui(ui);
-            });
+        egui::Window::new(self.name()).open(open).resizable(true).constrain_to(ui.available_rect_before_wrap()).show(ui, |ui| {
+            use crate::View as _;
+            self.ui(ui);
+        });
     }
 }
 
 impl crate::View for TextLayoutDemo {
     fn ui(&mut self, ui: &mut egui::Ui) {
-        let Self {
-            break_anywhere,
-            max_rows,
-            overflow_character,
-            extra_letter_spacing,
-            line_height_pixels,
-            halign,
-            justify,
-            lorem_ipsum,
-        } = self;
+        let Self { break_anywhere, max_rows, overflow_character, extra_letter_spacing, line_height_pixels, halign, justify, lorem_ipsum } = self;
 
         use egui::text::LayoutJob;
 
@@ -68,111 +55,88 @@ impl crate::View for TextLayoutDemo {
 
         ui.add_space(12.0);
 
-        egui::Grid::new("TextLayoutDemo")
-            .num_columns(2)
-            .show(ui, |ui| {
-                let label = ui.label("Max rows:");
-                ui.add(egui::DragValue::new(max_rows)).labelled_by(label.id);
-                ui.end_row();
+        egui::Grid::new("TextLayoutDemo").num_columns(2).show(ui, |ui| {
+            let label = ui.label("Max rows:");
+            ui.add(egui::DragValue::new(max_rows)).labelled_by(label.id);
+            ui.end_row();
 
-                ui.label("Line-break:");
-                ui.horizontal(|ui| {
-                    ui.radio_value(break_anywhere, false, "word boundaries");
-                    ui.radio_value(break_anywhere, true, "anywhere");
-                });
-                ui.end_row();
-
-                ui.label("Overflow character:");
-                ui.horizontal(|ui| {
-                    ui.selectable_value(overflow_character, None, "None");
-                    ui.selectable_value(overflow_character, Some('…'), "…");
-                    ui.selectable_value(overflow_character, Some('—'), "—");
-                    ui.selectable_value(overflow_character, Some('-'), "  -  ");
-                });
-                ui.end_row();
-
-                let label = ui.label("Extra letter spacing:");
-                ui.add(egui::DragValue::new(extra_letter_spacing).speed(0.1))
-                    .labelled_by(label.id);
-                ui.end_row();
-
-                ui.label("Line height:");
-                ui.horizontal(|ui| {
-                    if ui
-                        .selectable_label(*line_height_pixels == 0, "Default")
-                        .clicked()
-                    {
-                        *line_height_pixels = 0;
-                    }
-                    if ui
-                        .selectable_label(*line_height_pixels != 0, "Custom")
-                        .clicked()
-                    {
-                        *line_height_pixels = (pixels_per_point * 20.0).round() as _;
-                    }
-                    if *line_height_pixels != 0 {
-                        ui.add(egui::DragValue::new(line_height_pixels).suffix(" pixels"));
-                    }
-                });
-                ui.end_row();
-
-                ui.label("Horizontal align:");
-                ui.horizontal(|ui| {
-                    ui.selectable_value(halign, egui::Align::LEFT, "Left");
-                    ui.selectable_value(halign, egui::Align::Center, "Center");
-                    ui.selectable_value(halign, egui::Align::RIGHT, "Right");
-                });
-                ui.end_row();
-
-                ui.label("Justify:");
-                ui.checkbox(justify, "Fill row width");
-                ui.end_row();
-
-                ui.label("Text:");
-                ui.horizontal(|ui| {
-                    ui.selectable_value(lorem_ipsum, true, "Lorem Ipsum");
-                    ui.selectable_value(lorem_ipsum, false, "La Pasionaria");
-                });
+            ui.label("Line-break:");
+            ui.horizontal(|ui| {
+                ui.radio_value(break_anywhere, false, "word boundaries");
+                ui.radio_value(break_anywhere, true, "anywhere");
             });
+            ui.end_row();
+
+            ui.label("Overflow character:");
+            ui.horizontal(|ui| {
+                ui.selectable_value(overflow_character, None, "None");
+                ui.selectable_value(overflow_character, Some('…'), "…");
+                ui.selectable_value(overflow_character, Some('—'), "—");
+                ui.selectable_value(overflow_character, Some('-'), "  -  ");
+            });
+            ui.end_row();
+
+            let label = ui.label("Extra letter spacing:");
+            ui.add(egui::DragValue::new(extra_letter_spacing).speed(0.1)).labelled_by(label.id);
+            ui.end_row();
+
+            ui.label("Line height:");
+            ui.horizontal(|ui| {
+                if ui.selectable_label(*line_height_pixels == 0, "Default").clicked() {
+                    *line_height_pixels = 0;
+                }
+                if ui.selectable_label(*line_height_pixels != 0, "Custom").clicked() {
+                    *line_height_pixels = (pixels_per_point * 20.0).round() as _;
+                }
+                if *line_height_pixels != 0 {
+                    ui.add(egui::DragValue::new(line_height_pixels).suffix(" pixels"));
+                }
+            });
+            ui.end_row();
+
+            ui.label("Horizontal align:");
+            ui.horizontal(|ui| {
+                ui.selectable_value(halign, egui::Align::LEFT, "Left");
+                ui.selectable_value(halign, egui::Align::Center, "Center");
+                ui.selectable_value(halign, egui::Align::RIGHT, "Right");
+            });
+            ui.end_row();
+
+            ui.label("Justify:");
+            ui.checkbox(justify, "Fill row width");
+            ui.end_row();
+
+            ui.label("Text:");
+            ui.horizontal(|ui| {
+                ui.selectable_value(lorem_ipsum, true, "Lorem Ipsum");
+                ui.selectable_value(lorem_ipsum, false, "La Pasionaria");
+            });
+        });
 
         ui.add_space(12.0);
 
-        let text = if *lorem_ipsum {
-            crate::LOREM_IPSUM_LONG
-        } else {
-            TO_BE_OR_NOT_TO_BE
-        };
+        let text = if *lorem_ipsum { crate::LOREM_IPSUM_LONG } else { TO_BE_OR_NOT_TO_BE };
 
-        egui::ScrollArea::vertical()
-            .auto_shrink(false)
-            .show(ui, |ui| {
-                let line_height = (*line_height_pixels != 0)
-                    .then_some(points_per_pixel * *line_height_pixels as f32);
+        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            let line_height = (*line_height_pixels != 0).then_some(points_per_pixel * *line_height_pixels as f32);
 
-                let mut job = LayoutJob::single_section(
-                    text.to_owned(),
-                    egui::TextFormat {
-                        extra_letter_spacing: *extra_letter_spacing,
-                        line_height,
-                        ..Default::default()
-                    },
-                );
-                job.wrap = egui::text::TextWrapping {
-                    max_rows: *max_rows,
-                    break_anywhere: *break_anywhere,
-                    overflow_character: *overflow_character,
-                    ..Default::default()
-                };
+            let mut job = LayoutJob::single_section(
+                text.to_owned(),
+                egui::TextFormat { extra_letter_spacing: *extra_letter_spacing, line_height, ..Default::default() },
+            );
+            job.wrap = egui::text::TextWrapping {
+                max_rows: *max_rows,
+                break_anywhere: *break_anywhere,
+                overflow_character: *overflow_character,
+                ..Default::default()
+            };
 
-                // NOTE: `Label` overrides some of the wrapping settings,
-                // e.g. wrap width, halign, and justify.
-                ui.with_layout(
-                    egui::Layout::top_down(*halign).with_cross_justify(*justify),
-                    |ui| {
-                        ui.label(job);
-                    },
-                );
+            // NOTE: `Label` overrides some of the wrapping settings,
+            // e.g. wrap width, halign, and justify.
+            ui.with_layout(egui::Layout::top_down(*halign).with_cross_justify(*justify), |ui| {
+                ui.label(job);
             });
+        });
     }
 }
 

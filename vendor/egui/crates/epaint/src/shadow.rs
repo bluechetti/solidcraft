@@ -37,43 +37,24 @@ fn shadow_size() {
 
 impl Shadow {
     /// No shadow at all.
-    pub const NONE: Self = Self {
-        offset: [0, 0],
-        blur: 0,
-        spread: 0,
-        color: Color32::TRANSPARENT,
-    };
+    pub const NONE: Self = Self { offset: [0, 0], blur: 0, spread: 0, color: Color32::TRANSPARENT };
 
     /// The argument is the rectangle of the shadow caster.
     pub fn as_shape(&self, rect: Rect, corner_radius: impl Into<CornerRadius>) -> RectShape {
         // tessellator.clip_rect = clip_rect; // TODO(emilk): culling
 
-        let Self {
-            offset,
-            blur,
-            spread,
-            color,
-        } = *self;
+        let Self { offset, blur, spread, color } = *self;
         let [offset_x, offset_y] = offset;
 
-        let (rect, corner_radius) = RoundedRect::new(
-            rect.translate(Vec2::new(offset_x as _, offset_y as _)),
-            corner_radius.into(),
-        )
-        .expand(f32::from(spread))
-        .into_parts();
+        let (rect, corner_radius) =
+            RoundedRect::new(rect.translate(Vec2::new(offset_x as _, offset_y as _)), corner_radius.into()).expand(f32::from(spread)).into_parts();
 
         RectShape::filled(rect, corner_radius, color).with_blur_width(blur as _)
     }
 
     /// How much larger than the parent rect are we in each direction?
     pub fn margin(&self) -> MarginF32 {
-        let Self {
-            offset,
-            blur,
-            spread,
-            color: _,
-        } = *self;
+        let Self { offset, blur, spread, color: _ } = *self;
         let spread = spread as f32;
         let blur = blur as f32;
         let [offset_x, offset_y] = offset;

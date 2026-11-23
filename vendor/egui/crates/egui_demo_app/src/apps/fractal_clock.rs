@@ -44,22 +44,15 @@ impl FractalClock {
             ui.request_repaint();
         }
 
-        let painter = Painter::new(
-            ui.ctx().clone(),
-            ui.layer_id(),
-            ui.available_rect_before_wrap(),
-        );
+        let painter = Painter::new(ui.ctx().clone(), ui.layer_id(), ui.available_rect_before_wrap());
         self.paint(&painter);
         // Make sure we allocate what we used (everything)
         ui.expand_to_include_rect(painter.clip_rect());
 
-        Frame::popup(ui.style())
-            .stroke(Stroke::NONE)
-            .show(ui, |ui| {
-                ui.set_max_width(270.0);
-                CollapsingHeader::new("Settings")
-                    .show(ui, |ui| self.options_ui(ui, seconds_since_midnight));
-            });
+        Frame::popup(ui.style()).stroke(Stroke::NONE).show(ui, |ui| {
+            ui.set_max_width(270.0);
+            CollapsingHeader::new("Settings").show(ui, |ui| self.options_ui(ui, seconds_since_midnight));
+        });
     }
 
     fn options_ui(&mut self, ui: &mut Ui, seconds_since_midnight: Option<f64>) {
@@ -86,10 +79,7 @@ impl FractalClock {
 
         egui::reset_button(ui, self, "Reset");
 
-        ui.hyperlink_to(
-            "Inspired by a screensaver by Rob Mayoff",
-            "http://www.dqd.com/~mayoff/programs/FractalClock/",
-        );
+        ui.hyperlink_to("Inspired by a screensaver by Rob Mayoff", "http://www.dqd.com/~mayoff/programs/FractalClock/");
         ui.add(egui_demo_lib::egui_github_link_file!());
     }
 
@@ -102,16 +92,11 @@ impl FractalClock {
 
         impl Hand {
             fn from_length_angle(length: f32, angle: f32) -> Self {
-                Self {
-                    length,
-                    angle,
-                    vec: length * Vec2::angled(angle),
-                }
+                Self { length, angle, vec: length * Vec2::angled(angle) }
             }
         }
 
-        let angle_from_period =
-            |period| TAU * (self.time.rem_euclid(period) / period) as f32 - TAU / 4.0;
+        let angle_from_period = |period| TAU * (self.time.rem_euclid(period) / period) as f32 - TAU / 4.0;
 
         let hands = [
             // Second hand:
@@ -125,10 +110,7 @@ impl FractalClock {
         let mut shapes: Vec<Shape> = Vec::new();
 
         let rect = painter.clip_rect();
-        let to_screen = emath::RectTransform::from_to(
-            Rect::from_center_size(Pos2::ZERO, rect.square_proportions() / self.zoom),
-            rect,
-        );
+        let to_screen = emath::RectTransform::from_to(Rect::from_center_size(Pos2::ZERO, rect.square_proportions() / self.zoom), rect);
 
         let mut paint_line = |points: [Pos2; 2], color: Color32, width: f32| {
             let line = [to_screen * points[0], to_screen * points[1]];
@@ -139,15 +121,10 @@ impl FractalClock {
             }
         };
 
-        let hand_rotations = [
-            hands[0].angle - hands[2].angle + TAU * 0.5,
-            hands[1].angle - hands[2].angle + TAU * 0.5,
-        ];
+        let hand_rotations = [hands[0].angle - hands[2].angle + TAU * 0.5, hands[1].angle - hands[2].angle + TAU * 0.5];
 
-        let hand_rotors = [
-            hands[0].length * emath::Rot2::from_angle(hand_rotations[0]),
-            hands[1].length * emath::Rot2::from_angle(hand_rotations[1]),
-        ];
+        let hand_rotors =
+            [hands[0].length * emath::Rot2::from_angle(hand_rotations[0]), hands[1].length * emath::Rot2::from_angle(hand_rotations[1])];
 
         #[derive(Clone, Copy)]
         struct Node {
@@ -164,10 +141,7 @@ impl FractalClock {
             let end = center + hand.vec;
             paint_line([center, end], Color32::from_additive_luminance(255), width);
             if i < 2 {
-                nodes.push(Node {
-                    pos: end,
-                    dir: hand.vec,
-                });
+                nodes.push(Node { pos: end, dir: hand.vec });
             }
         }
 
@@ -189,15 +163,8 @@ impl FractalClock {
             for &rotor in &hand_rotors {
                 for a in &nodes {
                     let new_dir = rotor * a.dir;
-                    let b = Node {
-                        pos: a.pos + new_dir,
-                        dir: new_dir,
-                    };
-                    paint_line(
-                        [a.pos, b.pos],
-                        Color32::from_additive_luminance(luminance_u8),
-                        width,
-                    );
+                    let b = Node { pos: a.pos + new_dir, dir: new_dir };
+                    paint_line([a.pos, b.pos], Color32::from_additive_luminance(luminance_u8), width);
                     new_nodes.push(b);
                 }
             }

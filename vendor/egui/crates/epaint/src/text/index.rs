@@ -11,11 +11,7 @@ use core::ops::Range;
 /// This is what you use to slice a [`str`] (e.g. `&text[range.start.0..range.end.0]`).
 /// Not to be confused with [`CharIndex`], which counts characters instead of bytes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Deserialize, serde::Serialize),
-    serde(transparent)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize), serde(transparent))]
 pub struct ByteIndex(pub usize);
 
 /// A character (Unicode scalar) offset into a string.
@@ -23,11 +19,7 @@ pub struct ByteIndex(pub usize);
 /// Counts characters, not bytes, so it is independent of the UTF-8 encoding.
 /// Not to be confused with [`ByteIndex`]. See also [`super::cursor::CCursor`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[cfg_attr(
-    feature = "serde",
-    derive(serde::Deserialize, serde::Serialize),
-    serde(transparent)
-)]
+#[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize), serde(transparent))]
 pub struct CharIndex(pub usize);
 
 macro_rules! impl_text_index {

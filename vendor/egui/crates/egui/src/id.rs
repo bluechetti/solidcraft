@@ -44,10 +44,7 @@ impl<T: core::hash::Hash + core::fmt::Debug> AsId for T {}
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 #[cfg_attr(
     feature = "serde",
-    expect(
-        clippy::unsafe_derive_deserialize,
-        reason = "`from_high_entropy_bits` is only `unsafe` about entropy, not memory safety"
-    )
+    expect(clippy::unsafe_derive_deserialize, reason = "`from_high_entropy_bits` is only `unsafe` about entropy, not memory safety")
 )]
 pub struct Id(NonZeroU64);
 
@@ -298,10 +295,7 @@ mod debug_format_tests {
     #[test]
     fn with_salt_matches_with() {
         let parent = Id::unique("salted_parent");
-        assert_eq!(
-            parent.with_salt(IdSalt::new("salted_child")),
-            parent.with("salted_child")
-        );
+        assert_eq!(parent.with_salt(IdSalt::new("salted_child")), parent.with("salted_child"));
     }
 
     #[test]
@@ -313,10 +307,7 @@ mod debug_format_tests {
     #[test]
     fn with_chain() {
         let id = Id::unique("a").with("b").with("c").with(7_i32);
-        assert_eq!(
-            format!("{id:?}"),
-            r#"Id::unique("a").with("b").with("c").with(7)"#
-        );
+        assert_eq!(format!("{id:?}"), r#"Id::unique("a").with("b").with("c").with(7)"#);
     }
 
     #[test]

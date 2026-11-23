@@ -96,13 +96,7 @@ impl InspectionPlugin {
     /// Create the plugin and register it with [`Context::add_plugin`], then call [`serve`] to
     /// listen on TCP (or feed it directly via `ctx.with_plugin(|p| p.submit(req, on_reply))`).
     pub fn new(label: Option<String>) -> Self {
-        Self {
-            in_flight: Vec::new(),
-            step: 0,
-            next_screenshot_id: 0,
-            received_screenshots: Default::default(),
-            label,
-        }
+        Self { in_flight: Vec::new(), step: 0, next_screenshot_id: 0, received_screenshots: Default::default(), label }
     }
 
     /// Submit an inspection [`Request`].
@@ -113,16 +107,8 @@ impl InspectionPlugin {
     /// You usually call this via [`Context::with_plugin`]. You should then ask for a frame with
     /// [`egui::ViewportCommand::RequestPaintWhileHidden`], so that an app that is idle, or whose
     /// window is hidden, wakes up and serves the request.
-    pub fn submit(
-        &mut self,
-        req: Request,
-        on_reply: impl FnOnce(Response) + Send + Sync + 'static,
-    ) {
-        self.in_flight.push(InFlight {
-            req,
-            reply: Some(Box::new(on_reply)),
-            phase: Phase::New,
-        });
+    pub fn submit(&mut self, req: Request, on_reply: impl FnOnce(Response) + Send + Sync + 'static) {
+        self.in_flight.push(InFlight { req, reply: Some(Box::new(on_reply)), phase: Phase::New });
     }
 
     /// While requests are still in flight, keep the UI loop spinning — reactive apps would
@@ -132,11 +118,7 @@ impl InspectionPlugin {
     /// pass at all otherwise, and an inspector is usually attached to an app in the background.
     fn maybe_repaint(&self, ctx: &Context) {
         // Don't repaint if there's only a `Request::Settle`.
-        if self
-            .in_flight
-            .iter()
-            .any(|item| !matches!(item.req, Request::Settle { .. }))
-        {
+        if self.in_flight.iter().any(|item| !matches!(item.req, Request::Settle { .. })) {
             request_frame(ctx);
         }
     }
@@ -148,10 +130,7 @@ impl InspectionPlugin {
 /// Every request needs it: a screenshot needs the painted pixels, the widget tree is what the
 /// pass produces, and injected input is only applied by a pass.
 fn request_frame(ctx: &Context) {
-    ctx.send_viewport_cmd_to(
-        egui::ViewportId::ROOT,
-        egui::ViewportCommand::RequestPaintWhileHidden,
-    );
+    ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::RequestPaintWhileHidden);
 }
 
 impl egui::Plugin for InspectionPlugin {
@@ -181,9 +160,7 @@ impl egui::Plugin for InspectionPlugin {
                 // the framebuffer is at the app's `pixels_per_point` px per point, so the scale
                 // factor is their ratio. `None` means native resolution (scale 1.0).
                 let scale = match item.req {
-                    Request::GetScreenshot {
-                        pixels_per_point: Some(requested_ppp),
-                    } => requested_ppp / pixels_per_point,
+                    Request::GetScreenshot { pixels_per_point: Some(requested_ppp) } => requested_ppp / pixels_per_point,
                     _ => 1.0,
                 };
                 let png = match EncodedPng::from_color_image_scaled(image.as_ref(), scale) {
@@ -215,10 +192,7 @@ impl egui::Plugin for InspectionPlugin {
             match &item.req {
                 Request::GetInfo => {
                     if let Some(reply) = item.reply.take() {
-                        reply(Response::Info {
-                            label: label.clone(),
-                            egui_version: env!("CARGO_PKG_VERSION").to_owned(),
-                        });
+                        reply(Response::Info { label: label.clone(), egui_version: env!("CARGO_PKG_VERSION").to_owned() });
                     }
                     false
                 }
@@ -235,10 +209,7 @@ impl egui::Plugin for InspectionPlugin {
                     true
                 }
                 Request::Resize { width, height } => {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-                        *width as f32,
-                        *height as f32,
-                    )));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(*width as f32, *height as f32)));
                     item.phase = Phase::AwaitOutput;
                     true
                 }
@@ -256,10 +227,7 @@ impl egui::Plugin for InspectionPlugin {
                     true
                 }
                 Request::Settle { max_steps } => {
-                    item.phase = Phase::Settle {
-                        steps_taken: 0,
-                        max_steps: *max_steps,
-                    };
+                    item.phase = Phase::Settle { steps_taken: 0, max_steps: *max_steps };
                     true
                 }
             }
@@ -275,53 +243,40 @@ impl egui::Plugin for InspectionPlugin {
             return;
         }
 
-        let immediate_repaint = output
-            .viewport_output
-            .values()
-            .any(|viewport| viewport.repaint_delay == Duration::ZERO);
+        let immediate_repaint = output.viewport_output.values().any(|viewport| viewport.repaint_delay == Duration::ZERO);
 
         let step = self.step;
-        self.in_flight
-            .retain_mut(|item| match (&mut item.phase, &item.req) {
-                (Phase::AwaitOutput, Request::GetTree) => {
+        self.in_flight.retain_mut(|item| match (&mut item.phase, &item.req) {
+            (Phase::AwaitOutput, Request::GetTree) => {
+                if let Some(reply) = item.reply.take() {
+                    reply(Response::Tree {
+                        step,
+                        pixels_per_point: output.pixels_per_point,
+                        accesskit: output.platform_output.accesskit_update.clone(),
+                    });
+                }
+                false
+            }
+            (Phase::AwaitOutput, Request::ApplyEvents { .. } | Request::Resize { .. }) => {
+                if let Some(reply) = item.reply.take() {
+                    reply(Response::Done);
+                }
+                false
+            }
+            (Phase::Settle { steps_taken, max_steps }, Request::Settle { .. }) => {
+                *steps_taken += 1;
+                let steps_exceeded = *steps_taken >= *max_steps;
+                if !immediate_repaint || steps_exceeded {
                     if let Some(reply) = item.reply.take() {
-                        reply(Response::Tree {
-                            step,
-                            pixels_per_point: output.pixels_per_point,
-                            accesskit: output.platform_output.accesskit_update.clone(),
-                        });
+                        reply(Response::Settled { settled: !immediate_repaint, steps: *steps_taken });
                     }
                     false
+                } else {
+                    true
                 }
-                (Phase::AwaitOutput, Request::ApplyEvents { .. } | Request::Resize { .. }) => {
-                    if let Some(reply) = item.reply.take() {
-                        reply(Response::Done);
-                    }
-                    false
-                }
-                (
-                    Phase::Settle {
-                        steps_taken,
-                        max_steps,
-                    },
-                    Request::Settle { .. },
-                ) => {
-                    *steps_taken += 1;
-                    let steps_exceeded = *steps_taken >= *max_steps;
-                    if !immediate_repaint || steps_exceeded {
-                        if let Some(reply) = item.reply.take() {
-                            reply(Response::Settled {
-                                settled: !immediate_repaint,
-                                steps: *steps_taken,
-                            });
-                        }
-                        false
-                    } else {
-                        true
-                    }
-                }
-                _ => true,
-            });
+            }
+            _ => true,
+        });
 
         self.maybe_repaint(ctx);
     }
@@ -358,10 +313,7 @@ pub fn attach_from_env(ctx: &Context, label: Option<String>) -> std::io::Result<
 pub fn serve(ctx: &Context, addr: &str) -> std::io::Result<()> {
     use std::net::{TcpListener, ToSocketAddrs as _};
 
-    let resolved = addr
-        .to_socket_addrs()?
-        .next()
-        .ok_or_else(|| std::io::Error::other(format!("no address resolved from {addr:?}")))?;
+    let resolved = addr.to_socket_addrs()?.next().ok_or_else(|| std::io::Error::other(format!("no address resolved from {addr:?}")))?;
     let listener = TcpListener::bind(resolved)?;
     let bound = listener.local_addr()?;
     if bound.ip().is_loopback() {
@@ -375,22 +327,20 @@ pub fn serve(ctx: &Context, addr: &str) -> std::io::Result<()> {
     }
 
     let ctx = ctx.clone();
-    std::thread::Builder::new()
-        .name("egui_inspection_accept".into())
-        .spawn(move || {
-            for stream in listener.incoming() {
-                let Ok(stream) = stream else { continue };
-                let ctx = ctx.clone();
-                std::thread::Builder::new()
-                    .name("egui_inspection_conn".into())
-                    .spawn(move || {
-                        if let Err(err) = serve_connection(stream, &ctx) {
-                            log::warn!("egui_inspection: connection ended: {err}");
-                        }
-                    })
-                    .expect("failed to spawn egui_inspection connection thread");
-            }
-        })?;
+    std::thread::Builder::new().name("egui_inspection_accept".into()).spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { continue };
+            let ctx = ctx.clone();
+            std::thread::Builder::new()
+                .name("egui_inspection_conn".into())
+                .spawn(move || {
+                    if let Err(err) = serve_connection(stream, &ctx) {
+                        log::warn!("egui_inspection: connection ended: {err}");
+                    }
+                })
+                .expect("failed to spawn egui_inspection connection thread");
+        }
+    })?;
     Ok(())
 }
 
@@ -426,12 +376,7 @@ fn serve_connection(stream: std::net::TcpStream, ctx: &Context) -> std::io::Resu
             })
             .is_some();
         if !registered {
-            return write_message(
-                &mut writer,
-                &Response::Error {
-                    message: "egui_inspection plugin not registered".to_owned(),
-                },
-            );
+            return write_message(&mut writer, &Response::Error { message: "egui_inspection plugin not registered".to_owned() });
         }
         // Wake the (possibly idle) UI loop so it services the request, hidden window and all.
         request_frame(ctx);
@@ -442,9 +387,7 @@ fn serve_connection(stream: std::net::TcpStream, ctx: &Context) -> std::io::Resu
                 "egui_inspection: request timed out after {REQUEST_TIMEOUT:?}; the app is not \
                  painting"
             );
-            Response::Error {
-                message: "request timed out — the app is not painting".to_owned(),
-            }
+            Response::Error { message: "request timed out — the app is not painting".to_owned() }
         });
         write_message(&mut writer, &resp)?;
     }
@@ -465,8 +408,7 @@ mod tests {
     }
 
     fn submit(ctx: &Context, req: Request) {
-        ctx.with_plugin::<InspectionPlugin, _>(|p| p.submit(req, |_| {}))
-            .expect("the plugin is registered");
+        ctx.with_plugin::<InspectionPlugin, _>(|p| p.submit(req, |_| {})).expect("the plugin is registered");
     }
 
     fn wants_paint(commands: &[ViewportCommand]) -> bool {
@@ -477,22 +419,11 @@ mod tests {
     fn an_in_flight_request_asks_for_a_frame_even_while_hidden() {
         let ctx = Context::default();
         ctx.add_plugin(InspectionPlugin::new(None));
-        assert!(
-            !wants_paint(&pass(&ctx)),
-            "An idle app should let a hidden window sleep"
-        );
+        assert!(!wants_paint(&pass(&ctx)), "An idle app should let a hidden window sleep");
 
         // A screenshot takes more than one pass, so the plugin must keep asking:
-        submit(
-            &ctx,
-            Request::GetScreenshot {
-                pixels_per_point: None,
-            },
-        );
-        assert!(
-            wants_paint(&pass(&ctx)),
-            "A screenshot of a hidden window needs the pass that paints it"
-        );
+        submit(&ctx, Request::GetScreenshot { pixels_per_point: None });
+        assert!(wants_paint(&pass(&ctx)), "A screenshot of a hidden window needs the pass that paints it");
     }
 
     #[test]

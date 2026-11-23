@@ -4,9 +4,7 @@ pub struct WindowResizeTest {
 
 impl Default for WindowResizeTest {
     fn default() -> Self {
-        Self {
-            text: crate::LOREM_IPSUM_LONG.to_owned(),
-        }
+        Self { text: crate::LOREM_IPSUM_LONG.to_owned() }
     }
 }
 
@@ -18,18 +16,14 @@ impl crate::Demo for WindowResizeTest {
     fn show(&mut self, ui: &mut egui::Ui, open: &mut bool) {
         use egui::{Resize, ScrollArea, TextEdit, Window};
 
-        Window::new("↔️ auto-sized")
-            .open(open)
-            .auto_sized()
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| {
-                ui.label("This window will auto-size based on its contents.");
-                ui.heading("Resize this area:");
-                Resize::default().show(ui, |ui| {
-                    lorem_ipsum(ui, crate::LOREM_IPSUM);
-                });
-                ui.heading("Resize the above area!");
+        Window::new("↔️ auto-sized").open(open).auto_sized().constrain_to(ui.available_rect_before_wrap()).show(ui, |ui| {
+            ui.label("This window will auto-size based on its contents.");
+            ui.heading("Resize this area:");
+            Resize::default().show(ui, |ui| {
+                lorem_ipsum(ui, crate::LOREM_IPSUM);
             });
+            ui.heading("Resize the above area!");
+        });
 
         Window::new("↔️ resizable + scroll")
             .open(open)
@@ -38,9 +32,7 @@ impl crate::Demo for WindowResizeTest {
             .default_height(300.0)
             .constrain_to(ui.available_rect_before_wrap())
             .show(ui, |ui| {
-                ui.label(
-                    "This window is resizable and has a scroll area. You can shrink it to any size.",
-                );
+                ui.label("This window is resizable and has a scroll area. You can shrink it to any size.");
                 ui.separator();
                 lorem_ipsum(ui, crate::LOREM_IPSUM_LONG);
             });
@@ -56,24 +48,23 @@ impl crate::Demo for WindowResizeTest {
                 ui.label("However, we have a sub-region with a scroll bar:");
                 ui.separator();
                 ScrollArea::vertical().show(ui, |ui| {
-                    let lorem_ipsum_extra_long =
-                        format!("{}\n\n{}", crate::LOREM_IPSUM_LONG, crate::LOREM_IPSUM_LONG);
+                    let lorem_ipsum_extra_long = format!("{}\n\n{}", crate::LOREM_IPSUM_LONG, crate::LOREM_IPSUM_LONG);
                     lorem_ipsum(ui, &lorem_ipsum_extra_long);
                 });
                 // ui.heading("Some additional text here, that should also be visible"); // this works, but messes with the resizing a bit
             });
 
-        Window::new("↔️ resizable without scroll")
-            .open(open)
-            .vscroll(false)
-            .resizable(true)
-            .constrain_to(ui.available_rect_before_wrap())
-            .show(ui, |ui| {
-                ui.label("This window is resizable but has no scroll area. This means it can only be resized to a size where all the contents is visible.");
+        Window::new("↔️ resizable without scroll").open(open).vscroll(false).resizable(true).constrain_to(ui.available_rect_before_wrap()).show(
+            ui,
+            |ui| {
+                ui.label(
+                    "This window is resizable but has no scroll area. This means it can only be resized to a size where all the contents is visible.",
+                );
                 ui.label("egui will not clip the contents of a window, nor add whitespace to it.");
                 ui.separator();
                 lorem_ipsum(ui, crate::LOREM_IPSUM);
-            });
+            },
+        );
 
         Window::new("↔️ resizable with TextEdit")
             .open(open)
@@ -83,10 +74,7 @@ impl crate::Demo for WindowResizeTest {
             .constrain_to(ui.available_rect_before_wrap())
             .show(ui, |ui| {
                 ui.label("Shows how you can fill an area with a widget.");
-                ui.add_sized(
-                    ui.available_size(),
-                    TextEdit::multiline(&mut self.text).hint_text("Type here"),
-                );
+                ui.add_sized(ui.available_size(), TextEdit::multiline(&mut self.text).hint_text("Type here"));
             });
 
         Window::new("↔️ freely resized")
@@ -106,10 +94,7 @@ impl crate::Demo for WindowResizeTest {
 }
 
 fn lorem_ipsum(ui: &mut egui::Ui, text: &str) {
-    ui.with_layout(
-        egui::Layout::top_down(egui::Align::LEFT).with_cross_justify(true),
-        |ui| {
-            ui.label(egui::RichText::new(text).weak());
-        },
-    );
+    ui.with_layout(egui::Layout::top_down(egui::Align::LEFT).with_cross_justify(true), |ui| {
+        ui.label(egui::RichText::new(text).weak());
+    });
 }

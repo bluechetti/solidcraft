@@ -27,11 +27,7 @@ impl Vertex {
     /// An untextured vertex
     #[inline]
     pub fn untextured(pos: Pos2, color: Color32) -> Self {
-        Self {
-            pos,
-            uv: WHITE_UV,
-            color,
-        }
+        Self { pos, uv: WHITE_UV, color }
     }
 }
 
@@ -75,10 +71,7 @@ pub struct Mesh {
 
 impl Mesh {
     pub fn with_texture(texture_id: TextureId) -> Self {
-        Self {
-            texture_id,
-            ..Default::default()
-        }
+        Self { texture_id, ..Default::default() }
     }
 
     /// Restore to default state, but without freeing memory.
@@ -90,20 +83,14 @@ impl Mesh {
 
     /// Returns the amount of memory used by the vertices and indices.
     pub fn bytes_used(&self) -> usize {
-        core::mem::size_of::<Self>()
-            + self.vertices.len() * core::mem::size_of::<Vertex>()
-            + self.indices.len() * core::mem::size_of::<u32>()
+        core::mem::size_of::<Self>() + self.vertices.len() * core::mem::size_of::<Vertex>() + self.indices.len() * core::mem::size_of::<u32>()
     }
 
     /// Are all indices within the bounds of the contained vertices?
     pub fn is_valid(&self) -> bool {
         profiling::function_scope!();
 
-        if let Ok(n) = u32::try_from(self.vertices.len()) {
-            self.indices.iter().all(|&i| i < n)
-        } else {
-            false
-        }
+        if let Ok(n) = u32::try_from(self.vertices.len()) { self.indices.iter().all(|&i| i < n) } else { false }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -112,9 +99,7 @@ impl Mesh {
 
     /// Iterate over the triangles of this mesh, returning vertex indices.
     pub fn triangles(&self) -> impl Iterator<Item = [u32; 3]> + '_ {
-        self.indices
-            .chunks_exact(3)
-            .map(|chunk| [chunk[0], chunk[1], chunk[2]])
+        self.indices.chunks_exact(3).map(|chunk| [chunk[0], chunk[1], chunk[2]])
     }
 
     /// Calculate a bounding rectangle.
@@ -150,15 +135,11 @@ impl Mesh {
         if self.is_empty() {
             self.texture_id = other.texture_id;
         } else {
-            assert_eq!(
-                self.texture_id, other.texture_id,
-                "Can't merge Mesh using different textures"
-            );
+            assert_eq!(self.texture_id, other.texture_id, "Can't merge Mesh using different textures");
         }
 
         let index_offset = self.vertices.len() as u32;
-        self.indices
-            .extend(other.indices.iter().map(|index| index + index_offset));
+        self.indices.extend(other.indices.iter().map(|index| index + index_offset));
         self.vertices.extend(other.vertices.iter());
     }
 
@@ -167,10 +148,7 @@ impl Mesh {
     /// Panics when the mesh has assigned a texture.
     #[inline(always)]
     pub fn colored_vertex(&mut self, pos: Pos2, color: Color32) {
-        debug_assert!(
-            self.texture_id == TextureId::default(),
-            "Mesh has an assigned texture"
-        );
+        debug_assert!(self.texture_id == TextureId::default(), "Mesh has an assigned texture");
         self.vertices.push(Vertex::untextured(pos, color));
     }
 
@@ -199,40 +177,20 @@ impl Mesh {
     pub fn add_rect_with_uv(&mut self, rect: Rect, uv: Rect, color: Color32) {
         #![expect(clippy::identity_op)]
         let idx = self.vertices.len() as u32;
-        self.indices
-            .extend_from_slice(&[idx + 0, idx + 1, idx + 2, idx + 2, idx + 1, idx + 3]);
+        self.indices.extend_from_slice(&[idx + 0, idx + 1, idx + 2, idx + 2, idx + 1, idx + 3]);
 
         self.vertices.extend_from_slice(&[
-            Vertex {
-                pos: rect.left_top(),
-                uv: uv.left_top(),
-                color,
-            },
-            Vertex {
-                pos: rect.right_top(),
-                uv: uv.right_top(),
-                color,
-            },
-            Vertex {
-                pos: rect.left_bottom(),
-                uv: uv.left_bottom(),
-                color,
-            },
-            Vertex {
-                pos: rect.right_bottom(),
-                uv: uv.right_bottom(),
-                color,
-            },
+            Vertex { pos: rect.left_top(), uv: uv.left_top(), color },
+            Vertex { pos: rect.right_top(), uv: uv.right_top(), color },
+            Vertex { pos: rect.left_bottom(), uv: uv.left_bottom(), color },
+            Vertex { pos: rect.right_bottom(), uv: uv.right_bottom(), color },
         ]);
     }
 
     /// Uniformly colored rectangle.
     #[inline(always)]
     pub fn add_colored_rect(&mut self, rect: Rect, color: Color32) {
-        debug_assert!(
-            self.texture_id == TextureId::default(),
-            "Mesh has an assigned texture"
-        );
+        debug_assert!(self.texture_id == TextureId::default(), "Mesh has an assigned texture");
         self.add_rect_with_uv(rect, [WHITE_UV, WHITE_UV].into(), color);
     }
 
@@ -247,11 +205,7 @@ impl Mesh {
 
         if self.vertices.len() <= MAX_SIZE as usize {
             // Common-case optimization:
-            return vec![Mesh16 {
-                indices: self.indices.iter().map(|&i| i as u16).collect(),
-                vertices: self.vertices,
-                texture_id: self.texture_id,
-            }];
+            return vec![Mesh16 { indices: self.indices.iter().map(|&i| i as u16).collect(), vertices: self.vertices, texture_id: self.texture_id }];
         }
 
         let mut output = vec![];
@@ -281,10 +235,7 @@ impl Mesh {
                 }
             }
 
-            assert!(
-                index_cursor > span_start,
-                "One triangle spanned more than {MAX_SIZE} vertices"
-            );
+            assert!(index_cursor > span_start, "One triangle spanned more than {MAX_SIZE} vertices");
 
             let mesh = Mesh16 {
                 indices: self.indices[span_start..index_cursor]
@@ -350,10 +301,6 @@ pub struct Mesh16 {
 impl Mesh16 {
     /// Are all indices within the bounds of the contained vertices?
     pub fn is_valid(&self) -> bool {
-        if let Ok(n) = u16::try_from(self.vertices.len()) {
-            self.indices.iter().all(|&i| i < n)
-        } else {
-            false
-        }
+        if let Ok(n) = u16::try_from(self.vertices.len()) { self.indices.iter().all(|&i| i < n) } else { false }
     }
 }

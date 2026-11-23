@@ -126,10 +126,7 @@ impl From<Cow<'_, str>> for RichText {
 impl RichText {
     #[inline]
     pub fn new(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            ..Default::default()
-        }
+        Self { text: text.into(), ..Default::default() }
     }
 
     #[inline]
@@ -206,10 +203,7 @@ impl RichText {
 
     /// Override the variation coordinates completely.
     #[inline]
-    pub fn variations<T: IntoTag>(
-        mut self,
-        variations: impl IntoIterator<Item = (T, f32)>,
-    ) -> Self {
+    pub fn variations<T: IntoTag>(mut self, variations: impl IntoIterator<Item = (T, f32)>) -> Self {
         self.coords = VariationCoords::new(variations);
         self
     }
@@ -346,10 +340,7 @@ impl RichText {
     ///
     /// Returns a value rounded to [`emath::GUI_ROUNDING`].
     pub fn font_height(&self, fonts: &mut epaint::FontsView<'_>, style: &Style) -> f32 {
-        let mut font_id = self.text_style.as_ref().map_or_else(
-            || FontSelection::Default.resolve(style),
-            |text_style| text_style.resolve(style),
-        );
+        let mut font_id = self.text_style.as_ref().map_or_else(|| FontSelection::Default.resolve(style), |text_style| text_style.resolve(style));
 
         if let Some(size) = self.size {
             font_id.size = size;
@@ -389,34 +380,18 @@ impl RichText {
     ///         Align::Center,
     ///     );
     /// ```
-    pub fn append_to(
-        self,
-        layout_job: &mut LayoutJob,
-        style: &Style,
-        fallback_font: FontSelection,
-        default_valign: Align,
-    ) {
+    pub fn append_to(self, layout_job: &mut LayoutJob, style: &Style, fallback_font: FontSelection, default_valign: Align) {
         let (text, format) = self.into_text_and_format(style, fallback_font, default_valign);
 
         layout_job.append(&text, 0.0, format);
     }
 
-    fn into_layout_job(
-        self,
-        style: &Style,
-        fallback_font: FontSelection,
-        default_valign: Align,
-    ) -> LayoutJob {
+    fn into_layout_job(self, style: &Style, fallback_font: FontSelection, default_valign: Align) -> LayoutJob {
         let (text, text_format) = self.into_text_and_format(style, fallback_font, default_valign);
         LayoutJob::single_section(text, text_format)
     }
 
-    fn into_text_and_format(
-        self,
-        style: &Style,
-        fallback_font: FontSelection,
-        default_valign: Align,
-    ) -> (String, crate::text::TextFormat) {
+    fn into_text_and_format(self, style: &Style, fallback_font: FontSelection, default_valign: Align) -> (String, crate::text::TextFormat) {
         let text_color = self.get_text_color(&style.visuals);
 
         let Self {
@@ -457,28 +432,12 @@ impl RichText {
             font_id
         };
 
-        let background_color = if code {
-            style.visuals.code_bg_color
-        } else {
-            background_color
-        };
+        let background_color = if code { style.visuals.code_bg_color } else { background_color };
 
-        let underline = if underline {
-            crate::Stroke::new(1.0, line_color)
-        } else {
-            crate::Stroke::NONE
-        };
-        let strikethrough = if strikethrough {
-            crate::Stroke::new(1.0, line_color)
-        } else {
-            crate::Stroke::NONE
-        };
+        let underline = if underline { crate::Stroke::new(1.0, line_color) } else { crate::Stroke::NONE };
+        let strikethrough = if strikethrough { crate::Stroke::new(1.0, line_color) } else { crate::Stroke::NONE };
 
-        let valign = if raised {
-            crate::Align::TOP
-        } else {
-            default_valign
-        };
+        let valign = if raised { crate::Align::TOP } else { default_valign };
 
         (
             text,
@@ -609,15 +568,10 @@ impl WidgetText {
     ///
     /// `valign` is how each piece is aligned against the others,
     /// and is usually [`Ui::text_valign`].
-    pub fn concat_with_valign(
-        style: &Style,
-        valign: Align,
-        parts: impl IntoIterator<Item = impl Into<RichText>>,
-    ) -> Self {
+    pub fn concat_with_valign(style: &Style, valign: Align, parts: impl IntoIterator<Item = impl Into<RichText>>) -> Self {
         let mut job = LayoutJob::default();
         for part in parts {
-            part.into()
-                .append_to(&mut job, style, FontSelection::Default, valign);
+            part.into().append_to(&mut job, style, FontSelection::Default, valign);
         }
         job.into()
     }
@@ -774,12 +728,7 @@ impl WidgetText {
         self.map_rich_text(|text| text.background_color(background_color))
     }
 
-    pub fn into_layout_job(
-        self,
-        style: &Style,
-        fallback_font: FontSelection,
-        default_valign: Align,
-    ) -> Arc<LayoutJob> {
+    pub fn into_layout_job(self, style: &Style, fallback_font: FontSelection, default_valign: Align) -> Arc<LayoutJob> {
         match self {
             Self::Text(text) => Arc::new(LayoutJob::simple_format(
                 text,
@@ -790,11 +739,7 @@ impl WidgetText {
                     ..Default::default()
                 },
             )),
-            Self::RichText(text) => Arc::new(Arc::unwrap_or_clone(text).into_layout_job(
-                style,
-                fallback_font,
-                default_valign,
-            )),
+            Self::RichText(text) => Arc::new(Arc::unwrap_or_clone(text).into_layout_job(style, fallback_font, default_valign)),
             Self::LayoutJob(job) => job,
             Self::Galley(galley) => Arc::clone(&galley.job),
         }
@@ -803,13 +748,7 @@ impl WidgetText {
     /// Layout with wrap mode based on the containing [`Ui`].
     ///
     /// `wrap_mode`: override for [`Ui::wrap_mode`]
-    pub fn into_galley(
-        self,
-        ui: &Ui,
-        wrap_mode: Option<TextWrapMode>,
-        available_width: f32,
-        fallback_font: impl Into<FontSelection>,
-    ) -> Arc<Galley> {
+    pub fn into_galley(self, ui: &Ui, wrap_mode: Option<TextWrapMode>, available_width: f32, fallback_font: impl Into<FontSelection>) -> Arc<Galley> {
         let valign = ui.text_valign();
         let style = ui.style();
 
@@ -829,35 +768,21 @@ impl WidgetText {
     ) -> Arc<Galley> {
         match self {
             Self::Text(text) => {
-                let color = style
-                    .visuals
-                    .override_text_color
-                    .unwrap_or(crate::Color32::PLACEHOLDER);
+                let color = style.visuals.override_text_color.unwrap_or(crate::Color32::PLACEHOLDER);
 
                 // We want the style overrides to take precedence over the fallback font
                 let font_id = FontSelection::default().resolve_with_fallback(style, fallback_font);
-                let line_height = ctx
-                    .fonts_mut(|f| f.row_height(&font_id) + style.spacing.extra_text_line_spacing);
+                let line_height = ctx.fonts_mut(|f| f.row_height(&font_id) + style.spacing.extra_text_line_spacing);
 
                 let mut layout_job = LayoutJob::simple_format(
                     text,
-                    TextFormat {
-                        font_id,
-                        color,
-                        valign: default_valign,
-                        line_height: Some(line_height),
-                        ..Default::default()
-                    },
+                    TextFormat { font_id, color, valign: default_valign, line_height: Some(line_height), ..Default::default() },
                 );
                 layout_job.wrap = text_wrapping;
                 ctx.fonts_mut(|f| f.layout_job(layout_job))
             }
             Self::RichText(text) => {
-                let mut layout_job = Arc::unwrap_or_clone(text).into_layout_job(
-                    style,
-                    fallback_font,
-                    default_valign,
-                );
+                let mut layout_job = Arc::unwrap_or_clone(text).into_layout_job(style, fallback_font, default_valign);
                 layout_job.wrap = text_wrapping;
                 ctx.fonts_mut(|f| f.layout_job(layout_job))
             }
@@ -954,20 +879,11 @@ mod tests {
 
     #[test]
     fn rich_text_color_override_is_explicit() {
-        let visuals = Visuals {
-            override_text_color: Some(Color32::GREEN),
-            ..Visuals::default()
-        };
+        let visuals = Visuals { override_text_color: Some(Color32::GREEN), ..Visuals::default() };
         for (text, resolved_color) in [
             (RichText::new("plain"), visuals.override_text_color),
-            (
-                RichText::new("strong").strong(),
-                Some(visuals.strong_text_color()),
-            ),
-            (
-                RichText::new("weak").weak(),
-                Some(visuals.weak_text_color()),
-            ),
+            (RichText::new("strong").strong(), Some(visuals.strong_text_color())),
+            (RichText::new("weak").weak(), Some(visuals.weak_text_color())),
         ] {
             assert_eq!(text.color_override(), None);
             assert_eq!(text.get_text_color(&visuals), resolved_color);

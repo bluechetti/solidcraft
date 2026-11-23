@@ -18,41 +18,32 @@ impl DeduplicatedHistory {
             entry.entries.push(full);
             return;
         }
-        self.history.push_back(HistoryEntry {
-            summary,
-            entries: vec![full],
-        });
+        self.history.push_back(HistoryEntry { summary, entries: vec![full] });
         if self.history.len() > 100 {
             self.history.pop_front();
         }
     }
 
     fn ui(&self, ui: &mut egui::Ui) {
-        egui::ScrollArea::vertical()
-            .auto_shrink(false)
-            .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = 4.0;
-                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
 
-                for HistoryEntry { summary, entries } in self.history.iter().rev() {
-                    ui.horizontal(|ui| {
-                        let response = ui.code(summary);
-                        if entries.len() < 2 {
-                            response
-                        } else {
-                            response | ui.weak(format!(" x{}", entries.len()))
-                        }
-                    })
-                    .inner
-                    .on_hover_ui(|ui| {
-                        ui.spacing_mut().item_spacing.y = 4.0;
-                        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                        for entry in entries.iter().rev() {
-                            ui.code(entry);
-                        }
-                    });
-                }
-            });
+            for HistoryEntry { summary, entries } in self.history.iter().rev() {
+                ui.horizontal(|ui| {
+                    let response = ui.code(summary);
+                    if entries.len() < 2 { response } else { response | ui.weak(format!(" x{}", entries.len())) }
+                })
+                .inner
+                .on_hover_ui(|ui| {
+                    ui.spacing_mut().item_spacing.y = 4.0;
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    for entry in entries.iter().rev() {
+                        ui.code(entry);
+                    }
+                });
+            }
+        });
     }
 }
 
@@ -89,12 +80,7 @@ impl crate::View for InputEventHistory {
         ui.input(|i| {
             for event in &i.raw.events {
                 if !self.include_pointer_movements
-                    && matches!(
-                        event,
-                        egui::Event::PointerMoved { .. }
-                            | egui::Event::MouseMoved { .. }
-                            | egui::Event::Touch { .. }
-                    )
+                    && matches!(event, egui::Event::PointerMoved { .. } | egui::Event::MouseMoved { .. } | egui::Event::Touch { .. })
                 {
                     continue;
                 }
@@ -111,10 +97,7 @@ impl crate::View for InputEventHistory {
 
         ui.label("Recent history of raw input events to egui.");
         ui.label("Hover any entry for details.");
-        ui.checkbox(
-            &mut self.include_pointer_movements,
-            "Include pointer/mouse movements",
-        );
+        ui.checkbox(&mut self.include_pointer_movements, "Include pointer/mouse movements");
 
         ui.add_space(8.0);
 

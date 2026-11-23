@@ -84,9 +84,7 @@ pub struct PaintCallback {
 
 impl core::fmt::Debug for PaintCallback {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("CustomShape")
-            .field("rect", &self.rect)
-            .finish_non_exhaustive()
+        f.debug_struct("CustomShape").field("rect", &self.rect).finish_non_exhaustive()
     }
 }
 

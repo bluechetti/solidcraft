@@ -33,10 +33,7 @@ macro_rules! egui_github_link_file {
         $crate::egui_github_link_file!("(source code)")
     };
     ($label: expr) => {
-        egui::github_link_file!(
-            "https://github.com/emilk/egui/blob/main/",
-            egui::RichText::new($label).small()
-        )
+        egui::github_link_file!("https://github.com/emilk/egui/blob/main/", egui::RichText::new($label).small())
     };
 }
 
@@ -47,10 +44,7 @@ macro_rules! egui_github_link_file_line {
         $crate::egui_github_link_file_line!("(source code)")
     };
     ($label: expr) => {
-        egui::github_link_file_line!(
-            "https://github.com/emilk/egui/blob/main/",
-            egui::RichText::new($label).small()
-        )
+        egui::github_link_file_line!("https://github.com/emilk/egui/blob/main/", egui::RichText::new($label).small())
     };
 }
 
@@ -85,10 +79,7 @@ fn test_egui_e2e() {
 fn test_egui_zero_window_size() {
     let mut demo_windows = crate::DemoWindows::default();
     let ctx = egui::Context::default();
-    let raw_input = egui::RawInput {
-        screen_rect: Some(egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::ZERO)),
-        ..Default::default()
-    };
+    let raw_input = egui::RawInput { screen_rect: Some(egui::Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::ZERO)), ..Default::default() };
 
     const NUM_FRAMES: usize = 5;
     for _ in 0..NUM_FRAMES {

@@ -19,7 +19,8 @@ use std::io::Cursor;
 use crate::{IoError, Result};
 
 /// The extensions read here, lower case.
-pub const EXTENSIONS: [&str; 4] = ["ptx", "e57", "las", "laz"];
+/// (`.e57` is read by [`crate::e57`]; [`read`] still takes `"e57"` for this module's own tests and callers.)
+pub const EXTENSIONS: [&str; 3] = ["ptx", "las", "laz"];
 
 /// Points and their colours as a file states them, in its own units.
 #[derive(Debug, Default, PartialEq)]

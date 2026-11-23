@@ -42,18 +42,14 @@ impl crate::View for Tooltips {
                  The purpose is to test that the tooltips close when you scroll.",
             )
             .on_hover_text("Try hovering a label below, then scroll!");
-            egui::ScrollArea::vertical()
-                .auto_shrink(false)
-                .show(ui, |ui| {
-                    for i in 0..1000 {
-                        ui.label(format!("This is line {i}")).on_hover_ui(|ui| {
-                            ui.style_mut().interaction.selectable_labels = true;
-                            ui.label(
-                            "This tooltip is interactive, because the text in it is selectable.",
-                        );
-                        });
-                    }
-                });
+            egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+                for i in 0..1000 {
+                    ui.label(format!("This is line {i}")).on_hover_ui(|ui| {
+                        ui.style_mut().interaction.selectable_labels = true;
+                        ui.label("This tooltip is interactive, because the text in it is selectable.");
+                    });
+                }
+            });
         });
 
         egui::CentralPanel::default().show(ui, |ui| {
@@ -64,28 +60,21 @@ impl crate::View for Tooltips {
 
 impl Tooltips {
     fn misc_tests(&mut self, ui: &mut egui::Ui) {
-        ui.label("All labels in this demo have tooltips.")
-            .on_hover_text("Yes, even this one.");
+        ui.label("All labels in this demo have tooltips.").on_hover_text("Yes, even this one.");
 
-        ui.label("Some widgets have multiple tooltips!")
-            .on_hover_text("The first tooltip.")
-            .on_hover_text("The second tooltip.");
+        ui.label("Some widgets have multiple tooltips!").on_hover_text("The first tooltip.").on_hover_text("The second tooltip.");
 
-        ui.label("Tooltips can contain interactive widgets.")
-            .on_hover_ui(|ui| {
-                ui.label("This tooltip contains a link:");
-                ui.hyperlink_to("www.egui.rs", "https://www.egui.rs/")
-                    .on_hover_text("The tooltip has a tooltip in it!");
-            });
+        ui.label("Tooltips can contain interactive widgets.").on_hover_ui(|ui| {
+            ui.label("This tooltip contains a link:");
+            ui.hyperlink_to("www.egui.rs", "https://www.egui.rs/").on_hover_text("The tooltip has a tooltip in it!");
+        });
 
-        ui.label("You can put selectable text in tooltips too.")
-            .on_hover_ui(|ui| {
-                ui.style_mut().interaction.selectable_labels = true;
-                ui.label("You can select this text.");
-            });
+        ui.label("You can put selectable text in tooltips too.").on_hover_ui(|ui| {
+            ui.style_mut().interaction.selectable_labels = true;
+            ui.label("You can select this text.");
+        });
 
-        ui.label("This tooltip shows at the mouse cursor.")
-            .on_hover_text_at_pointer("Move me around!!");
+        ui.label("This tooltip shows at the mouse cursor.").on_hover_text_at_pointer("Move me around!!");
 
         ui.separator(); // ---------------------------------------------------------
 
@@ -107,12 +96,9 @@ impl Tooltips {
             .on_hover_text("Check the tooltip of the button below, and see how it changes depending on whether or not it is enabled.");
 
         ui.horizontal(|ui| {
-            ui.checkbox(&mut self.enabled, "Enabled")
-                .on_hover_text("Controls whether or not the following button is enabled.");
+            ui.checkbox(&mut self.enabled, "Enabled").on_hover_text("Controls whether or not the following button is enabled.");
 
-            ui.add_enabled(self.enabled, egui::Button::new("Sometimes clickable"))
-                .on_hover_ui(tooltip_ui)
-                .on_disabled_hover_ui(disabled_tooltip_ui);
+            ui.add_enabled(self.enabled, egui::Button::new("Sometimes clickable")).on_hover_ui(tooltip_ui).on_disabled_hover_ui(disabled_tooltip_ui);
         });
     }
 }

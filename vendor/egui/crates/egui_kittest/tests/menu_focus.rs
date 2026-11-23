@@ -104,31 +104,16 @@ fn menu_controls_keep_their_arrow_keys() {
         (String::from("first\nsecond"), 5.0),
     );
     open_navigation_menu(&mut harness);
-    harness
-        .get_by_role(egui::accesskit::Role::MultilineTextInput)
-        .focus();
+    harness.get_by_role(egui::accesskit::Role::MultilineTextInput).focus();
     harness.run();
-    for key in [
-        Key::ArrowLeft,
-        Key::ArrowRight,
-        Key::ArrowUp,
-        Key::ArrowDown,
-    ] {
+    for key in [Key::ArrowLeft, Key::ArrowRight, Key::ArrowUp, Key::ArrowDown] {
         press(&mut harness, key);
-        assert!(
-            harness
-                .get_by_role(egui::accesskit::Role::MultilineTextInput)
-                .is_focused()
-        );
+        assert!(harness.get_by_role(egui::accesskit::Role::MultilineTextInput).is_focused());
     }
     harness.get_by_role(egui::accesskit::Role::Slider).focus();
     harness.run();
     press(&mut harness, Key::ArrowRight);
-    assert!(
-        harness
-            .get_by_role(egui::accesskit::Role::Slider)
-            .is_focused()
-    );
+    assert!(harness.get_by_role(egui::accesskit::Role::Slider).is_focused());
     assert!(harness.state().1 > 5.0);
 }
 
@@ -147,10 +132,7 @@ fn arrow_navigation_outside_menus() {
 
     // A generic popup keeps spatial navigation.
     let mut harness = Harness::new_ui(|ui| {
-        let _ = ui.put(
-            egui::Rect::from_min_size(egui::pos2(400.0, 50.0), egui::vec2(90.0, 20.0)),
-            egui::Button::new("Background"),
-        );
+        let _ = ui.put(egui::Rect::from_min_size(egui::pos2(400.0, 50.0), egui::vec2(90.0, 20.0)), egui::Button::new("Background"));
         let response = ui.button("Popup");
         egui::Popup::from_response(&response).show(|ui| {
             let _ = ui.button("Popup item");
@@ -207,28 +189,20 @@ fn arrow_navigation_outside_menus() {
 #[test]
 fn submenu_in_other_containers() {
     // A submenu in a generic popup returns to its button.
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(800.0, 400.0))
-        .build_ui(|ui| {
-            let _ = ui.put(
-                egui::Rect::from_min_size(egui::pos2(700.0, 50.0), egui::vec2(90.0, 20.0)),
-                egui::Button::new("Background"),
-            );
-            let response = ui.button("Host popup");
-            egui::Popup::from_response(&response).show(|ui| {
-                let response = ui.button("Host first");
-                // A sibling popup must not change which parent Left returns to.
-                egui::Popup::from_response(&response)
-                    .id(response.id.with("earlier popup"))
-                    .align(egui::RectAlign::RIGHT_START)
-                    .show(|ui| {
-                        let _ = ui.button("Earlier popup child");
-                    });
-                ui.menu_button("Hosted submenu", |ui| {
-                    let _ = ui.button("Hosted child");
-                });
+    let mut harness = Harness::builder().with_size(egui::vec2(800.0, 400.0)).build_ui(|ui| {
+        let _ = ui.put(egui::Rect::from_min_size(egui::pos2(700.0, 50.0), egui::vec2(90.0, 20.0)), egui::Button::new("Background"));
+        let response = ui.button("Host popup");
+        egui::Popup::from_response(&response).show(|ui| {
+            let response = ui.button("Host first");
+            // A sibling popup must not change which parent Left returns to.
+            egui::Popup::from_response(&response).id(response.id.with("earlier popup")).align(egui::RectAlign::RIGHT_START).show(|ui| {
+                let _ = ui.button("Earlier popup child");
+            });
+            ui.menu_button("Hosted submenu", |ui| {
+                let _ = ui.button("Hosted child");
             });
         });
+    });
     focus(&mut harness, "Hosted submenu");
     press(&mut harness, Key::Enter);
     assert!(is_focused(&harness, "Hosted child"));
@@ -249,10 +223,7 @@ fn submenu_in_other_containers() {
                 let _ = ui.button("Standalone item");
             });
         });
-        let _ = ui.put(
-            egui::Rect::from_min_size(egui::pos2(500.0, 10.0), egui::vec2(90.0, 20.0)),
-            egui::Button::new("Background"),
-        );
+        let _ = ui.put(egui::Rect::from_min_size(egui::pos2(500.0, 10.0), egui::vec2(90.0, 20.0)), egui::Button::new("Background"));
     });
     focus(&mut harness, "Standalone submenu");
     press(&mut harness, Key::ArrowRight);
@@ -265,53 +236,42 @@ fn submenu_in_other_containers() {
 
 /// A menu over a grid of background buttons. The state collects entries that gained focus.
 fn navigation_menu(context_menu: bool) -> Harness<'static, Vec<String>> {
-    Harness::builder()
-        .with_size(egui::vec2(500.0, 400.0))
-        .build_ui_state(
-            move |ui, gained: &mut Vec<String>| {
-                for row in 0..12 {
-                    for col in 0..5 {
-                        let rect = egui::Rect::from_min_size(
-                            egui::pos2(col as f32 * 100.0, row as f32 * 30.0),
-                            egui::vec2(90.0, 20.0),
-                        );
-                        let _ = ui.put(rect, egui::Button::new(format!("Behind {row} {col}")));
-                    }
+    Harness::builder().with_size(egui::vec2(500.0, 400.0)).build_ui_state(
+        move |ui, gained: &mut Vec<String>| {
+            for row in 0..12 {
+                for col in 0..5 {
+                    let rect = egui::Rect::from_min_size(egui::pos2(col as f32 * 100.0, row as f32 * 30.0), egui::vec2(90.0, 20.0));
+                    let _ = ui.put(rect, egui::Button::new(format!("Behind {row} {col}")));
                 }
-                ui.scope_builder(
-                    egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(
-                        egui::pos2(150.0, 90.0),
-                        egui::vec2(100.0, 20.0),
-                    )),
-                    |ui| {
-                        let content = |ui: &mut Ui| {
-                            let mut item = |ui: &mut Ui, label: &str| {
-                                if ui.button(label).gained_focus() {
-                                    gained.push(label.to_owned());
-                                }
-                            };
-                            item(ui, "First item");
-                            let _ = ui.add_enabled(false, egui::Button::new("Disabled item"));
-                            item(ui, "Second item");
-                            ui.menu_button("Submenu", |ui| {
-                                let _ = ui.button("First child");
-                                ui.menu_button("Nested submenu", |ui| {
-                                    let _ = ui.button("Nested item");
-                                });
-                                let _ = ui.button("Last child");
-                            });
-                            item(ui, "Last item");
-                        };
-                        if context_menu {
-                            ui.button("Menu").context_menu(content);
-                        } else {
-                            ui.menu_button("Menu", content);
+            }
+            ui.scope_builder(egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(egui::pos2(150.0, 90.0), egui::vec2(100.0, 20.0))), |ui| {
+                let content = |ui: &mut Ui| {
+                    let mut item = |ui: &mut Ui, label: &str| {
+                        if ui.button(label).gained_focus() {
+                            gained.push(label.to_owned());
                         }
-                    },
-                );
-            },
-            Vec::new(),
-        )
+                    };
+                    item(ui, "First item");
+                    let _ = ui.add_enabled(false, egui::Button::new("Disabled item"));
+                    item(ui, "Second item");
+                    ui.menu_button("Submenu", |ui| {
+                        let _ = ui.button("First child");
+                        ui.menu_button("Nested submenu", |ui| {
+                            let _ = ui.button("Nested item");
+                        });
+                        let _ = ui.button("Last child");
+                    });
+                    item(ui, "Last item");
+                };
+                if context_menu {
+                    ui.button("Menu").context_menu(content);
+                } else {
+                    ui.menu_button("Menu", content);
+                }
+            });
+        },
+        Vec::new(),
+    )
 }
 
 fn open_navigation_menu<State>(harness: &mut Harness<'_, State>) {
@@ -338,13 +298,6 @@ fn is_shown<State>(harness: &Harness<'_, State>, label: &str) -> bool {
 }
 
 fn focused_layer(harness: &Harness<'_>) -> egui::LayerId {
-    let id = harness
-        .ctx
-        .memory(|mem| mem.focused())
-        .expect("a focused widget");
-    harness
-        .ctx
-        .read_response(id)
-        .expect("the focused widget is still shown")
-        .layer_id
+    let id = harness.ctx.memory(|mem| mem.focused()).expect("a focused widget");
+    harness.ctx.read_response(id).expect("the focused widget is still shown").layer_id
 }

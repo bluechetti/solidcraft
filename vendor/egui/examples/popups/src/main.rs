@@ -21,35 +21,31 @@ impl eframe::App for MyApp {
     fn ui(&mut self, ui: &mut eframe::egui::Ui, _frame: &mut eframe::Frame) {
         CentralPanel::default().show(ui, |ui| {
             ui.label("PopupCloseBehavior::CloseOnClick popup");
-            ComboBox::from_label("ComboBox")
-                .selected_text(format!("{}", self.number))
-                .show_ui(ui, |ui| {
-                    for num in 0..10 {
-                        ui.selectable_value(&mut self.number, num, format!("{num}"));
-                    }
-                });
+            ComboBox::from_label("ComboBox").selected_text(format!("{}", self.number)).show_ui(ui, |ui| {
+                for num in 0..10 {
+                    ui.selectable_value(&mut self.number, num, format!("{num}"));
+                }
+            });
 
             ui.label("PopupCloseBehavior::CloseOnClickOutside popup");
-            ComboBox::from_label("Ignore Clicks")
-                .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
-                .selected_text("Select Numbers")
-                .show_ui(ui, |ui| {
+            ComboBox::from_label("Ignore Clicks").close_behavior(PopupCloseBehavior::CloseOnClickOutside).selected_text("Select Numbers").show_ui(
+                ui,
+                |ui| {
                     ui.label("This popup will be open even if you click the checkboxes");
                     for (i, num) in self.numbers.iter_mut().enumerate() {
                         ui.checkbox(num, format!("Checkbox {}", i + 1));
                     }
-                });
+                },
+            );
 
             ui.label("PopupCloseBehavior::IgnoreClicks popup");
             let response = ui.button("Open");
 
-            Popup::menu(&response)
-                .close_behavior(PopupCloseBehavior::IgnoreClicks)
-                .show(|ui| {
-                    ui.set_min_width(310.0);
-                    ui.label("This popup will be open until you press the button again");
-                    ui.checkbox(&mut self.checkbox, "Checkbox");
-                });
+            Popup::menu(&response).close_behavior(PopupCloseBehavior::IgnoreClicks).show(|ui| {
+                ui.set_min_width(310.0);
+                ui.label("This popup will be open until you press the button again");
+                ui.checkbox(&mut self.checkbox, "Checkbox");
+            });
         });
     }
 }

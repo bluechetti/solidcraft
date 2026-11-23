@@ -89,24 +89,15 @@ impl Rgba {
 
     #[inline]
     pub fn from_luminance_alpha(l: f32, a: f32) -> Self {
-        debug_assert!(
-            0.0 <= l && l <= 1.0,
-            "l should be in the range [0, 1], but was {l}"
-        );
-        debug_assert!(
-            0.0 <= a && a <= 1.0,
-            "a should be in the range [0, 1], but was {a}"
-        );
+        debug_assert!(0.0 <= l && l <= 1.0, "l should be in the range [0, 1], but was {l}");
+        debug_assert!(0.0 <= a && a <= 1.0, "a should be in the range [0, 1], but was {a}");
         Self([l * a, l * a, l * a, a])
     }
 
     /// Transparent black
     #[inline]
     pub fn from_black_alpha(a: f32) -> Self {
-        debug_assert!(
-            0.0 <= a && a <= 1.0,
-            "a should be in the range [0, 1], but was {a}"
-        );
+        debug_assert!(0.0 <= a && a <= 1.0, "a should be in the range [0, 1], but was {a}");
         Self([0.0, 0.0, 0.0, a])
     }
 
@@ -133,12 +124,7 @@ impl Rgba {
     /// Multiply with e.g. 0.5 to make us half transparent
     #[inline]
     pub fn multiply(self, alpha: f32) -> Self {
-        Self([
-            alpha * self[0],
-            alpha * self[1],
-            alpha * self[2],
-            alpha * self[3],
-        ])
+        Self([alpha * self[0], alpha * self[1], alpha * self[2], alpha * self[3]])
     }
 
     #[inline]
@@ -175,11 +161,7 @@ impl Rgba {
             Self::from_rgb(self.r(), self.g(), self.b())
         } else {
             // un-multiply alpha:
-            Self::from_rgb(
-                self.r() / self.a(),
-                self.g() / self.a(),
-                self.b() / self.a(),
-            )
+            Self::from_rgb(self.r() / self.a(), self.g() / self.a(), self.b() / self.a())
         }
     }
 
@@ -224,12 +206,7 @@ impl core::ops::Add for Rgba {
 
     #[inline]
     fn add(self, rhs: Self) -> Self {
-        Self([
-            self[0] + rhs[0],
-            self[1] + rhs[1],
-            self[2] + rhs[2],
-            self[3] + rhs[3],
-        ])
+        Self([self[0] + rhs[0], self[1] + rhs[1], self[2] + rhs[2], self[3] + rhs[3]])
     }
 }
 
@@ -238,12 +215,7 @@ impl core::ops::Mul for Rgba {
 
     #[inline]
     fn mul(self, other: Self) -> Self {
-        Self([
-            self[0] * other[0],
-            self[1] * other[1],
-            self[2] * other[2],
-            self[3] * other[3],
-        ])
+        Self([self[0] * other[0], self[1] * other[1], self[2] * other[2], self[3] * other[3]])
     }
 }
 
@@ -252,12 +224,7 @@ impl core::ops::Mul<f32> for Rgba {
 
     #[inline]
     fn mul(self, factor: f32) -> Self {
-        Self([
-            self[0] * factor,
-            self[1] * factor,
-            self[2] * factor,
-            self[3] * factor,
-        ])
+        Self([self[0] * factor, self[1] * factor, self[2] * factor, self[3] * factor])
     }
 }
 
@@ -266,12 +233,7 @@ impl core::ops::Mul<Rgba> for f32 {
 
     #[inline]
     fn mul(self, rgba: Rgba) -> Rgba {
-        Rgba([
-            self * rgba[0],
-            self * rgba[1],
-            self * rgba[2],
-            self * rgba[3],
-        ])
+        Rgba([self * rgba[0], self * rgba[1], self * rgba[2], self * rgba[3]])
     }
 }
 
@@ -305,18 +267,10 @@ mod test {
     fn test_rgba_blend() {
         let opaque = Rgba::from_rgb(0.4, 0.5, 0.6);
         let transparent = Rgba::from_rgb(1.0, 0.5, 0.0).multiply(0.3);
-        assert_eq!(
-            transparent.blend(opaque),
-            opaque,
-            "Opaque on top of transparent"
-        );
+        assert_eq!(transparent.blend(opaque), opaque, "Opaque on top of transparent");
         assert_eq!(
             opaque.blend(transparent),
-            Rgba::from_rgb(
-                0.7 * 0.4 + 0.3 * 1.0,
-                0.7 * 0.5 + 0.3 * 0.5,
-                0.7 * 0.6 + 0.3 * 0.0
-            ),
+            Rgba::from_rgb(0.7 * 0.4 + 0.3 * 1.0, 0.7 * 0.5 + 0.3 * 0.5, 0.7 * 0.6 + 0.3 * 0.0),
             "Transparent on top of opaque"
         );
     }

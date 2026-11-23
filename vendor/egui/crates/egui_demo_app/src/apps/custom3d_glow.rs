@@ -15,10 +15,7 @@ pub struct Custom3d {
 impl Custom3d {
     pub fn new<'a>(cc: &'a eframe::CreationContext<'a>) -> Option<Self> {
         let gl = cc.gl.as_ref()?;
-        Some(Self {
-            rotating_triangle: Arc::new(Mutex::new(RotatingTriangle::new(gl)?)),
-            angle: 0.0,
-        })
+        Some(Self { rotating_triangle: Arc::new(Mutex::new(RotatingTriangle::new(gl)?)), angle: 0.0 })
     }
 }
 
@@ -33,9 +30,7 @@ impl crate::DemoApp for Custom3d {
                     ui.hyperlink_to("glow", "https://github.com/grovesNL/glow");
                     ui.label(" (OpenGL).");
                 });
-                ui.label(
-                    "It's not a very impressive demo, but it shows you can embed 3D inside of egui.",
-                );
+                ui.label("It's not a very impressive demo, but it shows you can embed 3D inside of egui.");
 
                 egui::Frame::canvas(ui.style()).show(ui, |ui| {
                     self.custom_painting(ui);
@@ -55,8 +50,7 @@ impl crate::DemoApp for Custom3d {
 
 impl Custom3d {
     fn custom_painting(&mut self, ui: &mut egui::Ui) {
-        let (rect, response) =
-            ui.allocate_exact_size(egui::Vec2::splat(300.0), egui::Sense::drag());
+        let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(300.0), egui::Sense::drag());
 
         self.angle += response.drag_motion().x * 0.01;
 
@@ -68,10 +62,7 @@ impl Custom3d {
             rotating_triangle.lock().paint(painter.gl(), angle);
         });
 
-        let callback = egui::PaintCallback {
-            rect,
-            callback: Arc::new(cb),
-        };
+        let callback = egui::PaintCallback { rect, callback: Arc::new(cb) };
         ui.painter().add(callback);
     }
 }
@@ -126,25 +117,13 @@ impl RotatingTriangle {
                 "#,
             );
 
-            let shader_sources = [
-                (glow::VERTEX_SHADER, vertex_shader_source),
-                (glow::FRAGMENT_SHADER, fragment_shader_source),
-            ];
+            let shader_sources = [(glow::VERTEX_SHADER, vertex_shader_source), (glow::FRAGMENT_SHADER, fragment_shader_source)];
 
             let shaders: Vec<_> = shader_sources
                 .iter()
                 .map(|(shader_type, shader_source)| {
-                    let shader = gl
-                        .create_shader(*shader_type)
-                        .expect("Cannot create shader");
-                    gl.shader_source(
-                        shader,
-                        &format!(
-                            "{}\n{}",
-                            shader_version.version_declaration(),
-                            shader_source
-                        ),
-                    );
+                    let shader = gl.create_shader(*shader_type).expect("Cannot create shader");
+                    gl.shader_source(shader, &format!("{}\n{}", shader_version.version_declaration(), shader_source));
                     gl.compile_shader(shader);
                     assert!(
                         gl.get_shader_compile_status(shader),
@@ -158,25 +137,16 @@ impl RotatingTriangle {
                 .collect();
 
             gl.link_program(program);
-            assert!(
-                gl.get_program_link_status(program),
-                "{}",
-                gl.get_program_info_log(program)
-            );
+            assert!(gl.get_program_link_status(program), "{}", gl.get_program_info_log(program));
 
             for shader in shaders {
                 gl.detach_shader(program, shader);
                 gl.delete_shader(shader);
             }
 
-            let vertex_array = gl
-                .create_vertex_array()
-                .expect("Cannot create vertex array");
+            let vertex_array = gl.create_vertex_array().expect("Cannot create vertex array");
 
-            Some(Self {
-                program,
-                vertex_array,
-            })
+            Some(Self { program, vertex_array })
         }
     }
 
@@ -192,10 +162,7 @@ impl RotatingTriangle {
         use glow::HasContext as _;
         unsafe {
             gl.use_program(Some(self.program));
-            gl.uniform_1_f32(
-                gl.get_uniform_location(self.program, "u_angle").as_ref(),
-                angle,
-            );
+            gl.uniform_1_f32(gl.get_uniform_location(self.program, "u_angle").as_ref(), angle);
             gl.bind_vertex_array(Some(self.vertex_array));
             gl.draw_arrays(glow::TRIANGLES, 0, 3);
         }

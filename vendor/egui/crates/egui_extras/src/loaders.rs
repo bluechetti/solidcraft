@@ -67,25 +67,19 @@
 pub fn install_image_loaders(ctx: &egui::Context) {
     #[cfg(all(not(target_arch = "wasm32"), feature = "file"))]
     if !ctx.is_loader_installed(self::file_loader::FileLoader::ID) {
-        ctx.add_bytes_loader(alloc::sync::Arc::new(
-            self::file_loader::FileLoader::default(),
-        ));
+        ctx.add_bytes_loader(alloc::sync::Arc::new(self::file_loader::FileLoader::default()));
         log::trace!("installed FileLoader");
     }
 
     #[cfg(feature = "http")]
     if !ctx.is_loader_installed(self::http_loader::EhttpLoader::ID) {
-        ctx.add_bytes_loader(alloc::sync::Arc::new(
-            self::http_loader::EhttpLoader::default(),
-        ));
+        ctx.add_bytes_loader(alloc::sync::Arc::new(self::http_loader::EhttpLoader::default()));
         log::trace!("installed EhttpLoader");
     }
 
     #[cfg(feature = "image")]
     if !ctx.is_loader_installed(self::image_loader::ImageCrateLoader::ID) {
-        ctx.add_image_loader(alloc::sync::Arc::new(
-            self::image_loader::ImageCrateLoader::default(),
-        ));
+        ctx.add_image_loader(alloc::sync::Arc::new(self::image_loader::ImageCrateLoader::default()));
         log::trace!("installed ImageCrateLoader");
     }
 
@@ -97,9 +91,7 @@ pub fn install_image_loaders(ctx: &egui::Context) {
 
     #[cfg(feature = "webp")]
     if !ctx.is_loader_installed(self::webp_loader::WebPLoader::ID) {
-        ctx.add_image_loader(alloc::sync::Arc::new(
-            self::webp_loader::WebPLoader::default(),
-        ));
+        ctx.add_image_loader(alloc::sync::Arc::new(self::webp_loader::WebPLoader::default()));
         log::trace!("installed WebPLoader");
     }
 
@@ -109,12 +101,7 @@ pub fn install_image_loaders(ctx: &egui::Context) {
         log::trace!("installed SvgLoader");
     }
 
-    #[cfg(all(
-        any(target_arch = "wasm32", not(feature = "file")),
-        not(feature = "http"),
-        not(feature = "image"),
-        not(feature = "svg")
-    ))]
+    #[cfg(all(any(target_arch = "wasm32", not(feature = "file")), not(feature = "http"), not(feature = "image"), not(feature = "svg")))]
     log::warn!("`install_image_loaders` was called, but no loaders are enabled");
 
     let _ = ctx;

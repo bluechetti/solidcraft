@@ -92,11 +92,7 @@ pub struct Parser<'a> {
 
 impl<'a> Parser<'a> {
     pub fn new(s: &'a str) -> Self {
-        Self {
-            s,
-            start_of_line: true,
-            style: Style::default(),
-        }
+        Self { s, start_of_line: true, style: Style::default() }
     }
 
     /// `1. `, `42. ` etc.
@@ -317,10 +313,8 @@ impl<'a> Iterator for Parser<'a> {
             }
 
             // Swallow everything up to the next special character:
-            let end = self
-                .s
-                .find(&['*', '`', '~', '_', '/', '$', '^', '\\', '<', '[', '\n'][..])
-                .map_or_else(|| self.s.len(), |special| special.max(1));
+            let end =
+                self.s.find(&['*', '`', '~', '_', '/', '$', '^', '\\', '<', '[', '\n'][..]).map_or_else(|| self.s.len(), |special| special.max(1));
 
             let item = Item::Text(self.style, &self.s[..end]);
             self.s = &self.s[end..];
@@ -336,21 +330,8 @@ fn test_easy_mark_parser() {
     assert_eq!(
         items,
         vec![
-            Item::Text(
-                Style {
-                    strikethrough: true,
-                    ..Default::default()
-                },
-                "strikethrough "
-            ),
-            Item::Text(
-                Style {
-                    code: true,
-                    strikethrough: true,
-                    ..Default::default()
-                },
-                "code"
-            ),
+            Item::Text(Style { strikethrough: true, ..Default::default() }, "strikethrough "),
+            Item::Text(Style { code: true, strikethrough: true, ..Default::default() }, "code"),
         ]
     );
 }

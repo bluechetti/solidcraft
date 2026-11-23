@@ -3,15 +3,13 @@ use alloc::sync::Arc;
 use emath::TSTransform;
 
 use crate::{
-    Context, CursorIcon, Event, Galley, Id, LayerId, Plugin, Pos2, Rect, Response, Ui,
-    ViewportIdMap, layers::ShapeIdx, text::CCursor, text_selection::CCursorRange,
+    Context, CursorIcon, Event, Galley, Id, LayerId, Plugin, Pos2, Rect, Response, Ui, ViewportIdMap, layers::ShapeIdx, text::CCursor,
+    text_selection::CCursorRange,
 };
 
 use super::{
     TextCursorState,
-    text_cursor_state::{
-        GranularDragSelect, SelectGranularity, cursor_rect, extend_granular_select, select_unit_at,
-    },
+    text_cursor_state::{GranularDragSelect, SelectGranularity, cursor_rect, extend_granular_select, select_unit_at},
     visuals::{RowVertexIndices, paint_text_selection},
 };
 
@@ -29,19 +27,10 @@ struct WidgetTextCursor {
 }
 
 impl WidgetTextCursor {
-    fn new(
-        widget_id: Id,
-        cursor: impl Into<CCursor>,
-        global_from_galley: TSTransform,
-        galley: &Galley,
-    ) -> Self {
+    fn new(widget_id: Id, cursor: impl Into<CCursor>, global_from_galley: TSTransform, galley: &Galley) -> Self {
         let ccursor = cursor.into();
         let pos = global_from_galley * pos_in_galley(galley, ccursor);
-        Self {
-            widget_id,
-            ccursor,
-            pos,
-        }
+        Self { widget_id, ccursor, pos }
     }
 }
 
@@ -51,11 +40,7 @@ fn pos_in_galley(galley: &Galley, ccursor: CCursor) -> Pos2 {
 
 impl core::fmt::Debug for WidgetTextCursor {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let Self {
-            widget_id,
-            ccursor,
-            pos: _,
-        } = self;
+        let Self { widget_id, ccursor, pos: _ } = self;
         f.debug_struct("WidgetTextCursor")
             .field("widget_id", &widget_id.short_debug_format())
             .field("ccursor", &ccursor.index)
@@ -173,10 +158,7 @@ impl Plugin for LabelSelectionState {
     }
 
     fn on_begin_pass(&mut self, ui: &mut Ui) {
-        self.states
-            .entry(ui.ctx().viewport_id())
-            .or_default()
-            .on_begin_pass(ui);
+        self.states.entry(ui.ctx().viewport_id()).or_default().on_begin_pass(ui);
     }
 
     fn on_end_pass(&mut self, ui: &mut Ui) {
@@ -192,9 +174,7 @@ impl Plugin for LabelSelectionState {
 impl LabelSelectionState {
     /// Is there a label text selection in any viewport?
     pub fn has_selection(&self) -> bool {
-        self.states
-            .values()
-            .any(ViewportLabelSelectionState::has_selection)
+        self.states.values().any(ViewportLabelSelectionState::has_selection)
     }
 
     /// Clear all label text selections in all viewports.
@@ -217,14 +197,10 @@ impl LabelSelectionState {
         let state = plugin.states.entry(ui.ctx().viewport_id()).or_default();
         let new_vertex_indices = state.on_label(ui, response, galley_pos, &mut galley);
 
-        let shape_idx = ui.painter().add(
-            epaint::TextShape::new(galley_pos, galley, fallback_color).with_underline(underline),
-        );
+        let shape_idx = ui.painter().add(epaint::TextShape::new(galley_pos, galley, fallback_color).with_underline(underline));
 
         if !new_vertex_indices.is_empty() {
-            state
-                .painted_selections
-                .push((shape_idx, new_vertex_indices));
+            state.painted_selections.push((shape_idx, new_vertex_indices));
         }
     }
 }
@@ -284,17 +260,10 @@ impl ViewportLabelSelectionState {
                                 if let epaint::Shape::Text(text_shape) = &mut shape.shape {
                                     let galley = Arc::make_mut(&mut text_shape.galley);
                                     for row_selection in row_selections {
-                                        if let Some(placed_row) =
-                                            galley.rows.get_mut(row_selection.row)
-                                        {
+                                        if let Some(placed_row) = galley.rows.get_mut(row_selection.row) {
                                             let row = Arc::make_mut(&mut placed_row.row);
                                             for vertex_index in row_selection.vertex_indices {
-                                                if let Some(vertex) = row
-                                                    .visuals
-                                                    .mesh
-                                                    .vertices
-                                                    .get_mut(vertex_index as usize)
-                                                {
+                                                if let Some(vertex) = row.visuals.mesh.vertices.get_mut(vertex_index as usize) {
                                                     vertex.color = epaint::Color32::TRANSPARENT;
                                                 }
                                             }
@@ -324,10 +293,7 @@ impl ViewportLabelSelectionState {
         if self.report_selection {
             self.selection_is_dirty = false;
             if !text_to_copy.is_empty() {
-                ui.ctx()
-                    .send_cmd(crate::OutputCommand::TextSelectionSettled(
-                        text_to_copy.clone(),
-                    ));
+                ui.ctx().send_cmd(crate::OutputCommand::TextSelectionSettled(text_to_copy.clone()));
             }
         }
         if !text_to_copy.is_empty() && got_copy_event(ui.ctx()) {
@@ -371,16 +337,11 @@ impl ViewportLabelSelectionState {
                 self.text_to_copy.push('\n');
             }
         } else {
-            let existing_ends_with_space =
-                self.text_to_copy.chars().last().map(|c| c.is_whitespace());
+            let existing_ends_with_space = self.text_to_copy.chars().last().map(|c| c.is_whitespace());
 
-            let new_text_starts_with_space_or_punctuation = new_text
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_whitespace() || c.is_ascii_punctuation());
+            let new_text_starts_with_space_or_punctuation = new_text.chars().next().is_some_and(|c| c.is_whitespace() || c.is_ascii_punctuation());
 
-            if existing_ends_with_space == Some(false) && !new_text_starts_with_space_or_punctuation
-            {
+            if existing_ends_with_space == Some(false) && !new_text_starts_with_space_or_punctuation {
                 self.text_to_copy.push(' ');
             }
         }
@@ -389,13 +350,7 @@ impl ViewportLabelSelectionState {
         self.last_copied_galley_rect = Some(new_galley_rect);
     }
 
-    fn cursor_for(
-        &mut self,
-        ui: &Ui,
-        response: &Response,
-        global_from_galley: TSTransform,
-        galley: &Galley,
-    ) -> TextCursorState {
+    fn cursor_for(&mut self, ui: &Ui, response: &Response, global_from_galley: TSTransform, galley: &Galley) -> TextCursorState {
         let Some(selection) = &mut self.selection else {
             // Nothing selected.
             return TextCursorState::default();
@@ -410,8 +365,7 @@ impl ViewportLabelSelectionState {
 
         let multi_widget_text_select = ui.style().interaction.multi_widget_text_select;
 
-        let may_select_widget =
-            multi_widget_text_select || selection.primary.widget_id == response.id;
+        let may_select_widget = multi_widget_text_select || selection.primary.widget_id == response.id;
 
         if self.is_dragging
             && may_select_widget
@@ -420,51 +374,31 @@ impl ViewportLabelSelectionState {
             let galley_rect = global_from_galley * Rect::from_min_size(Pos2::ZERO, galley.size());
             let galley_rect = galley_rect.intersect(ui.clip_rect());
 
-            let is_in_same_column = galley_rect
-                .x_range()
-                .intersects(self.selection_bbox_last_frame.x_range());
+            let is_in_same_column = galley_rect.x_range().intersects(self.selection_bbox_last_frame.x_range());
 
-            let has_reached_primary =
-                self.has_reached_primary || response.id == selection.primary.widget_id;
-            let has_reached_secondary =
-                self.has_reached_secondary || response.id == selection.secondary.widget_id;
+            let has_reached_primary = self.has_reached_primary || response.id == selection.primary.widget_id;
+            let has_reached_secondary = self.has_reached_secondary || response.id == selection.secondary.widget_id;
 
             let new_primary = if response.contains_pointer() {
                 // Dragging into this widget - easy case:
-                let cursor_at_pointer =
-                    galley.cursor_from_pos((galley_from_global * pointer_pos).to_vec2());
+                let cursor_at_pointer = galley.cursor_from_pos((galley_from_global * pointer_pos).to_vec2());
 
                 if let Some(granular) = &self.granular_drag {
                     // The selection started with a double- or triple-click,
                     // so extend it by whole words or lines:
                     if response.id == granular.anchor_min.widget_id {
                         // We are in the same widget as the anchor word/line:
-                        let anchor = CCursorRange::two(
-                            granular.anchor_min.ccursor,
-                            granular.anchor_max.ccursor,
-                        );
-                        let range = extend_granular_select(
-                            granular.granularity,
-                            anchor,
-                            galley.text(),
-                            cursor_at_pointer,
-                        );
-                        selection.secondary = WidgetTextCursor::new(
-                            response.id,
-                            range.secondary,
-                            global_from_galley,
-                            galley,
-                        );
+                        let anchor = CCursorRange::two(granular.anchor_min.ccursor, granular.anchor_max.ccursor);
+                        let range = extend_granular_select(granular.granularity, anchor, galley.text(), cursor_at_pointer);
+                        selection.secondary = WidgetTextCursor::new(response.id, range.secondary, global_from_galley, galley);
                         Some(range.primary)
                     } else {
                         // The drag has left the anchor's widget.
                         // Are we before or after the anchor? Decide by screen position:
                         let after_anchor = granular.anchor_max.pos.y < pointer_pos.y
-                            || (granular.anchor_min.pos.y <= pointer_pos.y
-                                && granular.anchor_max.pos.x <= pointer_pos.x);
+                            || (granular.anchor_min.pos.y <= pointer_pos.y && granular.anchor_max.pos.x <= pointer_pos.x);
 
-                        let unit =
-                            select_unit_at(granular.granularity, galley.text(), cursor_at_pointer);
+                        let unit = select_unit_at(granular.granularity, galley.text(), cursor_at_pointer);
                         let [unit_min, unit_max] = unit.sorted_cursors();
 
                         if after_anchor {
@@ -486,8 +420,7 @@ impl ViewportLabelSelectionState {
             {
                 // The user is dragging the text selection upwards, above the first selected widget (this one):
                 if DEBUG {
-                    ui.ctx()
-                        .debug_text(format!("Upwards drag; include {:?}", response.id));
+                    ui.ctx().debug_text(format!("Upwards drag; include {:?}", response.id));
                 }
                 Some(galley.begin())
             } else if is_in_same_column
@@ -501,8 +434,7 @@ impl ViewportLabelSelectionState {
                 // We move the cursor to the end of this widget,
                 // (and we may do the same for the next widget too).
                 if DEBUG {
-                    ui.ctx()
-                        .debug_text(format!("Downwards drag; include {:?}", response.id));
+                    ui.ctx().debug_text(format!("Downwards drag; include {:?}", response.id));
                 }
                 Some(galley.end())
             } else {
@@ -510,8 +442,7 @@ impl ViewportLabelSelectionState {
             };
 
             if let Some(new_primary) = new_primary {
-                selection.primary =
-                    WidgetTextCursor::new(response.id, new_primary, global_from_galley, galley);
+                selection.primary = WidgetTextCursor::new(response.id, new_primary, global_from_galley, galley);
 
                 // We don't want the latency of `drag_started`.
                 let drag_started = ui.input(|i| i.pointer.any_pressed());
@@ -536,12 +467,10 @@ impl ViewportLabelSelectionState {
         let has_secondary = response.id == selection.secondary.widget_id;
 
         if has_primary {
-            selection.primary.pos =
-                global_from_galley * pos_in_galley(galley, selection.primary.ccursor);
+            selection.primary.pos = global_from_galley * pos_in_galley(galley, selection.primary.ccursor);
         }
         if has_secondary {
-            selection.secondary.pos =
-                global_from_galley * pos_in_galley(galley, selection.secondary.ccursor);
+            selection.secondary.pos = global_from_galley * pos_in_galley(galley, selection.secondary.ccursor);
         }
 
         self.has_reached_primary |= has_primary;
@@ -558,11 +487,7 @@ impl ViewportLabelSelectionState {
         match (primary, secondary) {
             (Some(primary), Some(secondary)) => {
                 // This is the only selected label.
-                TextCursorState::from(CCursorRange {
-                    primary,
-                    secondary,
-                    h_pos: None,
-                })
+                TextCursorState::from(CCursorRange { primary, secondary, h_pos: None })
             }
 
             (Some(primary), None) => {
@@ -576,11 +501,7 @@ impl ViewportLabelSelectionState {
                     // Select everything from the cursor onward:
                     galley.end()
                 };
-                TextCursorState::from(CCursorRange {
-                    primary,
-                    secondary,
-                    h_pos: None,
-                })
+                TextCursorState::from(CCursorRange { primary, secondary, h_pos: None })
             }
 
             (None, Some(secondary)) => {
@@ -594,11 +515,7 @@ impl ViewportLabelSelectionState {
                     // Select everything from the cursor onward:
                     galley.end()
                 };
-                TextCursorState::from(CCursorRange {
-                    primary,
-                    secondary,
-                    h_pos: None,
-                })
+                TextCursorState::from(CCursorRange { primary, secondary, h_pos: None })
             }
 
             (None, None) => {
@@ -622,19 +539,10 @@ impl ViewportLabelSelectionState {
     }
 
     /// Returns the painted selections, if any.
-    fn on_label(
-        &mut self,
-        ui: &Ui,
-        response: &Response,
-        galley_pos_in_layer: Pos2,
-        galley: &mut Arc<Galley>,
-    ) -> Vec<RowVertexIndices> {
+    fn on_label(&mut self, ui: &Ui, response: &Response, galley_pos_in_layer: Pos2, galley: &mut Arc<Galley>) -> Vec<RowVertexIndices> {
         let widget_id = response.id;
 
-        let global_from_layer = ui
-            .ctx()
-            .layer_transform_to_global(ui.layer_id())
-            .unwrap_or_default();
+        let global_from_layer = ui.ctx().layer_transform_to_global(ui.layer_id()).unwrap_or_default();
         let layer_from_galley = TSTransform::from_translation(galley_pos_in_layer.to_vec2());
         let galley_from_layer = layer_from_galley.inverse();
         let layer_from_global = global_from_layer.inverse();
@@ -657,8 +565,7 @@ impl ViewportLabelSelectionState {
         if let Some(pointer_pos) = ui.ctx().pointer_interact_pos()
             && response.contains_pointer()
         {
-            let cursor_at_pointer =
-                galley.cursor_from_pos((galley_from_global * pointer_pos).to_vec2());
+            let cursor_at_pointer = galley.cursor_from_pos((galley_from_global * pointer_pos).to_vec2());
 
             // This is where we handle start-of-drag and double-click-to-select.
             // Actual drag-to-select happens elsewhere.
@@ -673,10 +580,7 @@ impl ViewportLabelSelectionState {
                 // which should stay selected:
                 cursor_state.set_granular_drag(Some(GranularDragSelect {
                     granularity: granular.granularity,
-                    anchor: CCursorRange::two(
-                        granular.anchor_min.ccursor,
-                        granular.anchor_max.ccursor,
-                    ),
+                    anchor: CCursorRange::two(granular.anchor_min.ccursor, granular.anchor_max.ccursor),
                 }));
             }
 
@@ -698,15 +602,9 @@ impl ViewportLabelSelectionState {
                     // `cursor_state` only sees the edge of this widget, so use the real anchor:
                     [selection.secondary; 2]
                 } else {
-                    granular.anchor.sorted_cursors().map(|ccursor| {
-                        WidgetTextCursor::new(response.id, ccursor, global_from_galley, galley)
-                    })
+                    granular.anchor.sorted_cursors().map(|ccursor| WidgetTextCursor::new(response.id, ccursor, global_from_galley, galley))
                 };
-                self.granular_drag = Some(GranularDrag {
-                    granularity: granular.granularity,
-                    anchor_min,
-                    anchor_max,
-                });
+                self.granular_drag = Some(GranularDrag { granularity: granular.granularity, anchor_min, anchor_max });
             }
         }
 
@@ -745,35 +643,19 @@ impl ViewportLabelSelectionState {
                 selection.layer_id = response.layer_id;
 
                 if primary_changed || !ui.style().interaction.multi_widget_text_select {
-                    selection.primary =
-                        WidgetTextCursor::new(widget_id, range.primary, global_from_galley, galley);
+                    selection.primary = WidgetTextCursor::new(widget_id, range.primary, global_from_galley, galley);
                     self.has_reached_primary = true;
                 }
                 if secondary_changed || !ui.style().interaction.multi_widget_text_select {
-                    selection.secondary = WidgetTextCursor::new(
-                        widget_id,
-                        range.secondary,
-                        global_from_galley,
-                        galley,
-                    );
+                    selection.secondary = WidgetTextCursor::new(widget_id, range.secondary, global_from_galley, galley);
                     self.has_reached_secondary = true;
                 }
             } else {
                 // Start of a new selection
                 self.selection = Some(CurrentSelection {
                     layer_id: response.layer_id,
-                    primary: WidgetTextCursor::new(
-                        widget_id,
-                        range.primary,
-                        global_from_galley,
-                        galley,
-                    ),
-                    secondary: WidgetTextCursor::new(
-                        widget_id,
-                        range.secondary,
-                        global_from_galley,
-                        galley,
-                    ),
+                    primary: WidgetTextCursor::new(widget_id, range.primary, global_from_galley, galley),
+                    secondary: WidgetTextCursor::new(widget_id, range.secondary, global_from_galley, galley),
                 });
                 self.has_reached_primary = true;
                 self.has_reached_secondary = true;
@@ -785,16 +667,13 @@ impl ViewportLabelSelectionState {
             let old_primary = old_selection.map(|s| s.primary);
             let new_primary = self.selection.as_ref().map(|s| s.primary);
             if let Some(new_primary) = new_primary {
-                let primary_changed = old_primary.is_none_or(|old| {
-                    old.widget_id != new_primary.widget_id || old.ccursor != new_primary.ccursor
-                });
+                let primary_changed = old_primary.is_none_or(|old| old.widget_id != new_primary.widget_id || old.ccursor != new_primary.ccursor);
                 if primary_changed && new_primary.widget_id == widget_id {
                     let is_fully_visible = ui.clip_rect().contains_rect(response.rect); // TODO(emilk): remove this HACK workaround for https://github.com/emilk/egui/issues/1531
                     if selection_changed && !is_fully_visible {
                         // Scroll to keep primary cursor in view:
                         let row_height = estimate_row_height(galley);
-                        let primary_cursor_rect =
-                            global_from_galley * cursor_rect(galley, &range.primary, row_height);
+                        let primary_cursor_rect = global_from_galley * cursor_rect(galley, &range.primary, row_height);
                         ui.scroll_to_rect(primary_cursor_rect, None);
                     }
                 }
@@ -806,41 +685,21 @@ impl ViewportLabelSelectionState {
         let mut new_vertex_indices = vec![];
 
         if let Some(cursor_range) = cursor_range {
-            paint_text_selection(
-                galley,
-                ui.visuals(),
-                &cursor_range,
-                Some(&mut new_vertex_indices),
-            );
+            paint_text_selection(galley, ui.visuals(), &cursor_range, Some(&mut new_vertex_indices));
         }
 
-        super::accesskit_text::update_accesskit_for_text_widget(
-            ui.ctx(),
-            response.id,
-            cursor_range,
-            global_from_galley,
-            galley,
-        );
+        super::accesskit_text::update_accesskit_for_text_widget(ui.ctx(), response.id, cursor_range, global_from_galley, galley);
 
         new_vertex_indices
     }
 }
 
 fn got_copy_event(ctx: &Context) -> bool {
-    ctx.input(|i| {
-        i.events
-            .iter()
-            .any(|e| matches!(e, Event::Copy | Event::Cut))
-    })
+    ctx.input(|i| i.events.iter().any(|e| matches!(e, Event::Copy | Event::Cut)))
 }
 
 /// Returns true if the cursor changed
-fn process_selection_key_events(
-    ctx: &Context,
-    galley: &Galley,
-    widget_id: Id,
-    cursor_range: &mut CCursorRange,
-) -> bool {
+fn process_selection_key_events(ctx: &Context, galley: &Galley, widget_id: Id, cursor_range: &mut CCursorRange) -> bool {
     let os = ctx.os();
 
     let mut changed = false;
@@ -863,19 +722,11 @@ fn selected_text(galley: &Galley, cursor_range: &CCursorRange) -> String {
 
     let copy_everything = cursor_range.is_empty() || everything_is_selected;
 
-    if copy_everything {
-        galley.text().to_owned()
-    } else {
-        cursor_range.slice_str(galley).to_owned()
-    }
+    if copy_everything { galley.text().to_owned() } else { cursor_range.slice_str(galley).to_owned() }
 }
 
 fn estimate_row_height(galley: &Galley) -> f32 {
-    if let Some(placed_row) = galley.rows.first() {
-        placed_row.height()
-    } else {
-        galley.size().y
-    }
+    if let Some(placed_row) = galley.rows.first() { placed_row.height() } else { galley.size().y }
 }
 
 #[cfg(test)]
@@ -884,31 +735,14 @@ mod tests {
     use crate::{RawInput, ViewportId, ViewportInfo};
 
     fn child_viewport_input(viewport_id: ViewportId) -> RawInput {
-        let mut input = RawInput {
-            viewport_id,
-            ..Default::default()
-        };
-        input.viewports.insert(
-            viewport_id,
-            ViewportInfo {
-                parent: Some(ViewportId::ROOT),
-                ..Default::default()
-            },
-        );
+        let mut input = RawInput { viewport_id, ..Default::default() };
+        input.viewports.insert(viewport_id, ViewportInfo { parent: Some(ViewportId::ROOT), ..Default::default() });
         input
     }
 
     fn test_selection() -> CurrentSelection {
-        let cursor = WidgetTextCursor {
-            widget_id: Id::unique("selected_label"),
-            ccursor: CCursor::default(),
-            pos: Pos2::ZERO,
-        };
-        CurrentSelection {
-            layer_id: LayerId::background(),
-            primary: cursor,
-            secondary: cursor,
-        }
+        let cursor = WidgetTextCursor { widget_id: Id::unique("selected_label"), ccursor: CCursor::default(), pos: Pos2::ZERO };
+        CurrentSelection { layer_id: LayerId::background(), primary: cursor, secondary: cursor }
     }
 
     #[test]
@@ -916,29 +750,17 @@ mod tests {
         let ctx = Context::default();
         let child_viewport_id = ViewportId::from_hash_of("child_viewport");
         let plugin = ctx.plugin::<LabelSelectionState>();
-        plugin
-            .lock()
-            .states
-            .entry(child_viewport_id)
-            .or_default()
-            .selection = Some(test_selection());
+        plugin.lock().states.entry(child_viewport_id).or_default().selection = Some(test_selection());
 
         let output = ctx.run_ui(RawInput::default(), |_| {});
         assert!(
-            plugin
-                .lock()
-                .states
-                .get(&child_viewport_id)
-                .is_some_and(ViewportLabelSelectionState::has_selection),
+            plugin.lock().states.get(&child_viewport_id).is_some_and(ViewportLabelSelectionState::has_selection),
             "a pass in another viewport must not clear the child viewport selection"
         );
         output.drop_without_applying_deltas();
 
         let output = ctx.run_ui(child_viewport_input(child_viewport_id), |_| {});
-        assert!(
-            !plugin.lock().has_selection(),
-            "the selection must be cleared when its labels disappear from the same viewport"
-        );
+        assert!(!plugin.lock().has_selection(), "the selection must be cleared when its labels disappear from the same viewport");
         output.drop_without_applying_deltas();
     }
 }

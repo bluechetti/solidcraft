@@ -10,25 +10,14 @@ use eframe::{EframePumpStatus, UserEvent, egui};
 
 pub fn run() -> io::Result<()> {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]),
-        ..Default::default()
-    };
+    let options = eframe::NativeOptions { viewport: egui::ViewportBuilder::default().with_inner_size([320.0, 240.0]), ..Default::default() };
 
     let mut eventloop = EventLoop::<UserEvent>::with_user_event().build().unwrap();
     eventloop.set_control_flow(ControlFlow::Poll);
 
-    let mut winit_app = eframe::create_native(
-        "External Eventloop Application",
-        options,
-        Box::new(|_| Ok(Box::<MyApp>::default())),
-        &eventloop,
-    );
+    let mut winit_app = eframe::create_native("External Eventloop Application", options, Box::new(|_| Ok(Box::<MyApp>::default())), &eventloop);
 
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
 
     let local = LocalSet::new();
     local.block_on(&rt, async {
@@ -39,12 +28,7 @@ pub fn run() -> io::Result<()> {
             let mut guard = match control_flow {
                 ControlFlow::Poll => None,
                 ControlFlow::Wait => Some(eventloop_fd.readable().await?),
-                ControlFlow::WaitUntil(deadline) => {
-                    tokio::time::timeout_at(deadline.into(), eventloop_fd.readable())
-                        .await
-                        .ok()
-                        .transpose()?
-                }
+                ControlFlow::WaitUntil(deadline) => tokio::time::timeout_at(deadline.into(), eventloop_fd.readable()).await.ok().transpose()?,
             };
 
             match winit_app.pump_eframe_app(&mut eventloop, None) {
@@ -72,11 +56,7 @@ struct MyApp {
 
 impl Default for MyApp {
     fn default() -> Self {
-        Self {
-            value: Rc::new(Cell::new(42)),
-            spin: false,
-            blinky: false,
-        }
+        Self { value: Rc::new(Cell::new(42)), spin: false, blinky: false }
     }
 }
 
@@ -116,17 +96,12 @@ impl eframe::App for MyApp {
             if self.blinky {
                 let now = ui.input(|i| i.time);
                 let blink = now % 1.0 < 0.5;
-                egui::Frame::new()
-                    .inner_margin(3)
-                    .corner_radius(5)
-                    .fill(if blink {
-                        egui::Color32::RED
-                    } else {
-                        egui::Color32::TRANSPARENT
-                    })
-                    .show(ui, |ui| {
+                egui::Frame::new().inner_margin(3).corner_radius(5).fill(if blink { egui::Color32::RED } else { egui::Color32::TRANSPARENT }).show(
+                    ui,
+                    |ui| {
                         ui.label("Blinky!");
-                    });
+                    },
+                );
 
                 ui.request_repaint_after_secs((0.5 - (now % 0.5)) as f32);
             }

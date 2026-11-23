@@ -77,10 +77,7 @@ fn find_kittest_toml() -> io::Result<std::path::PathBuf> {
 
         // Move up one directory
         if !current_dir.pop() {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "kittest.toml not found",
-            ));
+            return Err(io::Error::new(io::ErrorKind::NotFound, "kittest.toml not found"));
         }
     }
 }
@@ -100,11 +97,7 @@ fn warn_about_deprecated_keys(config_str: &str) {
 
     for (section, table) in sections {
         if table.contains_key("failed_pixel_count_threshold") {
-            let prefix = if section.is_empty() {
-                String::new()
-            } else {
-                format!("{section}.")
-            };
+            let prefix = if section.is_empty() { String::new() } else { format!("{section}.") };
             log::warn!(
                 "`{prefix}failed_pixel_count_threshold` in kittest.toml is deprecated; \
                  use `{prefix}max_failed_pixels` instead."

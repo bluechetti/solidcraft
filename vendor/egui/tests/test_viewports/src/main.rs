@@ -35,30 +35,12 @@ pub struct ViewportState {
 }
 
 impl ViewportState {
-    pub fn new_deferred(
-        title: &'static str,
-        children: Vec<Arc<RwLock<Self>>>,
-    ) -> Arc<RwLock<Self>> {
-        Arc::new(RwLock::new(Self {
-            id: ViewportId::from_hash_of(title),
-            visible: false,
-            immediate: false,
-            title: title.into(),
-            children,
-        }))
+    pub fn new_deferred(title: &'static str, children: Vec<Arc<RwLock<Self>>>) -> Arc<RwLock<Self>> {
+        Arc::new(RwLock::new(Self { id: ViewportId::from_hash_of(title), visible: false, immediate: false, title: title.into(), children }))
     }
 
-    pub fn new_immediate(
-        title: &'static str,
-        children: Vec<Arc<RwLock<Self>>>,
-    ) -> Arc<RwLock<Self>> {
-        Arc::new(RwLock::new(Self {
-            id: ViewportId::from_hash_of(title),
-            visible: false,
-            immediate: true,
-            title: title.into(),
-            children,
-        }))
+    pub fn new_immediate(title: &'static str, children: Vec<Arc<RwLock<Self>>>) -> Arc<RwLock<Self>> {
+        Arc::new(RwLock::new(Self { id: ViewportId::from_hash_of(title), visible: false, immediate: true, title: title.into(), children }))
     }
 
     pub fn show(vp_state: Arc<RwLock<Self>>, ctx: &egui::Context, close_button: bool) {
@@ -69,10 +51,7 @@ impl ViewportState {
         let immediate = vp_state.read().immediate;
         let title = vp_state.read().title.clone();
 
-        let viewport = ViewportBuilder::default()
-            .with_title(&title)
-            .with_close_button(close_button)
-            .with_inner_size([500.0, 500.0]);
+        let viewport = ViewportBuilder::default().with_title(&title).with_close_button(close_button).with_inner_size([500.0, 500.0]);
 
         if immediate {
             let mut vp_state = vp_state.write();
@@ -123,27 +102,15 @@ impl Default for App {
                 ViewportState::new_deferred(
                     "Top Deferred Viewport",
                     vec![
-                        ViewportState::new_deferred(
-                            "DD: Deferred Viewport in Deferred Viewport",
-                            vec![],
-                        ),
-                        ViewportState::new_immediate(
-                            "DS: Immediate Viewport in Deferred Viewport",
-                            vec![],
-                        ),
+                        ViewportState::new_deferred("DD: Deferred Viewport in Deferred Viewport", vec![]),
+                        ViewportState::new_immediate("DS: Immediate Viewport in Deferred Viewport", vec![]),
                     ],
                 ),
                 ViewportState::new_immediate(
                     "Top Immediate Viewport",
                     vec![
-                        ViewportState::new_deferred(
-                            "SD: Deferred Viewport in Immediate Viewport",
-                            vec![],
-                        ),
-                        ViewportState::new_immediate(
-                            "SS: Immediate Viewport in Immediate Viewport",
-                            vec![],
-                        ),
+                        ViewportState::new_deferred("SD: Deferred Viewport in Immediate Viewport", vec![]),
+                        ViewportState::new_immediate("SS: Immediate Viewport in Immediate Viewport", vec![]),
                     ],
                 ),
             ],
@@ -173,11 +140,7 @@ impl eframe::App for App {
 }
 
 /// This will make the content as a popup if cannot has his own native window
-fn show_as_popup(
-    ui: &mut egui::Ui,
-    class: egui::ViewportClass,
-    content: impl FnOnce(&mut egui::Ui),
-) {
+fn show_as_popup(ui: &mut egui::Ui, class: egui::ViewportClass, content: impl FnOnce(&mut egui::Ui)) {
     if class == egui::ViewportClass::EmbeddedWindow {
         // Not a real viewport - already has a frame
         content(ui);
@@ -191,10 +154,7 @@ fn generic_child_ui(ui: &mut egui::Ui, vp_state: &mut ViewportState, close_butto
         ui.label("Title:");
         if ui.text_edit_singleline(&mut vp_state.title).changed() {
             // Title changes
-            ui.send_viewport_cmd_to(
-                vp_state.id,
-                egui::ViewportCommand::Title(vp_state.title.clone()),
-            );
+            ui.send_viewport_cmd_to(vp_state.id, egui::ViewportCommand::Title(vp_state.title.clone()));
         }
     });
 
@@ -205,13 +165,9 @@ fn generic_ui(ui: &mut egui::Ui, children: &[Arc<RwLock<ViewportState>>], close_
     let container_id = ui.scope_id();
 
     let ctx = ui.ctx().clone();
-    ui.label(format!(
-        "Frame nr: {} (this increases when this viewport is being rendered)",
-        ctx.cumulative_pass_nr()
-    ));
+    ui.label(format!("Frame nr: {} (this increases when this viewport is being rendered)", ctx.cumulative_pass_nr()));
     ui.horizontal(|ui| {
-        let mut show_spinner =
-            ui.data_mut(|data| *data.get_temp_mut_or(container_id.with("show_spinner"), false));
+        let mut show_spinner = ui.data_mut(|data| *data.get_temp_mut_or(container_id.with("show_spinner"), false));
         ui.checkbox(&mut show_spinner, "Show Spinner (forces repaint)");
         if show_spinner {
             ui.spinner();
@@ -222,53 +178,33 @@ fn generic_ui(ui: &mut egui::Ui, children: &[Arc<RwLock<ViewportState>>], close_
     ui.add_space(8.0);
 
     ui.label(format!("Viewport Id: {:?}", ctx.viewport_id()));
-    ui.label(format!(
-        "Parent Viewport Id: {:?}",
-        ctx.parent_viewport_id()
-    ));
+    ui.label(format!("Parent Viewport Id: {:?}", ctx.parent_viewport_id()));
 
     ui.collapsing("Info", |ui| {
         ui.label(format!("zoom_factor: {}", ctx.zoom_factor()));
         ui.label(format!("pixels_per_point: {}", ctx.pixels_per_point()));
 
         if let Some(native_pixels_per_point) = ctx.input(|i| i.viewport().native_pixels_per_point) {
-            ui.label(format!(
-                "native_pixels_per_point: {native_pixels_per_point:?}"
-            ));
+            ui.label(format!("native_pixels_per_point: {native_pixels_per_point:?}"));
         }
         if let Some(monitor_size) = ctx.input(|i| i.viewport().monitor_size) {
             ui.label(format!("monitor_size: {monitor_size:?} (points)"));
         }
         if let Some(viewport_rect) = ui.input(|i| i.raw.screen_rect) {
-            ui.label(format!(
-                "Viewport Rect: Pos: {:?}, Size: {:?} (points)",
-                viewport_rect.min,
-                viewport_rect.size()
-            ));
+            ui.label(format!("Viewport Rect: Pos: {:?}, Size: {:?} (points)", viewport_rect.min, viewport_rect.size()));
         }
         if let Some(inner_rect) = ctx.input(|i| i.viewport().inner_rect) {
-            ui.label(format!(
-                "Inner Rect: Pos: {:?}, Size: {:?} (points)",
-                inner_rect.min,
-                inner_rect.size()
-            ));
+            ui.label(format!("Inner Rect: Pos: {:?}, Size: {:?} (points)", inner_rect.min, inner_rect.size()));
         }
         if let Some(outer_rect) = ctx.input(|i| i.viewport().outer_rect) {
-            ui.label(format!(
-                "Outer Rect: Pos: {:?}, Size: {:?} (points)",
-                outer_rect.min,
-                outer_rect.size()
-            ));
+            ui.label(format!("Outer Rect: Pos: {:?}, Size: {:?} (points)", outer_rect.min, outer_rect.size()));
         }
     });
 
     if ctx.viewport_id() != ctx.parent_viewport_id() {
         let parent = ctx.parent_viewport_id();
         if ui.button("Set parent pos 0,0").clicked() {
-            ctx.send_viewport_cmd_to(
-                parent,
-                egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)),
-            );
+            ctx.send_viewport_cmd_to(parent, egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
         }
     }
 
@@ -321,11 +257,7 @@ fn drag_and_drop_test(ui: &mut egui::Ui) {
         fn init(&mut self, container: Id) {
             if !self.containers_data.contains_key(&container) {
                 for i in 0..COLS {
-                    self.insert(
-                        container,
-                        i,
-                        format!("From: {container:?}, and is: {}", self.counter),
-                    );
+                    self.insert(container, i, format!("From: {container:?}, and is: {}", self.counter));
                 }
             }
         }
@@ -349,10 +281,7 @@ fn drag_and_drop_test(ui: &mut egui::Ui) {
         fn cols(&self, container: Id, col: usize) -> Vec<(Id, String)> {
             assert!(col < COLS, "The col should be less than: {COLS}");
             let container_data = &self.containers_data[&container];
-            container_data[col]
-                .iter()
-                .map(|id| (*id, self.data[id].clone()))
-                .collect()
+            container_data[col].iter().map(|id| (*id, self.data[id].clone())).collect()
         }
 
         /// Move element ID to Viewport and col
@@ -409,11 +338,7 @@ fn drag_and_drop_test(ui: &mut egui::Ui) {
 }
 
 // This is taken from crates/egui_demo_lib/src/debo/drag_and_drop.rs
-fn drag_source<R>(
-    ui: &mut egui::Ui,
-    id: egui::Id,
-    body: impl FnOnce(&mut egui::Ui) -> R,
-) -> InnerResponse<R> {
+fn drag_source<R>(ui: &mut egui::Ui, id: egui::Id, body: impl FnOnce(&mut egui::Ui) -> R) -> InnerResponse<R> {
     let is_being_dragged = ui.ctx().is_being_dragged(id);
 
     if is_being_dragged {
@@ -425,10 +350,7 @@ fn drag_source<R>(
 
         if let Some(pointer_pos) = ui.ctx().pointer_interact_pos() {
             let delta = pointer_pos - res.response.rect.center();
-            ui.ctx().set_transform_layer(
-                layer_id,
-                eframe::emath::TSTransform::from_translation(delta),
-            );
+            ui.ctx().set_transform_layer(layer_id, eframe::emath::TSTransform::from_translation(delta));
         }
 
         res
@@ -445,10 +367,7 @@ fn drag_source<R>(
 }
 
 // TODO(emilk): Update to be more like `crates/egui_demo_lib/src/debo/drag_and_drop.rs`
-fn drop_target<R>(
-    ui: &mut egui::Ui,
-    body: impl FnOnce(&mut egui::Ui) -> R,
-) -> egui::InnerResponse<R> {
+fn drop_target<R>(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui) -> R) -> egui::InnerResponse<R> {
     let is_being_dragged = ui.ctx().dragged_id().is_some();
 
     let background_id = ui.painter().add(egui::Shape::Noop);
@@ -460,25 +379,12 @@ fn drop_target<R>(
     let outer_rect = egui::Rect::from_min_max(available_rect.min, content_ui.min_rect().max);
     let (rect, response) = ui.allocate_at_least(outer_rect.size(), egui::Sense::hover());
 
-    let style = if is_being_dragged && response.hovered() {
-        ui.visuals().widgets.active
-    } else {
-        ui.visuals().widgets.inactive
-    };
+    let style = if is_being_dragged && response.hovered() { ui.visuals().widgets.active } else { ui.visuals().widgets.inactive };
 
     let fill = style.bg_fill;
     let stroke = style.bg_stroke;
 
-    ui.painter().set(
-        background_id,
-        egui::epaint::RectShape::new(
-            rect,
-            style.corner_radius,
-            fill,
-            stroke,
-            egui::StrokeKind::Inside,
-        ),
-    );
+    ui.painter().set(background_id, egui::epaint::RectShape::new(rect, style.corner_radius, fill, stroke, egui::StrokeKind::Inside));
 
     egui::InnerResponse::new(ret, response)
 }

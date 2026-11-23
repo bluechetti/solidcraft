@@ -27,15 +27,7 @@ pub fn deny(args: &[&str]) -> Result<(), DynError> {
     ];
     for target in targets {
         let mut cmd = Command::new("cargo");
-        cmd.args([
-            "deny",
-            "--all-features",
-            "--log-level",
-            "error",
-            "--target",
-            target,
-            "check",
-        ]);
+        cmd.args(["deny", "--all-features", "--log-level", "error", "--target", target, "check"]);
         super::utils::print_cmd(&cmd);
         let status = cmd.status()?;
         if !status.success() {
@@ -46,10 +38,7 @@ pub fn deny(args: &[&str]) -> Result<(), DynError> {
 }
 
 fn install_cargo_deny() -> Result<(), DynError> {
-    let already_installed = Command::new("cargo")
-        .args(["deny", "--version"])
-        .output()
-        .is_ok_and(|out| out.status.success());
+    let already_installed = Command::new("cargo").args(["deny", "--version"]).output().is_ok_and(|out| out.status.success());
     if already_installed {
         return Ok(());
     }

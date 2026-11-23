@@ -61,18 +61,9 @@ impl ScrollMomentumMonitor {
         };
 
         // SAFETY: we are on the main thread, and the handler returns a valid event pointer.
-        let monitor = unsafe {
-            NSEvent::addLocalMonitorForEventsMatchingMask_handler(
-                NSEventMask::ScrollWheel,
-                &handler,
-            )
-        }?;
+        let monitor = unsafe { NSEvent::addLocalMonitorForEventsMatchingMask_handler(NSEventMask::ScrollWheel, &handler) }?;
 
-        Some(Self {
-            monitor,
-            _handler: handler,
-            latest_is_momentum,
-        })
+        Some(Self { monitor, _handler: handler, latest_is_momentum })
     }
 
     /// Was the latest scroll event part of the OS-driven momentum phase?

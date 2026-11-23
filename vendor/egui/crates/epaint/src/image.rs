@@ -59,25 +59,13 @@ pub struct ColorImage {
 impl ColorImage {
     /// Create an image filled with the given color.
     pub fn new(size: [usize; 2], pixels: Vec<Color32>) -> Self {
-        debug_assert!(
-            size[0] * size[1] == pixels.len(),
-            "size: {size:?}, pixels.len(): {}",
-            pixels.len()
-        );
-        Self {
-            size,
-            source_size: Vec2::new(size[0] as f32, size[1] as f32),
-            pixels,
-        }
+        debug_assert!(size[0] * size[1] == pixels.len(), "size: {size:?}, pixels.len(): {}", pixels.len());
+        Self { size, source_size: Vec2::new(size[0] as f32, size[1] as f32), pixels }
     }
 
     /// Create an image filled with the given color.
     pub fn filled(size: [usize; 2], color: Color32) -> Self {
-        Self {
-            size,
-            source_size: Vec2::new(size[0] as f32, size[1] as f32),
-            pixels: vec![color; size[0] * size[1]],
-        }
+        Self { size, source_size: Vec2::new(size[0] as f32, size[1] as f32), pixels: vec![color; size[0] * size[1]] }
     }
 
     /// Create a [`ColorImage`] from flat un-multiplied RGBA data.
@@ -111,32 +99,14 @@ impl ColorImage {
     /// }
     /// ```
     pub fn from_rgba_unmultiplied(size: [usize; 2], rgba: &[u8]) -> Self {
-        assert_eq!(
-            size[0] * size[1] * 4,
-            rgba.len(),
-            "size: {:?}, rgba.len(): {}",
-            size,
-            rgba.len()
-        );
-        let pixels = rgba
-            .chunks_exact(4)
-            .map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3]))
-            .collect();
+        assert_eq!(size[0] * size[1] * 4, rgba.len(), "size: {:?}, rgba.len(): {}", size, rgba.len());
+        let pixels = rgba.chunks_exact(4).map(|p| Color32::from_rgba_unmultiplied(p[0], p[1], p[2], p[3])).collect();
         Self::new(size, pixels)
     }
 
     pub fn from_rgba_premultiplied(size: [usize; 2], rgba: &[u8]) -> Self {
-        assert_eq!(
-            size[0] * size[1] * 4,
-            rgba.len(),
-            "size: {:?}, rgba.len(): {}",
-            size,
-            rgba.len()
-        );
-        let pixels = rgba
-            .chunks_exact(4)
-            .map(|p| Color32::from_rgba_premultiplied(p[0], p[1], p[2], p[3]))
-            .collect();
+        assert_eq!(size[0] * size[1] * 4, rgba.len(), "size: {:?}, rgba.len(): {}", size, rgba.len());
+        let pixels = rgba.chunks_exact(4).map(|p| Color32::from_rgba_premultiplied(p[0], p[1], p[2], p[3])).collect();
         Self::new(size, pixels)
     }
 
@@ -144,13 +114,7 @@ impl ColorImage {
     ///
     /// Panics if `size[0] * size[1] != gray.len()`.
     pub fn from_gray(size: [usize; 2], gray: &[u8]) -> Self {
-        assert_eq!(
-            size[0] * size[1],
-            gray.len(),
-            "size: {:?}, gray.len(): {}",
-            size,
-            gray.len()
-        );
+        assert_eq!(size[0] * size[1], gray.len(), "size: {:?}, gray.len(): {}", size, gray.len());
         let pixels = gray.iter().map(|p| Color32::from_gray(*p)).collect();
         Self::new(size, pixels)
     }
@@ -162,13 +126,7 @@ impl ColorImage {
     #[doc(alias = "from_grey_iter")]
     pub fn from_gray_iter(size: [usize; 2], gray_iter: impl Iterator<Item = u8>) -> Self {
         let pixels: Vec<_> = gray_iter.map(Color32::from_gray).collect();
-        assert_eq!(
-            size[0] * size[1],
-            pixels.len(),
-            "size: {:?}, pixels.len(): {}",
-            size,
-            pixels.len()
-        );
+        assert_eq!(size[0] * size[1], pixels.len(), "size: {:?}, pixels.len(): {}", size, pixels.len());
         Self::new(size, pixels)
     }
 
@@ -191,17 +149,8 @@ impl ColorImage {
     ///
     /// Panics if `size[0] * size[1] * 3 != rgb.len()`.
     pub fn from_rgb(size: [usize; 2], rgb: &[u8]) -> Self {
-        assert_eq!(
-            size[0] * size[1] * 3,
-            rgb.len(),
-            "size: {:?}, rgb.len(): {}",
-            size,
-            rgb.len()
-        );
-        let pixels = rgb
-            .chunks_exact(3)
-            .map(|p| Color32::from_rgb(p[0], p[1], p[2]))
-            .collect();
+        assert_eq!(size[0] * size[1] * 3, rgb.len(), "size: {:?}, rgb.len(): {}", size, rgb.len());
+        let pixels = rgb.chunks_exact(3).map(|p| Color32::from_rgb(p[0], p[1], p[2])).collect();
         Self::new(size, pixels)
     }
 
@@ -252,51 +201,29 @@ impl ColorImage {
         let max_x = (region.max.x * pixels_per_point) as usize;
         let min_y = (region.min.y * pixels_per_point) as usize;
         let max_y = (region.max.y * pixels_per_point) as usize;
-        assert!(
-            min_x <= max_x && min_y <= max_y,
-            "Screenshot region is invalid: {region:?}"
-        );
+        assert!(min_x <= max_x && min_y <= max_y, "Screenshot region is invalid: {region:?}");
         let width = max_x - min_x;
         let height = max_y - min_y;
         let mut output = Vec::with_capacity(width * height);
         let row_stride = self.size[0];
 
         for row in min_y..max_y {
-            output.extend_from_slice(
-                &self.pixels[row * row_stride + min_x..row * row_stride + max_x],
-            );
+            output.extend_from_slice(&self.pixels[row * row_stride + min_x..row * row_stride + max_x]);
         }
         Self::new([width, height], output)
     }
 
     /// Clone a sub-region as a new image.
     pub fn region_by_pixels(&self, [x, y]: [usize; 2], [w, h]: [usize; 2]) -> Self {
-        assert!(
-            x + w <= self.width(),
-            "x + w should be <= self.width(), but x: {}, w: {}, width: {}",
-            x,
-            w,
-            self.width()
-        );
-        assert!(
-            y + h <= self.height(),
-            "y + h should be <= self.height(), but y: {}, h: {}, height: {}",
-            y,
-            h,
-            self.height()
-        );
+        assert!(x + w <= self.width(), "x + w should be <= self.width(), but x: {}, w: {}, width: {}", x, w, self.width());
+        assert!(y + h <= self.height(), "y + h should be <= self.height(), but y: {}, h: {}, height: {}", y, h, self.height());
 
         let mut pixels = Vec::with_capacity(w * h);
         for y in y..y + h {
             let offset = y * self.width() + x;
             pixels.extend(&self.pixels[offset..(offset + w)]);
         }
-        assert_eq!(
-            pixels.len(),
-            w * h,
-            "pixels.len should be w * h, but got {}",
-            pixels.len()
-        );
+        assert_eq!(pixels.len(), w * h, "pixels.len should be w * h, but got {}", pixels.len());
         Self::new([w, h], pixels)
     }
 }
@@ -337,10 +264,7 @@ impl From<Arc<ColorImage>> for ImageData {
 
 impl core::fmt::Debug for ColorImage {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("ColorImage")
-            .field("size", &self.size)
-            .field("pixel-count", &self.pixels.len())
-            .finish_non_exhaustive()
+        f.debug_struct("ColorImage").field("size", &self.size).field("pixel-count", &self.pixels.len()).finish_non_exhaustive()
     }
 }
 
@@ -472,20 +396,12 @@ pub struct ImageDelta {
 impl ImageDelta {
     /// Update the whole texture.
     pub fn full(image: impl Into<ImageData>, options: TextureOptions) -> Self {
-        Self {
-            image: image.into(),
-            options,
-            pos: None,
-        }
+        Self { image: image.into(), options, pos: None }
     }
 
     /// Update a sub-region of an existing texture.
     pub fn partial(pos: [usize; 2], image: impl Into<ImageData>, options: TextureOptions) -> Self {
-        Self {
-            image: image.into(),
-            options,
-            pos: Some(pos),
-        }
+        Self { image: image.into(), options, pos: Some(pos) }
     }
 
     /// Is this affecting the whole texture?

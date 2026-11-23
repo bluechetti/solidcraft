@@ -2,8 +2,7 @@
 
 use crate::util::fixed_cache::FixedCache;
 use crate::{
-    Context, DragValue, Id, Painter, Popup, PopupCloseBehavior, Response, Role, Sense, Ui,
-    Widget as _, WidgetInfo, epaint, lerp, remap_clamp,
+    Context, DragValue, Id, Painter, Popup, PopupCloseBehavior, Response, Role, Sense, Ui, Widget as _, WidgetInfo, epaint, lerp, remap_clamp,
 };
 use epaint::{
     ColorImage, Rect, RectShape, RoundedRect, Shape, Stroke, StrokeKind, Vec2,
@@ -14,11 +13,7 @@ use epaint::{
 };
 
 fn contrast_color(color: impl Into<Rgba>) -> Color32 {
-    if color.into().intensity() < 0.5 {
-        Color32::WHITE
-    } else {
-        Color32::BLACK
-    }
+    if color.into().intensity() < 0.5 { Color32::WHITE } else { Color32::BLACK }
 }
 
 /// Resolution of the color slider gradients: the textures have `N + 1` texels per dimension.
@@ -41,43 +36,31 @@ fn background_checkers(painter: &Painter, bounds: RoundedRect) {
 
     // A single repeating 2x2 checker tile, stretched so that
     // each checker is half the rect height, like before:
-    let image = ColorImage::new(
-        [2, 2],
-        vec![bright_color, dark_color, dark_color, bright_color],
-    );
-    let texture = painter.ctx().load_texture_cached(
-        "color_picker_checkers",
-        Id::unique("color_picker_checkers"),
-        image,
-        TextureOptions::NEAREST_REPEAT,
-    );
+    let image = ColorImage::new([2, 2], vec![bright_color, dark_color, dark_color, bright_color]);
+    let texture =
+        painter.ctx().load_texture_cached("color_picker_checkers", Id::unique("color_picker_checkers"), image, TextureOptions::NEAREST_REPEAT);
 
     // One tile (one uv unit) covers 2x2 checkers, i.e. the full rect height:
     let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(rect.width() / rect.height(), 1.0));
-    painter
-        .add(RectShape::filled(rect, corner_radius, Color32::WHITE).with_texture(texture.id(), uv));
+    painter.add(RectShape::filled(rect, corner_radius, Color32::WHITE).with_texture(texture.id(), uv));
 }
 
 /// Paint a gradient image over the given rounded rect, with an outline.
 fn paint_gradient(ui: &Ui, id: Id, bounds: RoundedRect, outline: Stroke, image: ColorImage) {
     let (rect, corner_radius) = bounds.into_parts();
     let [width, height] = image.size;
-    let texture = ui
-        .ctx()
-        .load_texture_cached("color_gradient", id, image, TextureOptions::LINEAR);
+    let texture = ui.ctx().load_texture_cached("color_gradient", id, image, TextureOptions::LINEAR);
 
     // Inset the uv by half a texel, so the edges sample the exact edge colors:
     let inset = vec2(0.5 / width as f32, 0.5 / height as f32);
     let uv = Rect::from_min_max(inset.to_pos2(), pos2(1.0 - inset.x, 1.0 - inset.y));
 
-    ui.painter()
-        .add(RectShape::filled(rect, corner_radius, Color32::WHITE).with_texture(texture.id(), uv));
+    ui.painter().add(RectShape::filled(rect, corner_radius, Color32::WHITE).with_texture(texture.id(), uv));
 
     // The outline must be a separate shape:
     // a textured `RectShape` cannot have a stroke,
     // since the stroke vertices would sample the same texture.
-    ui.painter()
-        .rect_stroke(rect, corner_radius, outline, StrokeKind::Inside);
+    ui.painter().rect_stroke(rect, corner_radius, outline, StrokeKind::Inside);
 }
 
 /// Show a color with background checkers to demonstrate transparency (if any).
@@ -139,11 +122,7 @@ fn show_srgba_unmultiplied_at(painter: &Painter, [r, g, b, a]: [u8; 4], bounds: 
 
         let left_corner_radius = corner_radius.with_east(0.0);
         let right_corner_radius = corner_radius.with_west(0.0);
-        painter.rect_filled(
-            left,
-            left_corner_radius,
-            Color32::from_rgba_unmultiplied(r, g, b, a),
-        );
+        painter.rect_filled(left, left_corner_radius, Color32::from_rgba_unmultiplied(r, g, b, a));
         painter.rect_filled(right, right_corner_radius, Color32::from_rgb(r, g, b));
     }
 }
@@ -159,11 +138,7 @@ fn color_button(ui: &mut Ui, srgba: [u8; 4], open: bool) -> Response {
     });
 
     if ui.is_rect_visible(rect) {
-        let visuals = if open {
-            &ui.visuals().widgets.open
-        } else {
-            ui.style().interact(&response)
-        };
+        let visuals = if open { &ui.visuals().widgets.open } else { ui.style().interact(&response) };
         let rect = rect.expand(visuals.expansion);
 
         let stroke_width = 1.0;
@@ -207,13 +182,7 @@ fn color_slider_1d(ui: &mut Ui, value: &mut f32, color_at: impl Fn(f32) -> Color
             let width = N as usize + 1;
             let pixels = (0..width).map(|i| color_at(i as f32 / N as f32)).collect();
             let image = ColorImage::new([width, 1], pixels);
-            paint_gradient(
-                ui,
-                response.id.with("gradient"),
-                bounds,
-                visuals.bg_stroke,
-                image,
-            );
+            paint_gradient(ui, response.id.with("gradient"), bounds, visuals.bg_stroke, image);
         }
 
         {
@@ -245,12 +214,7 @@ fn color_slider_1d(ui: &mut Ui, value: &mut f32, color_at: impl Fn(f32) -> Color
 /// * top-left: white `[s: 0.0, v: 1.0]`
 /// * top-right: fully saturated color `[s: 1.0, v: 1.0]`
 /// * bottom-right: black `[s: 0.0, v: 1.0].`
-fn color_slider_2d(
-    ui: &mut Ui,
-    x_value: &mut f32,
-    y_value: &mut f32,
-    color_at: impl Fn(f32, f32) -> Color32,
-) -> Response {
+fn color_slider_2d(ui: &mut Ui, x_value: &mut f32, y_value: &mut f32, color_at: impl Fn(f32, f32) -> Color32) -> Response {
     let desired_size = Vec2::splat(ui.spacing().slider_width);
     let (rect, response) = ui.allocate_at_least(desired_size, Sense::click_and_drag());
 
@@ -275,13 +239,7 @@ fn color_slider_2d(
                 }
             }
             let image = ColorImage::new([width, width], pixels);
-            paint_gradient(
-                ui,
-                response.id.with("gradient"),
-                RoundedRect::new(rect, corner_radius),
-                visuals.bg_stroke,
-                image,
-            );
+            paint_gradient(ui, response.id.with("gradient"), RoundedRect::new(rect, corner_radius), visuals.bg_stroke, image);
         }
 
         // Show where the slider is at:
@@ -335,11 +293,7 @@ fn color_picker_hsvag_2d(ui: &mut Ui, hsvag: &mut HsvaGamma, alpha: Alpha) {
 
             if edited.rgb {
                 let alpha = hsvag.a;
-                *hsvag = HsvaGamma::from(Hsva::from_srgb([
-                    srgba_unmultiplied[0],
-                    srgba_unmultiplied[1],
-                    srgba_unmultiplied[2],
-                ]));
+                *hsvag = HsvaGamma::from(Hsva::from_srgb([srgba_unmultiplied[0], srgba_unmultiplied[1], srgba_unmultiplied[2]]));
                 hsvag.a = alpha;
             }
             if edited.alpha {
@@ -353,11 +307,7 @@ fn color_picker_hsvag_2d(ui: &mut Ui, hsvag: &mut HsvaGamma, alpha: Alpha) {
 
             if edited.rgb {
                 let alpha = hsvag.a;
-                *hsvag = HsvaGamma::from(Hsva::from_rgb([
-                    rgba_unmultiplied[0],
-                    rgba_unmultiplied[1],
-                    rgba_unmultiplied[2],
-                ]));
+                *hsvag = HsvaGamma::from(Hsva::from_rgb([rgba_unmultiplied[0], rgba_unmultiplied[1], rgba_unmultiplied[2]]));
                 hsvag.a = alpha;
             }
             if edited.alpha {
@@ -367,12 +317,7 @@ fn color_picker_hsvag_2d(ui: &mut Ui, hsvag: &mut HsvaGamma, alpha: Alpha) {
     }
 
     let current_color_size = vec2(ui.spacing().slider_width, ui.spacing().interact_size.y);
-    show_srgba_unmultiplied(
-        ui,
-        Hsva::from(*hsvag).to_srgba_unmultiplied(),
-        current_color_size,
-    )
-    .on_hover_text("Selected color");
+    show_srgba_unmultiplied(ui, Hsva::from(*hsvag).to_srgba_unmultiplied(), current_color_size).on_hover_text("Selected color");
 
     if alpha == Alpha::BlendOrAdditive {
         let a = &mut hsvag.a;
@@ -406,16 +351,7 @@ fn color_picker_hsvag_2d(ui: &mut Ui, hsvag: &mut HsvaGamma, alpha: Alpha) {
 
     color_slider_2d(ui, s, v, |s, v| HsvaGamma { s, v, ..opaque }.into());
 
-    color_slider_1d(ui, h, |h| {
-        HsvaGamma {
-            h,
-            s: 1.0,
-            v: 1.0,
-            a: 1.0,
-        }
-        .into()
-    })
-    .on_hover_text("Hue");
+    color_slider_1d(ui, h, |h| HsvaGamma { h, s: 1.0, v: 1.0, a: 1.0 }.into()).on_hover_text("Hue");
 
     let additive = is_additive_alpha(hsvag.a);
 
@@ -454,11 +390,7 @@ fn srgba_edit_ui(ui: &mut Ui, [r, g, b, a]: &mut [u8; 4], alpha: Alpha) -> Color
     ui.horizontal(|ui| {
         input_type_button_ui(ui);
 
-        if ui
-            .button("📋")
-            .on_hover_text("Click to copy color values")
-            .clicked()
-        {
+        if ui.button("📋").on_hover_text("Click to copy color values").clicked() {
             if alpha == Alpha::Opaque {
                 ui.copy_text(format!("{r}, {g}, {b}"));
             } else {
@@ -482,12 +414,7 @@ fn srgba_edit_ui(ui: &mut Ui, [r, g, b, a]: &mut [u8; 4], alpha: Alpha) -> Color
 /// Returns which channels changed.
 fn rgba_edit_ui(ui: &mut Ui, [r, g, b, a]: &mut [f32; 4], alpha: Alpha) -> ColorEditResult {
     fn drag_value(ui: &mut Ui, prefix: &str, value: &mut f32) -> Response {
-        DragValue::new(value)
-            .speed(0.003)
-            .prefix(prefix)
-            .range(0.0..=1.0)
-            .custom_formatter(|n, _| format!("{n:.03}"))
-            .ui(ui)
+        DragValue::new(value).speed(0.003).prefix(prefix).range(0.0..=1.0).custom_formatter(|n, _| format!("{n:.03}")).ui(ui)
     }
 
     let mut edited = ColorEditResult::default();
@@ -495,11 +422,7 @@ fn rgba_edit_ui(ui: &mut Ui, [r, g, b, a]: &mut [f32; 4], alpha: Alpha) -> Color
     ui.horizontal(|ui| {
         input_type_button_ui(ui);
 
-        if ui
-            .button("📋")
-            .on_hover_text("Click to copy color values")
-            .clicked()
-        {
+        if ui.button("📋").on_hover_text("Click to copy color values").clicked() {
             if alpha == Alpha::Opaque {
                 ui.copy_text(format!("{r:.03}, {g:.03}, {b:.03}"));
             } else {
@@ -562,15 +485,12 @@ pub fn color_edit_button_hsva(ui: &mut Ui, hsva: &mut Hsva, alpha: Alpha) -> Res
 
     const COLOR_SLIDER_WIDTH: f32 = 275.0;
 
-    Popup::menu(&button_response)
-        .id(popup_id)
-        .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
-        .show(|ui| {
-            ui.spacing_mut().slider_width = COLOR_SLIDER_WIDTH;
-            if color_picker_hsva_2d(ui, hsva, alpha) {
-                button_response.mark_changed();
-            }
-        });
+    Popup::menu(&button_response).id(popup_id).close_behavior(PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+        ui.spacing_mut().slider_width = COLOR_SLIDER_WIDTH;
+        if color_picker_hsva_2d(ui, hsva, alpha) {
+            button_response.mark_changed();
+        }
+    });
 
     button_response
 }

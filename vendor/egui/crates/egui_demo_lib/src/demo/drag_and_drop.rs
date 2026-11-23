@@ -65,10 +65,7 @@ impl crate::View for DragAndDropDemo {
                     ui.set_min_size(vec2(64.0, 100.0));
                     for (row_idx, item) in column.iter().enumerate() {
                         let item_id = Id::unique(("my_drag_and_drop_demo", col_idx, row_idx));
-                        let item_location = Location {
-                            col: col_idx,
-                            row: row_idx,
-                        };
+                        let item_location = Location { col: col_idx, row: row_idx };
                         let response = ui
                             .dnd_drag_source(item_id, item_location, |ui| {
                                 ui.label(item);
@@ -76,10 +73,9 @@ impl crate::View for DragAndDropDemo {
                             .response;
 
                         // Detect drops onto this item:
-                        if let (Some(pointer), Some(hovered_payload)) = (
-                            ui.input(|i| i.pointer.interact_pos()),
-                            response.dnd_hover_payload::<Location>(),
-                        ) {
+                        if let (Some(pointer), Some(hovered_payload)) =
+                            (ui.input(|i| i.pointer.interact_pos()), response.dnd_hover_payload::<Location>())
+                        {
                             let rect = response.rect;
 
                             // Preview insertion:
@@ -101,10 +97,7 @@ impl crate::View for DragAndDropDemo {
                             if let Some(dragged_payload) = response.dnd_release_payload() {
                                 // The user dropped onto this item.
                                 from = Some(dragged_payload);
-                                to = Some(Location {
-                                    col: col_idx,
-                                    row: insert_row_idx,
-                                });
+                                to = Some(Location { col: col_idx, row: insert_row_idx });
                             }
                         }
                     }

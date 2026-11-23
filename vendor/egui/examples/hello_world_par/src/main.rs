@@ -10,15 +10,8 @@ use eframe::egui;
 
 fn main() -> eframe::Result {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1024.0, 768.0]),
-        ..Default::default()
-    };
-    eframe::run_native(
-        "My parallel egui App",
-        options,
-        Box::new(|_cc| Ok(Box::new(MyApp::new()))),
-    )
+    let options = eframe::NativeOptions { viewport: egui::ViewportBuilder::default().with_inner_size([1024.0, 768.0]), ..Default::default() };
+    eframe::run_native("My parallel egui App", options, Box::new(|_cc| Ok(Box::new(MyApp::new()))))
 }
 
 /// State per thread.
@@ -32,36 +25,26 @@ struct ThreadState {
 impl ThreadState {
     fn new(thread_nr: usize) -> Self {
         let title = format!("Background thread {thread_nr}");
-        Self {
-            thread_nr,
-            title,
-            name: "Arthur".into(),
-            age: 12 + thread_nr as u32 * 10,
-        }
+        Self { thread_nr, title, name: "Arthur".into(), age: 12 + thread_nr as u32 * 10 }
     }
 
     fn show(&mut self, ctx: &egui::Context) {
         let pos = egui::pos2(16.0, 128.0 * (self.thread_nr as f32 + 1.0));
-        egui::Window::new(&self.title)
-            .default_pos(pos)
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label("Your name: ");
-                    ui.text_edit_singleline(&mut self.name);
-                });
-                ui.add(egui::Slider::new(&mut self.age, 0..=120).text("age"));
-                if ui.button("Increment").clicked() {
-                    self.age += 1;
-                }
-                ui.label(format!("Hello '{}', age {}", self.name, self.age));
+        egui::Window::new(&self.title).default_pos(pos).show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.label("Your name: ");
+                ui.text_edit_singleline(&mut self.name);
             });
+            ui.add(egui::Slider::new(&mut self.age, 0..=120).text("age"));
+            if ui.button("Increment").clicked() {
+                self.age += 1;
+            }
+            ui.label(format!("Hello '{}', age {}", self.name, self.age));
+        });
     }
 }
 
-fn new_worker(
-    thread_nr: usize,
-    on_done_tx: mpsc::SyncSender<()>,
-) -> (JoinHandle<()>, mpsc::SyncSender<egui::Context>) {
+fn new_worker(thread_nr: usize, on_done_tx: mpsc::SyncSender<()>) -> (JoinHandle<()>, mpsc::SyncSender<egui::Context>) {
     let (show_tx, show_rc) = mpsc::sync_channel(0);
     let handle = std::thread::Builder::new()
         .name(format!("EguiPanelWorker {thread_nr}"))
@@ -87,11 +70,7 @@ impl MyApp {
         let threads = Vec::with_capacity(3);
         let (on_done_tx, on_done_rc) = mpsc::sync_channel(0);
 
-        let mut slf = Self {
-            threads,
-            on_done_tx,
-            on_done_rc,
-        };
+        let mut slf = Self { threads, on_done_tx, on_done_rc };
 
         slf.spawn_thread();
         slf.spawn_thread();
@@ -101,8 +80,7 @@ impl MyApp {
 
     fn spawn_thread(&mut self) {
         let thread_nr = self.threads.len();
-        self.threads
-            .push(new_worker(thread_nr, self.on_done_tx.clone()));
+        self.threads.push(new_worker(thread_nr, self.on_done_tx.clone()));
     }
 }
 

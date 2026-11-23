@@ -28,15 +28,10 @@ pub struct CacheStorage {
 
 impl CacheStorage {
     pub fn cache<Cache: CacheTrait + Default>(&mut self) -> &mut Cache {
-        let cache = self
-            .caches
-            .entry(core::any::TypeId::of::<Cache>())
-            .or_insert_with(|| Box::<Cache>::default());
+        let cache = self.caches.entry(core::any::TypeId::of::<Cache>()).or_insert_with(|| Box::<Cache>::default());
 
         #[expect(clippy::unwrap_used)]
-        (cache.as_mut() as &mut dyn core::any::Any)
-            .downcast_mut::<Cache>()
-            .unwrap()
+        (cache.as_mut() as &mut dyn core::any::Any).downcast_mut::<Cache>().unwrap()
     }
 
     /// Total number of cached values
@@ -62,11 +57,6 @@ impl Clone for CacheStorage {
 
 impl core::fmt::Debug for CacheStorage {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "FrameCacheStorage[{} caches with {} elements]",
-            self.caches.len(),
-            self.num_values()
-        )
+        write!(f, "FrameCacheStorage[{} caches with {} elements]", self.caches.len(), self.num_values())
     }
 }

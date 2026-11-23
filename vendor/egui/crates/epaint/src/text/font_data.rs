@@ -38,11 +38,7 @@ impl FontData {
 
     /// Use already shared bytes, e.g. a memory-mapped system font file, without copying them.
     pub fn from_blob(font: Blob, index: u32) -> Self {
-        Self {
-            font,
-            index,
-            tweak: Default::default(),
-        }
+        Self { font, index, tweak: Default::default() }
     }
 
     /// The content of the font file.
@@ -74,10 +70,7 @@ impl FontData {
             .iter()
             .map(|axis| FontVariationAxis {
                 tag: axis.tag(),
-                name: font
-                    .localized_strings(axis.name_id())
-                    .english_or_first()
-                    .map(|name| name.chars().collect()),
+                name: font.localized_strings(axis.name_id()).english_or_first().map(|name| name.chars().collect()),
                 range: Rangef::new(axis.min_value(), axis.max_value()),
                 default: axis.default_value(),
                 hidden: axis.is_hidden(),
@@ -116,9 +109,7 @@ impl AsRef<[u8]> for FontData {
 impl PartialEq for FontData {
     fn eq(&self, other: &Self) -> bool {
         let Self { font, index, tweak } = self;
-        *index == other.index
-            && *tweak == other.tweak
-            && (Arc::ptr_eq(font, &other.font) || self.bytes() == other.bytes())
+        *index == other.index && *tweak == other.tweak && (Arc::ptr_eq(font, &other.font) || self.bytes() == other.bytes())
     }
 }
 
@@ -141,9 +132,7 @@ mod blob_serde {
         serde::Serialize::serialize((**blob).as_ref(), serializer)
     }
 
-    pub fn deserialize<'de, D: serde::Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Blob, D::Error> {
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Blob, D::Error> {
         let bytes: Vec<u8> = serde::Deserialize::deserialize(deserializer)?;
         Ok(Arc::new(bytes))
     }

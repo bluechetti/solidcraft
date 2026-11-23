@@ -99,11 +99,7 @@ impl<'a> Atoms<'a> {
                         SaltPart::ImageUri(image.uri())
                     }
                 }
-                AtomKind::Empty
-                | AtomKind::Closure(_)
-                | AtomKind::Paint(_)
-                | AtomKind::Widget(_)
-                | AtomKind::Container(_) => SaltPart::Other,
+                AtomKind::Empty | AtomKind::Closure(_) | AtomKind::Paint(_) | AtomKind::Widget(_) | AtomKind::Container(_) => SaltPart::Other,
             };
             (part, atom.id)
         }
@@ -122,9 +118,7 @@ impl<'a> Atoms<'a> {
 
         impl core::fmt::Debug for AtomsSalt<'_, '_> {
             fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-                f.debug_list()
-                    .entries(self.0.iter().map(salt_part))
-                    .finish()
+                f.debug_list().entries(self.0.iter().map(salt_part)).finish()
             }
         }
 
@@ -145,48 +139,23 @@ impl<'a> Atoms<'a> {
     }
 
     pub fn iter_images(&self) -> impl Iterator<Item = &Image<'a>> {
-        self.iter_kinds().filter_map(|kind| {
-            if let AtomKind::Image(image) = kind {
-                Some(image)
-            } else {
-                None
-            }
-        })
+        self.iter_kinds().filter_map(|kind| if let AtomKind::Image(image) = kind { Some(image) } else { None })
     }
 
     pub fn iter_images_mut(&mut self) -> impl Iterator<Item = &mut Image<'a>> {
-        self.iter_kinds_mut().filter_map(|kind| {
-            if let AtomKind::Image(image) = kind {
-                Some(image)
-            } else {
-                None
-            }
-        })
+        self.iter_kinds_mut().filter_map(|kind| if let AtomKind::Image(image) = kind { Some(image) } else { None })
     }
 
     pub fn iter_texts(&self) -> impl Iterator<Item = &WidgetText> + use<'_, 'a> {
-        self.iter_kinds().filter_map(|kind| {
-            if let AtomKind::Text(text) = kind {
-                Some(text)
-            } else {
-                None
-            }
-        })
+        self.iter_kinds().filter_map(|kind| if let AtomKind::Text(text) = kind { Some(text) } else { None })
     }
 
     pub fn iter_texts_mut(&mut self) -> impl Iterator<Item = &mut WidgetText> + use<'a, '_> {
-        self.iter_kinds_mut().filter_map(|kind| {
-            if let AtomKind::Text(text) = kind {
-                Some(text)
-            } else {
-                None
-            }
-        })
+        self.iter_kinds_mut().filter_map(|kind| if let AtomKind::Text(text) = kind { Some(text) } else { None })
     }
 
     pub fn map_atoms(&mut self, mut f: impl FnMut(Atom<'a>) -> Atom<'a>) {
-        self.iter_mut()
-            .for_each(|atom| *atom = f(core::mem::take(atom)));
+        self.iter_mut().for_each(|atom| *atom = f(core::mem::take(atom)));
     }
 
     pub fn map_kind<F>(&mut self, mut f: F)
@@ -202,26 +171,14 @@ impl<'a> Atoms<'a> {
     where
         F: FnMut(Image<'a>) -> Image<'a>,
     {
-        self.map_kind(|kind| {
-            if let AtomKind::Image(image) = kind {
-                AtomKind::Image(f(image))
-            } else {
-                kind
-            }
-        });
+        self.map_kind(|kind| if let AtomKind::Image(image) = kind { AtomKind::Image(f(image)) } else { kind });
     }
 
     pub fn map_texts<F>(&mut self, mut f: F)
     where
         F: FnMut(WidgetText) -> WidgetText,
     {
-        self.map_kind(|kind| {
-            if let AtomKind::Text(text) = kind {
-                AtomKind::Text(f(text))
-            } else {
-                kind
-            }
-        });
+        self.map_kind(|kind| if let AtomKind::Text(text) = kind { AtomKind::Text(f(text)) } else { kind });
     }
 }
 

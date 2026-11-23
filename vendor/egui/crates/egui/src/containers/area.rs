@@ -5,8 +5,8 @@
 use emath::GuiRounding as _;
 
 use crate::{
-    Align2, Context, Id, InnerResponse, LayerId, Layout, NumExt as _, Order, Pos2, Rect, Response,
-    Sense, Ui, UiBuilder, UiKind, UiStackInfo, Vec2, WidgetRect, WidgetWithState, emath, pos2,
+    Align2, Context, Id, InnerResponse, LayerId, Layout, NumExt as _, Order, Pos2, Rect, Response, Sense, Ui, UiBuilder, UiKind, UiStackInfo, Vec2,
+    WidgetRect, WidgetWithState, emath, pos2,
 };
 
 /// State of an [`Area`] that is persisted between frames.
@@ -43,13 +43,7 @@ pub struct AreaState {
 
 impl Default for AreaState {
     fn default() -> Self {
-        Self {
-            pivot_pos: None,
-            pivot: Align2::LEFT_TOP,
-            size: None,
-            interactable: true,
-            last_became_visible_at: None,
-        }
+        Self { pivot_pos: None, pivot: Align2::LEFT_TOP, size: None, interactable: true, last_became_visible_at: None }
     }
 }
 
@@ -64,20 +58,13 @@ impl AreaState {
     pub fn left_top_pos(&self) -> Pos2 {
         let pivot_pos = self.pivot_pos.unwrap_or_default();
         let size = self.size.unwrap_or_default();
-        pos2(
-            pivot_pos.x - self.pivot.x().to_factor() * size.x,
-            pivot_pos.y - self.pivot.y().to_factor() * size.y,
-        )
-        .round_ui()
+        pos2(pivot_pos.x - self.pivot.x().to_factor() * size.x, pivot_pos.y - self.pivot.y().to_factor() * size.y).round_ui()
     }
 
     /// Move the left top positions of the area.
     pub fn set_left_top_pos(&mut self, pos: Pos2) {
         let size = self.size.unwrap_or_default();
-        self.pivot_pos = Some(pos2(
-            pos.x + self.pivot.x().to_factor() * size.x,
-            pos.y + self.pivot.y().to_factor() * size.y,
-        ));
+        self.pivot_pos = Some(pos2(pos.x + self.pivot.x().to_factor() * size.x, pos.y + self.pivot.y().to_factor() * size.y));
     }
 
     /// Where the area is on screen.
@@ -370,11 +357,7 @@ impl Area {
     }
 
     pub(crate) fn get_pivot(&self) -> Align2 {
-        if let Some((pivot, _)) = self.anchor {
-            pivot
-        } else {
-            Align2::LEFT_TOP
-        }
+        if let Some((pivot, _)) = self.anchor { pivot } else { Align2::LEFT_TOP }
     }
 
     /// If `true`, quickly fade in the area.
@@ -438,11 +421,7 @@ pub(crate) struct Prepared {
 }
 
 impl Area {
-    pub fn show<R>(
-        self,
-        ctx: &Context,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> InnerResponse<R> {
+    pub fn show<R>(self, ctx: &Context, add_contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
         let mut prepared = self.begin(ctx);
         let mut content_ui = prepared.content_ui(ctx);
         let inner = add_contents(&mut content_ui);
@@ -486,18 +465,9 @@ impl Area {
         // and will be constrained again next frame, once we know the actual size.
         // So we don't constrain it with the guessed size of this sizing pass,
         // which could move the area (e.g. a shrunk window placed against the edge of the screen).
-        let restored_without_size = !force_sizing_pass
-            && state
-                .as_ref()
-                .is_some_and(|state| state.pivot_pos.is_some() && state.size.is_none());
+        let restored_without_size = !force_sizing_pass && state.as_ref().is_some_and(|state| state.pivot_pos.is_some() && state.size.is_none());
 
-        let mut state = state.unwrap_or(AreaState {
-            pivot_pos: None,
-            pivot,
-            size: None,
-            interactable,
-            last_became_visible_at: None,
-        });
+        let mut state = state.unwrap_or(AreaState { pivot_pos: None, pivot, size: None, interactable, last_became_visible_at: None });
         if force_sizing_pass {
             sizing_pass = true;
             state.size = None;
@@ -506,9 +476,7 @@ impl Area {
         if let Some(new_pos) = new_pos {
             state.pivot_pos = Some(new_pos);
         }
-        state.pivot_pos.get_or_insert_with(|| {
-            default_pos.unwrap_or_else(|| automatic_area_position(ctx, constrain_rect, layer_id))
-        });
+        state.pivot_pos.get_or_insert_with(|| default_pos.unwrap_or_else(|| automatic_area_position(ctx, constrain_rect, layer_id)));
 
         let size = *state.size.get_or_insert_with(|| {
             sizing_pass = true;
@@ -545,12 +513,7 @@ impl Area {
         }
 
         if let Some((anchor, offset)) = anchor {
-            state.set_left_top_pos(
-                anchor
-                    .align_size_within_rect(size, constrain_rect)
-                    .left_top()
-                    + offset,
-            );
+            state.set_left_top_pos(anchor.align_size_within_rect(size, constrain_rect).left_top() + offset);
         }
 
         // interact right away to prevent frame-delay
@@ -593,12 +556,9 @@ impl Area {
                 && move_response.dragged()
                 && let Some(pivot_pos) = &mut state.pivot_pos
             {
-                let pivot_at_start_of_drag = ctx.data_mut(|data| {
-                    *data.get_temp_mut_or::<Pos2>(pivot_at_start_of_drag_id, *pivot_pos)
-                });
+                let pivot_at_start_of_drag = ctx.data_mut(|data| *data.get_temp_mut_or::<Pos2>(pivot_at_start_of_drag_id, *pivot_pos));
 
-                *pivot_pos =
-                    pivot_at_start_of_drag + move_response.total_drag_delta().unwrap_or_default();
+                *pivot_pos = pivot_at_start_of_drag + move_response.total_drag_delta().unwrap_or_default();
             } else {
                 ctx.data_mut(|data| data.remove::<Pos2>(pivot_at_start_of_drag_id));
             }
@@ -616,11 +576,7 @@ impl Area {
 
         state.set_left_top_pos(round_area_position(
             ctx,
-            if constrain {
-                Context::constrain_window_rect_to_area(state.rect(), constrain_rect).min
-            } else {
-                state.left_top_pos()
-            },
+            if constrain { Context::constrain_window_rect_to_area(state.rect(), constrain_rect).min } else { state.left_top_pos() },
         ));
 
         // Update response with possibly moved/constrained rect:
@@ -698,10 +654,8 @@ impl Prepared {
         if self.fade_in
             && let Some(last_became_visible_at) = self.state.last_became_visible_at
         {
-            let age =
-                ctx.input(|i| (i.time - last_became_visible_at) as f32 + i.predicted_dt * 0.5);
-            let opacity =
-                crate::remap_clamp(age, 0.0..=ctx.global_style().animation_time, 0.0..=1.0);
+            let age = ctx.input(|i| (i.time - last_became_visible_at) as f32 + i.predicted_dt * 0.5);
+            let opacity = crate::remap_clamp(age, 0.0..=ctx.global_style().animation_time, 0.0..=1.0);
             let opacity = emath::easing::quadratic_out(opacity); // slow fade-out = quick fade-in
             ui.multiply_opacity(opacity);
             if opacity < 1.0 {
@@ -722,14 +676,7 @@ impl Prepared {
 
     #[expect(clippy::needless_pass_by_value)] // intentional to swallow up `content_ui`.
     pub(crate) fn end(self, ctx: &Context, content_ui: Ui) -> Response {
-        let Self {
-            info: _,
-            layer_id,
-            mut state,
-            move_response: mut response,
-            sizing_pass,
-            ..
-        } = self;
+        let Self { info: _, layer_id, mut state, move_response: mut response, sizing_pass, .. } = self;
 
         state.size = Some(content_ui.min_size());
 

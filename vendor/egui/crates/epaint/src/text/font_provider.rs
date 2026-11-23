@@ -79,10 +79,7 @@ pub(crate) struct FontProviders {
 
 impl FontProviders {
     pub fn new(providers: Vec<Arc<dyn FontProvider>>) -> Self {
-        Self {
-            providers,
-            discovered: Vec::new(),
-        }
+        Self { providers, discovered: Vec::new() }
     }
 
     /// Fonts discovered so far, in the order they were found.
@@ -92,22 +89,14 @@ impl FontProviders {
 
     /// The fonts every provider wants installed for `family` up front, in priority order.
     pub fn fonts_for_family(&self, family: &FontFamily) -> Vec<FontInsert> {
-        self.providers
-            .iter()
-            .flat_map(|provider| provider.fonts_for_family(family))
-            .collect()
+        self.providers.iter().flat_map(|provider| provider.fonts_for_family(family)).collect()
     }
 
     /// Ask the providers for a font with a glyph for the first char of `cluster`,
     /// and install it into `faces`.
     ///
     /// The caller caches the result, so each provider is asked at most once per (family, char).
-    pub fn discover(
-        &mut self,
-        faces: &mut FaceStore,
-        family: &FontFamily,
-        cluster: &str,
-    ) -> Option<FontFaceKey> {
+    pub fn discover(&mut self, faces: &mut FaceStore, family: &FontFamily, cluster: &str) -> Option<FontFaceKey> {
         let base_char = cluster.chars().next()?;
         if base_char.is_control() || is_combining_mark(base_char) {
             return None;
@@ -122,29 +111,18 @@ impl FontProviders {
             let key = match faces.install(&insert.name, &insert.data) {
                 Ok(key) => key,
                 Err(err) => {
-                    log::warn!(
-                        "Failed to parse font {:?} from a font provider: {err}",
-                        insert.name
-                    );
+                    log::warn!("Failed to parse font {:?} from a font provider: {err}", insert.name);
                     continue;
                 }
             };
-            let has_glyph = faces
-                .get_mut(key)
-                .is_some_and(|face| face.glyph_id_resolution(base_char).is_some());
+            let has_glyph = faces.get_mut(key).is_some_and(|face| face.glyph_id_resolution(base_char).is_some());
             if !has_glyph {
-                log::warn!(
-                    "Font {:?} from a font provider has no glyph for {base_char:?}",
-                    insert.name
-                );
+                log::warn!("Font {:?} from a font provider has no glyph for {base_char:?}", insert.name);
                 continue;
             }
 
             if !insert.families.iter().any(|f| f.family == *family) {
-                insert.families.push(InsertFontFamily {
-                    family: family.clone(),
-                    priority: FontPriority::Lowest,
-                });
+                insert.families.push(InsertFontFamily { family: family.clone(), priority: FontPriority::Lowest });
             }
             self.discovered.push(insert);
             return Some(key);
@@ -166,8 +144,7 @@ mod tests {
         Color32, ColorImage,
         mutex::Mutex,
         text::{
-            FontData, FontDefinitions, FontId, Fonts, GlyphBitmap, GlyphRasterizer,
-            GlyphRasterizerRequest, RasterizedGlyph, TextOptions, ViewportKey,
+            FontData, FontDefinitions, FontId, Fonts, GlyphBitmap, GlyphRasterizer, GlyphRasterizerRequest, RasterizedGlyph, TextOptions, ViewportKey,
         },
     };
 
@@ -182,37 +159,22 @@ mod tests {
     /// Only `Hack`, so that e.g. [`SCHWA`] is missing.
     fn hack_only() -> FontDefinitions {
         let mut definitions = FontDefinitions::empty();
-        definitions.font_data.insert(
-            "Hack".to_owned(),
-            Arc::new(FontData::from_static(HACK_REGULAR)),
-        );
-        definitions
-            .families
-            .insert(FontFamily::Proportional, vec!["Hack".to_owned()]);
-        definitions
-            .families
-            .insert(FontFamily::Monospace, vec!["Hack".to_owned()]);
+        definitions.font_data.insert("Hack".to_owned(), Arc::new(FontData::from_static(HACK_REGULAR)));
+        definitions.families.insert(FontFamily::Proportional, vec!["Hack".to_owned()]);
+        definitions.families.insert(FontFamily::Monospace, vec!["Hack".to_owned()]);
         definitions
     }
 
     /// A provider that records its requests, and returns `Ubuntu-Light` for everything if `provide`.
-    fn recording_provider(
-        requests: &Arc<Mutex<Vec<(FontFamily, String)>>>,
-        provide: bool,
-    ) -> Arc<dyn FontProvider> {
+    fn recording_provider(requests: &Arc<Mutex<Vec<(FontFamily, String)>>>, provide: bool) -> Arc<dyn FontProvider> {
         let requests = Arc::clone(requests);
         Arc::new(move |request: &FallbackRequest<'_>| {
-            requests
-                .lock()
-                .push((request.family.clone(), request.cluster.to_owned()));
+            requests.lock().push((request.family.clone(), request.cluster.to_owned()));
             provide.then(|| {
                 FontInsert::new(
                     DISCOVERED_FONT,
                     FontData::from_static(UBUNTU_LIGHT),
-                    vec![InsertFontFamily {
-                        family: request.family.clone(),
-                        priority: FontPriority::Lowest,
-                    }],
+                    vec![InsertFontFamily { family: request.family.clone(), priority: FontPriority::Lowest }],
                 )
             })
         })
@@ -221,29 +183,20 @@ mod tests {
     fn color_rasterizer() -> GlyphRasterizer {
         GlyphRasterizer::new("test color_rasterizer", |_: &GlyphRasterizerRequest<'_>| {
             Some(RasterizedGlyph {
-                bitmap: GlyphBitmap {
-                    image: ColorImage::new([1, 1], vec![Color32::RED]),
-                    offset_px: emath::Vec2::ZERO,
-                    is_color: true,
-                },
+                bitmap: GlyphBitmap { image: ColorImage::new([1, 1], vec![Color32::RED]), offset_px: emath::Vec2::ZERO, is_color: true },
                 advance_px: 10.0,
             })
         })
     }
 
     fn fonts_with(provider: Arc<dyn FontProvider>, rasterizer: Option<GlyphRasterizer>) -> Fonts {
-        let mut fonts =
-            Fonts::new(TextOptions::default(), hack_only()).with_font_providers(vec![provider]);
+        let mut fonts = Fonts::new(TextOptions::default(), hack_only()).with_font_providers(vec![provider]);
         fonts.set_glyph_rasterizers(rasterizer.into_iter().collect());
         fonts
     }
 
     fn first_glyph(fonts: &mut Fonts, c: char) -> crate::text::Glyph {
-        let galley = fonts.with_pixels_per_point(1.0).layout_no_wrap(
-            c.to_string(),
-            FontId::proportional(14.0),
-            Color32::WHITE,
-        );
+        let galley = fonts.with_pixels_per_point(1.0).layout_no_wrap(c.to_string(), FontId::proportional(14.0), Color32::WHITE);
         galley.rows[0].row.glyphs[0]
     }
 
@@ -256,10 +209,7 @@ mod tests {
         assert!(fonts.has_glyph(&font_id, SCHWA));
         assert!(fonts.has_glyph(&font_id, SCHWA));
         assert!(fonts.has_glyph(&font_id, 'a'));
-        assert_eq!(
-            *requests.lock(),
-            vec![(FontFamily::Proportional, SCHWA.to_string())]
-        );
+        assert_eq!(*requests.lock(), vec![(FontFamily::Proportional, SCHWA.to_string())]);
         assert_eq!(fonts.discovered_fonts().len(), 1);
 
         let glyph = first_glyph(&mut fonts, SCHWA);
@@ -267,13 +217,7 @@ mod tests {
         assert!(!glyph.is_color);
         assert_eq!(requests.lock().len(), 1);
 
-        assert_eq!(
-            fonts
-                .with_pixels_per_point(1.0)
-                .characters(&FontFamily::Proportional)
-                .get(&SCHWA),
-            Some(&vec![DISCOVERED_FONT.to_owned()])
-        );
+        assert_eq!(fonts.with_pixels_per_point(1.0).characters(&FontFamily::Proportional).get(&SCHWA), Some(&vec![DISCOVERED_FONT.to_owned()]));
     }
 
     #[test]
@@ -284,13 +228,7 @@ mod tests {
         assert!(!fonts.has_glyph(&FontId::proportional(14.0), HANGUL));
         assert!(!fonts.has_glyph(&FontId::proportional(14.0), HANGUL));
         assert!(!fonts.has_glyph(&FontId::monospace(14.0), HANGUL));
-        assert_eq!(
-            *requests.lock(),
-            vec![
-                (FontFamily::Proportional, HANGUL.to_string()),
-                (FontFamily::Monospace, HANGUL.to_string()),
-            ]
-        );
+        assert_eq!(*requests.lock(), vec![(FontFamily::Proportional, HANGUL.to_string()), (FontFamily::Monospace, HANGUL.to_string()),]);
         assert!(fonts.discovered_fonts().is_empty());
     }
 
@@ -318,29 +256,19 @@ mod tests {
         assert_eq!(fonts.discovered_fonts().len(), 1);
 
         // Change the text options; the faces and families must survive:
-        let options = TextOptions {
-            font_hinting: !TextOptions::default().font_hinting,
-            ..Default::default()
-        };
+        let options = TextOptions { font_hinting: !TextOptions::default().font_hinting, ..Default::default() };
         fonts.begin_pass(options, ViewportKey::default());
 
         assert!(fonts.has_glyph(&font_id, SCHWA));
         assert!(!fonts.has_glyph(&font_id, HANGUL));
-        assert_eq!(
-            requests.lock().len(),
-            2,
-            "The provider should not be asked again"
-        );
+        assert_eq!(requests.lock().len(), 2, "The provider should not be asked again");
         assert_eq!(fonts.discovered_fonts().len(), 1);
     }
 
     #[test]
     fn discovered_font_beats_the_rasterizer() {
         let requests = Arc::new(Mutex::new(Vec::new()));
-        let mut fonts = fonts_with(
-            recording_provider(&requests, true),
-            Some(color_rasterizer()),
-        );
+        let mut fonts = fonts_with(recording_provider(&requests, true), Some(color_rasterizer()));
 
         let glyph = first_glyph(&mut fonts, SCHWA);
         assert!(!glyph.is_color, "Should come from the discovered font");
@@ -350,10 +278,7 @@ mod tests {
     #[test]
     fn rasterizer_is_used_when_the_provider_misses() {
         let requests = Arc::new(Mutex::new(Vec::new()));
-        let mut fonts = fonts_with(
-            recording_provider(&requests, false),
-            Some(color_rasterizer()),
-        );
+        let mut fonts = fonts_with(recording_provider(&requests, false), Some(color_rasterizer()));
 
         let glyph = first_glyph(&mut fonts, HANGUL);
         assert!(glyph.is_color, "Should come from the rasterizer");

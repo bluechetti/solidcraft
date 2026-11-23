@@ -16,9 +16,7 @@ fn main() {
                 start_puffin_server();
 
                 #[cfg(not(feature = "puffin"))]
-                panic!(
-                    "Unknown argument: {arg} - you need to enable the 'puffin' feature to use this."
-                );
+                panic!("Unknown argument: {arg} - you need to enable the 'puffin' feature to use this.");
             }
 
             _ => {
@@ -29,13 +27,7 @@ fn main() {
 
     {
         // Silence wgpu log spam (https://github.com/gfx-rs/wgpu/issues/3206)
-        let mut rust_log = std::env::var("RUST_LOG").unwrap_or_else(|_| {
-            if cfg!(debug_assertions) {
-                "debug".to_owned()
-            } else {
-                "info".to_owned()
-            }
-        });
+        let mut rust_log = std::env::var("RUST_LOG").unwrap_or_else(|_| if cfg!(debug_assertions) { "debug".to_owned() } else { "info".to_owned() });
         for loud_crate in ["naga", "wgpu_core", "wgpu_hal"] {
             if !rust_log.contains(&format!("{loud_crate}=")) {
                 use core::fmt::Write as _;
@@ -53,9 +45,7 @@ fn main() {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1280.0, 1024.0])
-            .with_drag_and_drop(true),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1280.0, 1024.0]).with_drag_and_drop(true),
 
         #[cfg(feature = "wgpu")]
         renderer: eframe::Renderer::Wgpu,
@@ -63,11 +53,7 @@ fn main() {
         ..Default::default()
     };
 
-    let result = eframe::run_native(
-        "egui demo app",
-        options,
-        Box::new(|cc| Ok(Box::new(egui_demo_app::WrapApp::new(cc)))),
-    );
+    let result = eframe::run_native("egui demo app", options, Box::new(|cc| Ok(Box::new(egui_demo_app::WrapApp::new(cc)))));
 
     match result {
         Ok(()) => {}
@@ -94,11 +80,7 @@ fn start_puffin_server() {
         Ok(puffin_server) => {
             log::info!("Run:  cargo install puffin_viewer && puffin_viewer --url 127.0.0.1:8585");
 
-            std::process::Command::new("puffin_viewer")
-                .arg("--url")
-                .arg("127.0.0.1:8585")
-                .spawn()
-                .ok();
+            std::process::Command::new("puffin_viewer").arg("--url").arg("127.0.0.1:8585").spawn().ok();
 
             // We can store the server if we want, but in this case we just want
             // it to keep running. Dropping it closes the server, so let's not drop it!

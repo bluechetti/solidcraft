@@ -54,12 +54,7 @@ impl From<Color32> for Rgba {
         let [r, g, b, a] = srgba.to_array();
         if a == 0 {
             // Additive, or completely transparent
-            Self([
-                linear_f32_from_gamma_u8(r),
-                linear_f32_from_gamma_u8(g),
-                linear_f32_from_gamma_u8(b),
-                0.0,
-            ])
+            Self([linear_f32_from_gamma_u8(r), linear_f32_from_gamma_u8(g), linear_f32_from_gamma_u8(b), 0.0])
         } else {
             let a = linear_f32_from_linear_u8(a);
             Self([
@@ -77,12 +72,7 @@ impl From<Rgba> for Color32 {
         let [r, g, b, a] = rgba.to_array();
         if a == 0.0 {
             // Additive, or completely transparent
-            Self([
-                gamma_u8_from_linear_f32(r),
-                gamma_u8_from_linear_f32(g),
-                gamma_u8_from_linear_f32(b),
-                0,
-            ])
+            Self([gamma_u8_from_linear_f32(r), gamma_u8_from_linear_f32(g), gamma_u8_from_linear_f32(b), 0])
         } else {
             Self([
                 fast_round(gamma_u8_from_linear_f32(r / a) as f32 * a),
@@ -96,11 +86,7 @@ impl From<Rgba> for Color32 {
 
 /// gamma [0, 255] -> linear [0, 1].
 pub fn linear_f32_from_gamma_u8(s: u8) -> f32 {
-    if s <= 10 {
-        s as f32 / 3294.6
-    } else {
-        ((s as f32 + 14.025) / 269.025).powf(2.4)
-    }
+    if s <= 10 { s as f32 / 3294.6 } else { ((s as f32 + 14.025) / 269.025).powf(2.4) }
 }
 
 /// linear [0, 255] -> linear [0, 1].

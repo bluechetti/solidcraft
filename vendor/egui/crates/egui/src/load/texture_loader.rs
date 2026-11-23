@@ -1,8 +1,8 @@
 use emath::Vec2;
 
 use super::{
-    BytesLoader as _, Context, HashMap, ImagePoll, Mutex, SizeHint, SizedTexture, TextureHandle,
-    TextureLoadResult, TextureLoader, TextureOptions, TexturePoll,
+    BytesLoader as _, Context, HashMap, ImagePoll, Mutex, SizeHint, SizedTexture, TextureHandle, TextureLoadResult, TextureLoader, TextureOptions,
+    TexturePoll,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -39,13 +39,7 @@ impl TextureLoader for DefaultTextureLoader {
         crate::generate_loader_id!(DefaultTextureLoader)
     }
 
-    fn load(
-        &self,
-        ctx: &Context,
-        uri: &str,
-        texture_options: TextureOptions,
-        size_hint: SizeHint,
-    ) -> TextureLoadResult {
+    fn load(&self, ctx: &Context, uri: &str, texture_options: TextureOptions, size_hint: SizeHint) -> TextureLoadResult {
         let svg_size_hint = if is_svg(uri) {
             // For SVGs it's important that we render at the desired size,
             // or we might get a blurry image when we scale it up.
@@ -61,12 +55,7 @@ impl TextureLoader for DefaultTextureLoader {
         let mut state = self.state.lock();
         let State { pass_index, cache } = &mut *state;
 
-        let bucket = cache
-            .entry(PrimaryKey {
-                uri: uri.to_owned(),
-                texture_options,
-            })
-            .or_default();
+        let bucket = cache.entry(PrimaryKey { uri: uri.to_owned(), texture_options }).or_default();
 
         if let Some(texture) = bucket.get_mut(&svg_size_hint) {
             texture.last_used = *pass_index;
@@ -79,14 +68,7 @@ impl TextureLoader for DefaultTextureLoader {
                     let source_size = image.source_size;
                     let handle = ctx.load_texture(uri, image, texture_options);
                     let texture = SizedTexture::new(handle.id(), source_size);
-                    bucket.insert(
-                        svg_size_hint,
-                        Entry {
-                            last_used: *pass_index,
-                            source_size,
-                            handle,
-                        },
-                    );
+                    bucket.insert(svg_size_hint, Entry { last_used: *pass_index, source_size, handle });
                     let reduce_texture_memory = ctx.options(|o| o.reduce_texture_memory);
                     if reduce_texture_memory {
                         let loaders = ctx.loaders();
@@ -135,17 +117,7 @@ impl TextureLoader for DefaultTextureLoader {
     }
 
     fn byte_size(&self) -> usize {
-        self.state
-            .lock()
-            .cache
-            .values()
-            .map(|bucket| {
-                bucket
-                    .values()
-                    .map(|texture| texture.handle.byte_size())
-                    .sum::<usize>()
-            })
-            .sum()
+        self.state.lock().cache.values().map(|bucket| bucket.values().map(|texture| texture.handle.byte_size()).sum::<usize>()).sum()
     }
 }
 

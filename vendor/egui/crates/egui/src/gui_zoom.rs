@@ -15,8 +15,7 @@ pub mod kb_shortcuts {
     /// but it is annoying to have to press shift.
     /// So most browsers also allow `Cmd` + `=` for zooming in.
     /// We do the same.
-    pub const ZOOM_IN_SECONDARY: KeyboardShortcut =
-        KeyboardShortcut::new(Modifiers::COMMAND, Key::Equals);
+    pub const ZOOM_IN_SECONDARY: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Equals);
 
     /// Keyboard shortcut for zooming in (`Cmd` + `-`).
     pub const ZOOM_OUT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Minus);
@@ -34,9 +33,7 @@ pub(crate) fn zoom_with_keyboard(ctx: &Context) {
     if ctx.input_mut(|i| i.consume_shortcut(&kb_shortcuts::ZOOM_RESET)) {
         ctx.set_zoom_factor(1.0);
     } else {
-        if ctx.input_mut(|i| i.consume_shortcut(&kb_shortcuts::ZOOM_IN))
-            || ctx.input_mut(|i| i.consume_shortcut(&kb_shortcuts::ZOOM_IN_SECONDARY))
-        {
+        if ctx.input_mut(|i| i.consume_shortcut(&kb_shortcuts::ZOOM_IN)) || ctx.input_mut(|i| i.consume_shortcut(&kb_shortcuts::ZOOM_IN_SECONDARY)) {
             zoom_in(ctx);
         }
         if ctx.input_mut(|i| i.consume_shortcut(&kb_shortcuts::ZOOM_OUT)) {
@@ -73,40 +70,18 @@ pub fn zoom_menu_buttons(ui: &mut Ui) {
     fn button(ctx: &Context, text: &str, shortcut: &KeyboardShortcut) -> Button<'static> {
         let btn = Button::new(text);
         let zoom_with_keyboard = ctx.options(|o| o.zoom_with_keyboard);
-        if zoom_with_keyboard {
-            btn.shortcut_text(ctx.format_shortcut(shortcut))
-        } else {
-            btn
-        }
+        if zoom_with_keyboard { btn.shortcut_text(ctx.format_shortcut(shortcut)) } else { btn }
     }
 
-    if ui
-        .add_enabled(
-            ui.ctx().zoom_factor() < MAX_ZOOM_FACTOR,
-            button(ui.ctx(), "Zoom In", &kb_shortcuts::ZOOM_IN),
-        )
-        .clicked()
-    {
+    if ui.add_enabled(ui.ctx().zoom_factor() < MAX_ZOOM_FACTOR, button(ui.ctx(), "Zoom In", &kb_shortcuts::ZOOM_IN)).clicked() {
         zoom_in(ui.ctx());
     }
 
-    if ui
-        .add_enabled(
-            ui.ctx().zoom_factor() > MIN_ZOOM_FACTOR,
-            button(ui.ctx(), "Zoom Out", &kb_shortcuts::ZOOM_OUT),
-        )
-        .clicked()
-    {
+    if ui.add_enabled(ui.ctx().zoom_factor() > MIN_ZOOM_FACTOR, button(ui.ctx(), "Zoom Out", &kb_shortcuts::ZOOM_OUT)).clicked() {
         zoom_out(ui.ctx());
     }
 
-    if ui
-        .add_enabled(
-            ui.ctx().zoom_factor() != 1.0,
-            button(ui.ctx(), "Reset Zoom", &kb_shortcuts::ZOOM_RESET),
-        )
-        .clicked()
-    {
+    if ui.add_enabled(ui.ctx().zoom_factor() != 1.0, button(ui.ctx(), "Reset Zoom", &kb_shortcuts::ZOOM_RESET)).clicked() {
         ui.ctx().set_zoom_factor(1.0);
     }
 }

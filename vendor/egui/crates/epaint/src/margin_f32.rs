@@ -20,56 +20,31 @@ pub struct MarginF32 {
 impl From<Margin> for MarginF32 {
     #[inline]
     fn from(margin: Margin) -> Self {
-        Self {
-            left: margin.left as _,
-            right: margin.right as _,
-            top: margin.top as _,
-            bottom: margin.bottom as _,
-        }
+        Self { left: margin.left as _, right: margin.right as _, top: margin.top as _, bottom: margin.bottom as _ }
     }
 }
 
 impl From<MarginF32> for Margin {
     #[inline]
     fn from(marginf: MarginF32) -> Self {
-        Self {
-            left: marginf.left as _,
-            right: marginf.right as _,
-            top: marginf.top as _,
-            bottom: marginf.bottom as _,
-        }
+        Self { left: marginf.left as _, right: marginf.right as _, top: marginf.top as _, bottom: marginf.bottom as _ }
     }
 }
 
 impl MarginF32 {
-    pub const ZERO: Self = Self {
-        left: 0.0,
-        right: 0.0,
-        top: 0.0,
-        bottom: 0.0,
-    };
+    pub const ZERO: Self = Self { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 };
 
     /// The same margin on every side.
     #[doc(alias = "symmetric")]
     #[inline]
     pub const fn same(margin: f32) -> Self {
-        Self {
-            left: margin,
-            right: margin,
-            top: margin,
-            bottom: margin,
-        }
+        Self { left: margin, right: margin, top: margin, bottom: margin }
     }
 
     /// Margins with the same size on opposing sides
     #[inline]
     pub const fn symmetric(x: f32, y: f32) -> Self {
-        Self {
-            left: x,
-            right: x,
-            top: y,
-            bottom: y,
-        }
+        Self { left: x, right: x, top: y, bottom: y }
     }
 
     /// Total margins on both sides
@@ -116,12 +91,7 @@ impl core::ops::Add for MarginF32 {
 
     #[inline]
     fn add(self, other: Self) -> Self {
-        Self {
-            left: self.left + other.left,
-            right: self.right + other.right,
-            top: self.top + other.top,
-            bottom: self.bottom + other.bottom,
-        }
+        Self { left: self.left + other.left, right: self.right + other.right, top: self.top + other.top, bottom: self.bottom + other.bottom }
     }
 }
 
@@ -131,12 +101,7 @@ impl core::ops::Add<f32> for MarginF32 {
 
     #[inline]
     fn add(self, v: f32) -> Self {
-        Self {
-            left: self.left + v,
-            right: self.right + v,
-            top: self.top + v,
-            bottom: self.bottom + v,
-        }
+        Self { left: self.left + v, right: self.right + v, top: self.top + v, bottom: self.bottom + v }
     }
 }
 
@@ -157,12 +122,7 @@ impl core::ops::Mul<f32> for MarginF32 {
 
     #[inline]
     fn mul(self, v: f32) -> Self {
-        Self {
-            left: self.left * v,
-            right: self.right * v,
-            top: self.top * v,
-            bottom: self.bottom * v,
-        }
+        Self { left: self.left * v, right: self.right * v, top: self.top * v, bottom: self.bottom * v }
     }
 }
 
@@ -183,12 +143,7 @@ impl core::ops::Div<f32> for MarginF32 {
 
     #[inline]
     fn div(self, v: f32) -> Self {
-        Self {
-            left: self.left / v,
-            right: self.right / v,
-            top: self.top / v,
-            bottom: self.bottom / v,
-        }
+        Self { left: self.left / v, right: self.right / v, top: self.top / v, bottom: self.bottom / v }
     }
 }
 
@@ -209,12 +164,7 @@ impl core::ops::Sub for MarginF32 {
 
     #[inline]
     fn sub(self, other: Self) -> Self {
-        Self {
-            left: self.left - other.left,
-            right: self.right - other.right,
-            top: self.top - other.top,
-            bottom: self.bottom - other.bottom,
-        }
+        Self { left: self.left - other.left, right: self.right - other.right, top: self.top - other.top, bottom: self.bottom - other.bottom }
     }
 }
 
@@ -224,12 +174,7 @@ impl core::ops::Sub<f32> for MarginF32 {
 
     #[inline]
     fn sub(self, v: f32) -> Self {
-        Self {
-            left: self.left - v,
-            right: self.right - v,
-            top: self.top - v,
-            bottom: self.bottom - v,
-        }
+        Self { left: self.left - v, right: self.right - v, top: self.top - v, bottom: self.bottom - v }
     }
 }
 
@@ -250,10 +195,7 @@ impl core::ops::Add<MarginF32> for Rect {
 
     #[inline]
     fn add(self, margin: MarginF32) -> Self {
-        Self::from_min_max(
-            self.min - margin.left_top(),
-            self.max + margin.right_bottom(),
-        )
+        Self::from_min_max(self.min - margin.left_top(), self.max + margin.right_bottom())
     }
 }
 
@@ -271,10 +213,7 @@ impl core::ops::Sub<MarginF32> for Rect {
 
     #[inline]
     fn sub(self, margin: MarginF32) -> Self {
-        Self::from_min_max(
-            self.min + margin.left_top(),
-            self.max - margin.right_bottom(),
-        )
+        Self::from_min_max(self.min + margin.left_top(), self.max - margin.right_bottom())
     }
 }
 

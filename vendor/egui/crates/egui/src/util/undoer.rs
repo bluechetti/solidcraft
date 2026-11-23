@@ -25,11 +25,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self {
-            max_undos: 100,
-            stable_time: 1.0,
-            auto_save_interval: 30.0,
-        }
+        Self { max_undos: 100, stable_time: 1.0, auto_save_interval: 30.0 }
     }
 }
 
@@ -70,10 +66,7 @@ pub struct Undoer<State> {
 impl<State> core::fmt::Debug for Undoer<State> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         let Self { undos, redos, .. } = self;
-        f.debug_struct("Undoer")
-            .field("undo count", &undos.len())
-            .field("redo count", &redos.len())
-            .finish()
+        f.debug_struct("Undoer").field("undo count", &undos.len()).field("redo count", &redos.len()).finish()
     }
 }
 
@@ -83,12 +76,7 @@ where
 {
     #[inline]
     fn default() -> Self {
-        Self {
-            settings: Settings::default(),
-            undos: VecDeque::new(),
-            redos: Vec::new(),
-            flux: None,
-        }
+        Self { settings: Settings::default(), undos: VecDeque::new(), redos: Vec::new(), flux: None }
     }
 }
 
@@ -106,10 +94,7 @@ where
 {
     /// Create a new [`Undoer`] with the given [`Settings`].
     pub fn with_settings(settings: Settings) -> Self {
-        Self {
-            settings,
-            ..Default::default()
-        }
+        Self { settings, ..Default::default() }
     }
 
     /// Do we have an undo point different from the given state?
@@ -190,16 +175,12 @@ where
 
                     match self.flux.as_mut() {
                         None => {
-                            self.flux = Some(Flux {
-                                start_time: current_time,
-                                latest_change_time: current_time,
-                                latest_state: current_state.clone(),
-                            });
+                            self.flux =
+                                Some(Flux { start_time: current_time, latest_change_time: current_time, latest_state: current_state.clone() });
                         }
                         Some(flux) => {
                             if &flux.latest_state == current_state {
-                                let time_since_latest_change =
-                                    (current_time - flux.latest_change_time) as f32;
+                                let time_since_latest_change = (current_time - flux.latest_change_time) as f32;
                                 if time_since_latest_change >= self.settings.stable_time {
                                     self.add_undo(current_state);
                                 }

@@ -53,8 +53,7 @@ impl TextureManager {
         if let Some(meta) = self.metas.get_mut(&id) {
             if let Some(pos) = delta.pos {
                 debug_assert!(
-                    pos[0] + delta.image.width() <= meta.size[0]
-                        && pos[1] + delta.image.height() <= meta.size[1],
+                    pos[0] + delta.image.width() <= meta.size[0] && pos[1] + delta.image.height() <= meta.size[1],
                     "Partial texture update is outside the bounds of texture {id:?}",
                 );
             } else {
@@ -89,10 +88,7 @@ impl TextureManager {
         if let Some(meta) = self.metas.get_mut(&id) {
             meta.retain_count += 1;
         } else {
-            debug_assert!(
-                false,
-                "Tried retaining texture {id:?} which is not allocated",
-            );
+            debug_assert!(false, "Tried retaining texture {id:?} which is not allocated",);
         }
     }
 
@@ -196,12 +192,8 @@ impl TextureOptions {
     };
 
     /// Linear magnification and minification, but with the texture repeated.
-    pub const LINEAR_REPEAT: Self = Self {
-        magnification: TextureFilter::Linear,
-        minification: TextureFilter::Linear,
-        wrap_mode: TextureWrapMode::Repeat,
-        mipmap_mode: None,
-    };
+    pub const LINEAR_REPEAT: Self =
+        Self { magnification: TextureFilter::Linear, minification: TextureFilter::Linear, wrap_mode: TextureWrapMode::Repeat, mipmap_mode: None };
 
     /// Linear magnification and minification, but with the texture mirrored and repeated.
     pub const LINEAR_MIRRORED_REPEAT: Self = Self {
@@ -212,12 +204,8 @@ impl TextureOptions {
     };
 
     /// Nearest magnification and minification, but with the texture repeated.
-    pub const NEAREST_REPEAT: Self = Self {
-        magnification: TextureFilter::Nearest,
-        minification: TextureFilter::Nearest,
-        wrap_mode: TextureWrapMode::Repeat,
-        mipmap_mode: None,
-    };
+    pub const NEAREST_REPEAT: Self =
+        Self { magnification: TextureFilter::Nearest, minification: TextureFilter::Nearest, wrap_mode: TextureWrapMode::Repeat, mipmap_mode: None };
 
     /// Nearest magnification and minification, but with the texture mirrored and repeated.
     pub const NEAREST_MIRRORED_REPEAT: Self = Self {
@@ -228,10 +216,7 @@ impl TextureOptions {
     };
 
     pub const fn with_mipmap_mode(self, mipmap_mode: Option<TextureFilter>) -> Self {
-        Self {
-            mipmap_mode,
-            ..self
-        }
+        Self { mipmap_mode, ..self }
     }
 }
 
@@ -355,16 +340,7 @@ impl core::fmt::Debug for TexturesDelta {
                 for delta in deltas {
                     let size = delta.image.size();
                     if let Some(pos) = delta.pos {
-                        write!(
-                            string,
-                            "{:?} partial ([{} {}] - [{} {}]), ",
-                            tex_id,
-                            pos[0],
-                            pos[1],
-                            pos[0] + size[0],
-                            pos[1] + size[1]
-                        )
-                        .ok();
+                        write!(string, "{:?} partial ([{} {}] - [{} {}]), ", tex_id, pos[0], pos[1], pos[0] + size[0], pos[1] + size[1]).ok();
                     } else {
                         write!(string, "{:?} full {}x{}, ", tex_id, size[0], size[1]).ok();
                     }

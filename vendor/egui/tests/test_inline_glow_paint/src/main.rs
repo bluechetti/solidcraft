@@ -13,15 +13,8 @@ use eframe::glow;
 
 fn main() -> Result<(), Box<dyn core::error::Error>> {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
-    let options = eframe::NativeOptions {
-        renderer: eframe::Renderer::Glow,
-        ..Default::default()
-    };
-    eframe::run_native(
-        "My test app",
-        options,
-        Box::new(|_cc| Ok(Box::<MyTestApp>::default())),
-    )?;
+    let options = eframe::NativeOptions { renderer: eframe::Renderer::Glow, ..Default::default() };
+    eframe::run_native("My test app", options, Box::new(|_cc| Ok(Box::<MyTestApp>::default())))?;
     Ok(())
 }
 
@@ -47,18 +40,9 @@ impl eframe::App for MyTestApp {
 
         egui::Window::new("Floating Window").show(ui.ctx(), |ui| {
             ui.label("The background should be purple.");
-            ui.label(format!(
-                "is_pointer_over_egui: {}",
-                ui.is_pointer_over_egui()
-            ));
-            ui.label(format!(
-                "egui_wants_pointer_input: {}",
-                ui.egui_wants_pointer_input()
-            ));
-            ui.label(format!(
-                "egui_is_using_pointer: {}",
-                ui.egui_is_using_pointer()
-            ));
+            ui.label(format!("is_pointer_over_egui: {}", ui.is_pointer_over_egui()));
+            ui.label(format!("egui_wants_pointer_input: {}", ui.egui_wants_pointer_input()));
+            ui.label(format!("egui_is_using_pointer: {}", ui.egui_is_using_pointer()));
             if let Some(pos) = ui.pointer_latest_pos() {
                 ui.label(format!("layer_id_at: {:?}", ui.layer_id_at(pos)));
             }

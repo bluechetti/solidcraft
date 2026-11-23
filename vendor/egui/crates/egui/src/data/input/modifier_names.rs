@@ -19,26 +19,10 @@ pub struct ModifierNames<'a> {
 
 impl ModifierNames<'static> {
     /// ⌥ ⌃ ⇧ ⌘ - NOTE: not supported by the default egui font.
-    pub const SYMBOLS: Self = Self {
-        is_short: true,
-        alt: "⌥",
-        ctrl: "⌃",
-        shift: "⇧",
-        mac_cmd: "⌘",
-        mac_alt: "⌥",
-        concat: "",
-    };
+    pub const SYMBOLS: Self = Self { is_short: true, alt: "⌥", ctrl: "⌃", shift: "⇧", mac_cmd: "⌘", mac_alt: "⌥", concat: "" };
 
     /// Alt, Ctrl, Shift, Cmd
-    pub const NAMES: Self = Self {
-        is_short: false,
-        alt: "Alt",
-        ctrl: "Ctrl",
-        shift: "Shift",
-        mac_cmd: "Cmd",
-        mac_alt: "Option",
-        concat: "+",
-    };
+    pub const NAMES: Self = Self { is_short: false, alt: "Alt", ctrl: "Ctrl", shift: "Shift", mac_cmd: "Cmd", mac_alt: "Option", concat: "+" };
 }
 
 impl ModifierNames<'_> {

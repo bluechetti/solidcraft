@@ -5,8 +5,7 @@ use skrifa::GlyphId;
 use crate::{
     FontColorTransferFunction, ImageDelta, TextOptions, TextureAtlas,
     text::{
-        FontFamily, FontPriority, GlyphBitmap, GlyphRasterizer, GlyphRasterizerRequest,
-        MAX_GLYPH_SIZE, RasterizedGlyph,
+        FontFamily, FontPriority, GlyphBitmap, GlyphRasterizer, GlyphRasterizerRequest, MAX_GLYPH_SIZE, RasterizedGlyph,
         face_store::FontFaceKey,
         font_face::{FontFace, ShapedGlyph},
         styled_metrics::StyledMetrics,
@@ -142,34 +141,11 @@ impl nohash_hasher::IsEnabled for OutlineGlyphKey {}
 
 impl OutlineGlyphKey {
     #[inline]
-    fn new(
-        face_key: FontFaceKey,
-        glyph_id: GlyphId,
-        metrics: &StyledMetrics,
-        bin: SubpixelBin,
-    ) -> Self {
-        let StyledMetrics {
-            pixels_per_point,
-            px_scale_factor,
-            location_hash,
-            ..
-        } = *metrics;
-        debug_assert!(
-            0.0 < pixels_per_point && pixels_per_point.is_finite(),
-            "Bad pixels_per_point {pixels_per_point}"
-        );
-        debug_assert!(
-            0.0 < px_scale_factor && px_scale_factor.is_finite(),
-            "Bad px_scale_factor: {px_scale_factor}"
-        );
-        Self(crate::util::hash((
-            face_key,
-            glyph_id,
-            pixels_per_point.to_bits(),
-            px_scale_factor.to_bits(),
-            bin,
-            location_hash,
-        )))
+    fn new(face_key: FontFaceKey, glyph_id: GlyphId, metrics: &StyledMetrics, bin: SubpixelBin) -> Self {
+        let StyledMetrics { pixels_per_point, px_scale_factor, location_hash, .. } = *metrics;
+        debug_assert!(0.0 < pixels_per_point && pixels_per_point.is_finite(), "Bad pixels_per_point {pixels_per_point}");
+        debug_assert!(0.0 < px_scale_factor && px_scale_factor.is_finite(), "Bad px_scale_factor: {px_scale_factor}");
+        Self(crate::util::hash((face_key, glyph_id, pixels_per_point.to_bits(), px_scale_factor.to_bits(), bin, location_hash)))
     }
 }
 
@@ -181,20 +157,8 @@ struct RasterGlyphKey(u64);
 impl nohash_hasher::IsEnabled for RasterGlyphKey {}
 
 impl RasterGlyphKey {
-    fn new(
-        priority: FontPriority,
-        cluster: &str,
-        family: &FontFamily,
-        pixels_per_point: f32,
-        font_size: f32,
-    ) -> Self {
-        Self(crate::util::hash((
-            priority,
-            cluster,
-            family,
-            pixels_per_point.to_bits(),
-            font_size.to_bits(),
-        )))
+    fn new(priority: FontPriority, cluster: &str, family: &FontFamily, pixels_per_point: f32, font_size: f32) -> Self {
+        Self(crate::util::hash((priority, cluster, family, pixels_per_point.to_bits(), font_size.to_bits())))
     }
 }
 
@@ -270,21 +234,10 @@ impl GlyphAtlas {
     /// so the same glyph can occupy up to four slots in the atlas.
     ///
     /// Never fails: see [`Self::allocate_bitmap`] for what happens when the atlas is full.
-    pub fn allocate_outline(
-        &mut self,
-        face_key: FontFaceKey,
-        face: &mut FontFace,
-        metrics: &StyledMetrics,
-        shaped: &ShapedGlyph,
-    ) -> OutlineGlyph {
-        let ShapedGlyph {
-            glyph_id,
-            h_pos,
-            is_cjk,
-        } = *shaped;
+    pub fn allocate_outline(&mut self, face_key: FontFaceKey, face: &mut FontFace, metrics: &StyledMetrics, shaped: &ShapedGlyph) -> OutlineGlyph {
+        let ShapedGlyph { glyph_id, h_pos, is_cjk } = *shaped;
 
-        let subpixel_binning =
-            face.subpixel_binning() && !is_cjk && !face.is_color_glyph(metrics, glyph_id);
+        let subpixel_binning = face.subpixel_binning() && !is_cjk && !face.is_color_glyph(metrics, glyph_id);
         let (x_px, bin) = if subpixel_binning {
             SubpixelBin::new(h_pos)
         } else {
@@ -296,22 +249,14 @@ impl GlyphAtlas {
 
         let key = OutlineGlyphKey::new(face_key, glyph_id, metrics, bin);
 
-        let Self {
-            atlas,
-            outline_glyphs,
-            ..
-        } = self;
+        let Self { atlas, outline_glyphs, .. } = self;
         let allocation = *outline_glyphs.entry(key).or_insert_with(|| {
             face.rasterize_glyph(metrics, glyph_id, bin)
                 .and_then(|bitmap| {
                     let transfer = Self::transfer_function(atlas, bitmap.is_color);
-                    let mut uv_rect =
-                        Self::allocate_bitmap(atlas, &bitmap, metrics.pixels_per_point, transfer)?;
+                    let mut uv_rect = Self::allocate_bitmap(atlas, &bitmap, metrics.pixels_per_point, transfer)?;
                     uv_rect.offset.y += metrics.y_offset_in_points;
-                    Some(GlyphAllocation {
-                        uv_rect,
-                        is_color: bitmap.is_color,
-                    })
+                    Some(GlyphAllocation { uv_rect, is_color: bitmap.is_color })
                 })
                 .unwrap_or_default()
         });
@@ -340,12 +285,7 @@ impl GlyphAtlas {
         if let Some(allocation) = self.raster_glyphs.get(&key) {
             return *allocation;
         }
-        let request = GlyphRasterizerRequest {
-            cluster,
-            family,
-            font_size_px: font_size * pixels_per_point,
-            subpixel_offset_px: 0.0,
-        };
+        let request = GlyphRasterizerRequest { cluster, family, font_size_px: font_size * pixels_per_point, subpixel_offset_px: 0.0 };
         let allocation = rasterizers
             .into_iter()
             .filter(|rasterizer| rasterizer.priority == priority)
@@ -353,12 +293,8 @@ impl GlyphAtlas {
             .and_then(|RasterizedGlyph { bitmap, advance_px }| {
                 let is_color = bitmap.is_color;
                 let transfer = Self::transfer_function(&self.atlas, is_color);
-                let uv_rect =
-                    Self::allocate_bitmap(&mut self.atlas, &bitmap, pixels_per_point, transfer)?;
-                Some(RasterGlyphAllocation {
-                    allocation: GlyphAllocation { uv_rect, is_color },
-                    advance_px,
-                })
+                let uv_rect = Self::allocate_bitmap(&mut self.atlas, &bitmap, pixels_per_point, transfer)?;
+                Some(RasterGlyphAllocation { allocation: GlyphAllocation { uv_rect, is_color }, advance_px })
             });
         self.raster_glyphs.insert(key, allocation);
         allocation
@@ -367,11 +303,7 @@ impl GlyphAtlas {
     /// The transfer function assumes white coverage glyphs and discards color,
     /// so color glyphs (e.g. emoji) must skip it.
     fn transfer_function(atlas: &TextureAtlas, is_color: bool) -> FontColorTransferFunction {
-        if is_color {
-            FontColorTransferFunction::Off
-        } else {
-            atlas.options().color_transfer_function
-        }
+        if is_color { FontColorTransferFunction::Off } else { atlas.options().color_transfer_function }
     }
 
     /// Copy a bitmap into the atlas.
@@ -382,12 +314,7 @@ impl GlyphAtlas {
     /// and once it hits its maximum it logs a warning and starts overwriting old glyphs
     /// (see [`TextureAtlas::allocate`]). We avoid getting there because `Fonts::begin_pass`
     /// calls [`Self::clear`] as soon as [`Self::fill_ratio`] passes 80%.
-    fn allocate_bitmap(
-        atlas: &mut TextureAtlas,
-        bitmap: &GlyphBitmap,
-        pixels_per_point: f32,
-        transfer: FontColorTransferFunction,
-    ) -> Option<UvRect> {
+    fn allocate_bitmap(atlas: &mut TextureAtlas, bitmap: &GlyphBitmap, pixels_per_point: f32, transfer: FontColorTransferFunction) -> Option<UvRect> {
         let [width, height] = bitmap.image.size;
         if width == 0 || height == 0 || MAX_GLYPH_SIZE < width || MAX_GLYPH_SIZE < height {
             return None;
@@ -395,8 +322,7 @@ impl GlyphAtlas {
         let (glyph_pos, image) = atlas.allocate((width, height));
         for y in 0..height {
             for x in 0..width {
-                image[(glyph_pos.0 + x, glyph_pos.1 + y)] =
-                    transfer.to_atlas_color(bitmap.image[(x, y)]);
+                image[(glyph_pos.0 + x, glyph_pos.1 + y)] = transfer.to_atlas_color(bitmap.image[(x, y)]);
             }
         }
         Some(UvRect {

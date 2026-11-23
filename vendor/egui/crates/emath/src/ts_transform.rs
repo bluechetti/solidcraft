@@ -26,19 +26,13 @@ impl Default for TSTransform {
 }
 
 impl TSTransform {
-    pub const IDENTITY: Self = Self {
-        translation: Vec2::ZERO,
-        scaling: 1.0,
-    };
+    pub const IDENTITY: Self = Self { translation: Vec2::ZERO, scaling: 1.0 };
 
     #[inline]
     /// Creates a new translation that first scales points around
     /// `(0, 0)`, then translates them.
     pub fn new(translation: Vec2, scaling: f32) -> Self {
-        Self {
-            scaling,
-            translation,
-        }
+        Self { scaling, translation }
     }
 
     #[inline]
@@ -101,10 +95,7 @@ impl TSTransform {
     /// ```
     #[inline]
     pub fn mul_rect(&self, rect: Rect) -> Rect {
-        Rect {
-            min: self.mul_pos(rect.min),
-            max: self.mul_pos(rect.max),
-        }
+        Rect { min: self.mul_pos(rect.min), max: self.mul_pos(rect.max) }
     }
 }
 
@@ -143,9 +134,6 @@ impl core::ops::Mul<Self> for TSTransform {
     /// ```
     fn mul(self, rhs: Self) -> Self::Output {
         // Apply rhs first.
-        Self {
-            scaling: self.scaling * rhs.scaling,
-            translation: self.translation + self.scaling * rhs.translation,
-        }
+        Self { scaling: self.scaling * rhs.scaling, translation: self.translation + self.scaling * rhs.translation }
     }
 }

@@ -17,17 +17,11 @@ pub struct Stroke {
 
 impl Stroke {
     /// Same as [`Stroke::default`].
-    pub const NONE: Self = Self {
-        width: 0.0,
-        color: Color32::TRANSPARENT,
-    };
+    pub const NONE: Self = Self { width: 0.0, color: Color32::TRANSPARENT };
 
     #[inline]
     pub fn new(width: f32, color: impl Into<Color32>) -> Self {
-        Self {
-            width,
-            color: color.into(),
-        }
+        Self { width, color: color.into() }
     }
 
     /// True if width is zero or color is transparent
@@ -130,34 +124,19 @@ impl Default for PathStroke {
 
 impl PathStroke {
     /// Same as [`PathStroke::default`].
-    pub const NONE: Self = Self {
-        width: 0.0,
-        color: ColorMode::TRANSPARENT,
-        kind: StrokeKind::Middle,
-    };
+    pub const NONE: Self = Self { width: 0.0, color: ColorMode::TRANSPARENT, kind: StrokeKind::Middle };
 
     #[inline]
     pub fn new(width: f32, color: impl Into<Color32>) -> Self {
-        Self {
-            width,
-            color: ColorMode::Solid(color.into()),
-            kind: StrokeKind::Middle,
-        }
+        Self { width, color: ColorMode::Solid(color.into()), kind: StrokeKind::Middle }
     }
 
     /// Create a new `PathStroke` with a UV function
     ///
     /// The bounding box passed to the callback will have a margin of [`TessellationOptions::feathering_size_in_pixels`](`crate::tessellator::TessellationOptions::feathering_size_in_pixels`)
     #[inline]
-    pub fn new_uv(
-        width: f32,
-        callback: impl Fn(Rect, Pos2) -> Color32 + Send + Sync + 'static,
-    ) -> Self {
-        Self {
-            width,
-            color: ColorMode::UV(Arc::new(callback)),
-            kind: StrokeKind::Middle,
-        }
+    pub fn new_uv(width: f32, callback: impl Fn(Rect, Pos2) -> Color32 + Send + Sync + 'static) -> Self {
+        Self { width, color: ColorMode::UV(Arc::new(callback)), kind: StrokeKind::Middle }
     }
 
     #[inline]
@@ -168,28 +147,19 @@ impl PathStroke {
     /// Set the stroke to be painted right on the edge of the shape, half inside and half outside.
     #[inline]
     pub fn middle(self) -> Self {
-        Self {
-            kind: StrokeKind::Middle,
-            ..self
-        }
+        Self { kind: StrokeKind::Middle, ..self }
     }
 
     /// Set the stroke to be painted entirely outside of the shape
     #[inline]
     pub fn outside(self) -> Self {
-        Self {
-            kind: StrokeKind::Outside,
-            ..self
-        }
+        Self { kind: StrokeKind::Outside, ..self }
     }
 
     /// Set the stroke to be painted entirely inside of the shape
     #[inline]
     pub fn inside(self) -> Self {
-        Self {
-            kind: StrokeKind::Inside,
-            ..self
-        }
+        Self { kind: StrokeKind::Inside, ..self }
     }
 
     /// True if width is zero or color is solid and transparent
@@ -215,11 +185,7 @@ impl From<Stroke> for PathStroke {
             // Important, since we use the stroke color when doing feathering of the fill!
             Self::NONE
         } else {
-            Self {
-                width: value.width,
-                color: ColorMode::Solid(value.color),
-                kind: StrokeKind::Middle,
-            }
+            Self { width: value.width, color: ColorMode::Solid(value.color), kind: StrokeKind::Middle }
         }
     }
 }

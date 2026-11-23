@@ -5,10 +5,7 @@ use crate::{
     Button, ComboBox, Context, Frame, TextEdit, TextStyle,
     class::HasClasses as _,
     theme::StyleProvider,
-    widget_style::{
-        AtomLayoutStyle, ButtonStyle, CheckboxStyle, SeparatorStyle, StyleArgs, TextEditStyle,
-        TextVisuals, WidgetState,
-    },
+    widget_style::{AtomLayoutStyle, ButtonStyle, CheckboxStyle, SeparatorStyle, StyleArgs, TextEditStyle, TextVisuals, WidgetState},
 };
 
 /// The default [`StyleProvider`], implementing the default egui look based on
@@ -31,18 +28,10 @@ impl DefaultStyle {
 
 impl StyleProvider<ButtonStyle> for DefaultStyle {
     fn style(&mut self, modifiers: &StyleArgs<'_>) -> ButtonStyle {
-        let StyleArgs {
-            classes,
-            style,
-            state,
-            ..
-        } = modifiers;
+        let StyleArgs { classes, style, state, .. } = modifiers;
         let spacing = &style.spacing;
-        let mut widget_visuals = if classes.has_class(&ComboBox::CLASS_OPEN) {
-            style.visuals.widgets.open
-        } else {
-            *style.visuals.widgets.state(*state)
-        };
+        let mut widget_visuals =
+            if classes.has_class(&ComboBox::CLASS_OPEN) { style.visuals.widgets.open } else { *style.visuals.widgets.state(*state) };
 
         if classes.has_class(&Button::CLASS_SELECTED) {
             let visuals = &style.visuals;
@@ -59,27 +48,17 @@ impl StyleProvider<ButtonStyle> for DefaultStyle {
             inner_margin.bottom = 0;
         }
 
-        let painted_frame = Frame {
-            fill: widget_visuals.weak_bg_fill,
-            corner_radius: widget_visuals.corner_radius,
-            inner_margin,
-            ..Default::default()
-        }
-        // Ensure changing expansion and stroke don't affect layout:
-        .apply_stroke_and_expansion_without_layout_shift(
-            widget_visuals.bg_stroke,
-            widget_visuals.expansion,
-        );
+        let painted_frame =
+            Frame { fill: widget_visuals.weak_bg_fill, corner_radius: widget_visuals.corner_radius, inner_margin, ..Default::default() }
+                // Ensure changing expansion and stroke don't affect layout:
+                .apply_stroke_and_expansion_without_layout_shift(widget_visuals.bg_stroke, widget_visuals.expansion);
 
-        let has_frame = classes.has_class(&Button::CLASS_FRAME)
-            || (!classes.has_class(&Button::CLASS_NO_FRAME) && style.visuals.button_frame);
+        let has_frame = classes.has_class(&Button::CLASS_FRAME) || (!classes.has_class(&Button::CLASS_NO_FRAME) && style.visuals.button_frame);
 
         let frame = if !has_frame {
             // No frame at all: the button takes up no more room than its contents.
             Frame::new()
-        } else if classes.has_class(&Button::CLASS_HIDE_FRAME_WHEN_INACTIVE)
-            && *state == WidgetState::Inactive
-        {
+        } else if classes.has_class(&Button::CLASS_HIDE_FRAME_WHEN_INACTIVE) && *state == WidgetState::Inactive {
             // Hide the frame, but keep its spacing
             painted_frame.invisible()
         } else {
@@ -87,19 +66,11 @@ impl StyleProvider<ButtonStyle> for DefaultStyle {
         };
 
         let text_style = TextVisuals::from_widget_visuals(style, TextStyle::Body, &widget_visuals);
-        let image_tint = if classes.has_class(&Button::CLASS_IMAGE_TINT_FOLLOWS_TEXT_COLOR) {
-            text_style.color
-        } else {
-            Color32::WHITE
-        };
+        let image_tint = if classes.has_class(&Button::CLASS_IMAGE_TINT_FOLLOWS_TEXT_COLOR) { text_style.color } else { Color32::WHITE };
 
         ButtonStyle {
             atom_layout: AtomLayoutStyle {
-                min_size: if classes.has_class(&Button::CLASS_SMALL) {
-                    Vec2::ZERO
-                } else {
-                    Vec2::new(0.0, spacing.interact_size.y)
-                },
+                min_size: if classes.has_class(&Button::CLASS_SMALL) { Vec2::ZERO } else { Vec2::new(0.0, spacing.interact_size.y) },
                 gap: spacing.icon_spacing,
                 frame,
                 text_style,
@@ -112,23 +83,14 @@ impl StyleProvider<ButtonStyle> for DefaultStyle {
 
 impl StyleProvider<TextEditStyle> for DefaultStyle {
     fn style(&mut self, modifiers: &StyleArgs<'_>) -> TextEditStyle {
-        let StyleArgs {
-            classes,
-            style,
-            state,
-            ..
-        } = modifiers;
+        let StyleArgs { classes, style, state, .. } = modifiers;
 
         let widget_visuals = style.visuals.widgets.state(*state);
 
         // A text edit over an immutable buffer is painted without a background.
         let read_only = classes.has_class(&TextEdit::CLASS_READ_ONLY);
 
-        let fill = if read_only {
-            Color32::TRANSPARENT
-        } else {
-            style.visuals.text_edit_bg_color()
-        };
+        let fill = if read_only { Color32::TRANSPARENT } else { style.visuals.text_edit_bg_color() };
 
         let stroke = if read_only {
             style.visuals.widgets.inactive.bg_stroke
@@ -141,11 +103,7 @@ impl StyleProvider<TextEditStyle> for DefaultStyle {
 
         // The text of a text edit doesn't brighten on hover — that would be distracting while
         // typing — so it keeps the inactive color no matter the state.
-        let text = TextVisuals::from_widget_visuals(
-            style,
-            TextStyle::Body,
-            &style.visuals.widgets.inactive,
-        );
+        let text = TextVisuals::from_widget_visuals(style, TextStyle::Body, &style.visuals.widgets.inactive);
 
         TextEditStyle {
             atom_layout: AtomLayoutStyle {
@@ -180,11 +138,7 @@ impl StyleProvider<CheckboxStyle> for DefaultStyle {
                 min_size: Vec2::splat(spacing.interact_size.y),
                 gap: spacing.icon_spacing,
                 frame: Frame::new(),
-                text_style: TextVisuals::from_widget_visuals(
-                    style,
-                    TextStyle::Body,
-                    &widget_visuals,
-                ),
+                text_style: TextVisuals::from_widget_visuals(style, TextStyle::Body, &widget_visuals),
                 ..Default::default()
             },
             checkbox_size: spacing.icon_width,
@@ -192,9 +146,7 @@ impl StyleProvider<CheckboxStyle> for DefaultStyle {
             checkbox_frame: Frame {
                 fill: widget_visuals.bg_fill,
                 // The box is small, so cap the rounding to keep it from looking like a radio button:
-                corner_radius: widget_visuals
-                    .corner_radius
-                    .at_most((0.3 * spacing.icon_width).round() as u8),
+                corner_radius: widget_visuals.corner_radius.at_most((0.3 * spacing.icon_width).round() as u8),
                 stroke: widget_visuals.bg_stroke,
                 ..Default::default()
             },

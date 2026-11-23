@@ -35,10 +35,7 @@ pub struct GlyphInfo {
 
 impl GlyphInfo {
     /// A valid, but invisible, glyph of zero-width.
-    pub const INVISIBLE: Self = Self {
-        id: None,
-        advance_width_unscaled: OrderedFloat(0.0),
-    };
+    pub const INVISIBLE: Self = Self { id: None, advance_width_unscaled: OrderedFloat(0.0) };
 }
 
 /// Result of resolving a `char` to a [`GlyphId`] within a single [`FontFace`].
@@ -114,10 +111,7 @@ impl FontCell {
         }
 
         let mut path = kurbo::BezPath::new();
-        let mut pen = VelloPen {
-            path: &mut path,
-            x_offset: bin.as_float() as f64,
-        };
+        let mut pen = VelloPen { path: &mut path, x_offset: bin.as_float() as f64 };
 
         self.with_dependent_mut(|_, font_data| {
             let outline = font_data.outline_glyphs.get(glyph_id)?;
@@ -128,17 +122,12 @@ impl FontCell {
                     || hinting_instance.location().coords() != location.coords()
                     || hinting_instance.target() != hinting_target
                 {
-                    hinting_instance
-                        .reconfigure(&font_data.outline_glyphs, size, location, hinting_target)
-                        .ok()?;
+                    hinting_instance.reconfigure(&font_data.outline_glyphs, size, location, hinting_target).ok()?;
                 }
                 let draw_settings = skrifa::outline::DrawSettings::hinted(hinting_instance, false);
                 outline.draw(draw_settings, &mut pen).ok()?;
             } else {
-                let draw_settings = skrifa::outline::DrawSettings::unhinted(
-                    skrifa::instance::Size::new(metrics.scale),
-                    location,
-                );
+                let draw_settings = skrifa::outline::DrawSettings::unhinted(skrifa::instance::Size::new(metrics.scale), location);
                 outline.draw(draw_settings, &mut pen).ok()?;
             }
 
@@ -160,18 +149,10 @@ impl FontCell {
         let mut resources = vello_cpu::Resources::new();
         ctx.render(&mut dest, &mut resources);
 
-        let pixels = dest
-            .data_as_u8_slice()
-            .chunks_exact(4)
-            .map(|px| Color32::from_rgba_premultiplied(px[0], px[1], px[2], px[3]))
-            .collect();
+        let pixels = dest.data_as_u8_slice().chunks_exact(4).map(|px| Color32::from_rgba_premultiplied(px[0], px[1], px[2], px[3])).collect();
         let image = ColorImage::new([width as usize, height as usize], pixels);
 
-        Some(GlyphBitmap {
-            image,
-            offset_px: vec2(bounds.x0 as f32, bounds.y0 as f32),
-            is_color: false,
-        })
+        Some(GlyphBitmap { image, offset_px: vec2(bounds.x0 as f32, bounds.y0 as f32), is_color: false })
     }
 
     /// Does this glyph have a color bitmap (`sbix`, `CBDT`) or a `COLR` paint graph?
@@ -179,12 +160,7 @@ impl FontCell {
     fn has_color_glyph(&self, glyph_id: GlyphId, size: skrifa::instance::Size) -> bool {
         let font_data = self.borrow_dependent();
         font_data.has_color_glyphs
-            && (font_data.skrifa.color_glyphs().get(glyph_id).is_some()
-                || font_data
-                    .skrifa
-                    .bitmap_strikes()
-                    .glyph_for_size(size, glyph_id)
-                    .is_some())
+            && (font_data.skrifa.color_glyphs().get(glyph_id).is_some() || font_data.skrifa.bitmap_strikes().glyph_for_size(size, glyph_id).is_some())
     }
 
     /// Rasterize a bitmap (`sbix`, `CBDT`) or `COLR` glyph, e.g. a color emoji.
@@ -194,35 +170,24 @@ impl FontCell {
     /// Never sub-pixel positioned: [`crate::text::glyph_atlas::GlyphAtlas::allocate_outline`]
     /// bins color glyphs to whole pixels.
     #[cfg(feature = "color_fonts")]
-    fn rasterize_color_glyph(
-        &self,
-        metrics: &StyledMetrics,
-        glyph_id: GlyphId,
-        location: skrifa::instance::LocationRef<'_>,
-    ) -> Option<GlyphBitmap> {
+    fn rasterize_color_glyph(&self, metrics: &StyledMetrics, glyph_id: GlyphId, location: skrifa::instance::LocationRef<'_>) -> Option<GlyphBitmap> {
         use vello_cpu::peniko;
 
         let font_data = self.borrow_dependent();
         let font_size_px = metrics.scale;
         let size = skrifa::instance::Size::new(font_size_px);
 
-        if !self.has_color_glyph(glyph_id, size) || font_size_px == 0.0 || !font_size_px.is_finite()
-        {
+        if !self.has_color_glyph(glyph_id, size) || font_size_px == 0.0 || !font_size_px.is_finite() {
             return None;
         }
 
         // We don't know the bounds of the glyph up front, so we render it onto a
         // canvas with room for one em on each side of the em box, then crop.
-        let canvas_size = (3.0 * font_size_px)
-            .ceil()
-            .clamp(1.0, crate::text::MAX_GLYPH_SIZE as f32) as u16;
+        let canvas_size = (3.0 * font_size_px).ceil().clamp(1.0, crate::text::MAX_GLYPH_SIZE as f32) as u16;
         let origin_x = font_size_px as f64;
         let origin_y = 2.0 * font_size_px as f64;
 
-        let font = peniko::FontData::new(
-            peniko::Blob::new(Arc::clone(self.borrow_owner())),
-            font_data.index,
-        );
+        let font = peniko::FontData::new(peniko::Blob::new(Arc::clone(self.borrow_owner())), font_data.index);
         let coords: Vec<i16> = location.coords().iter().map(|c| c.to_bits()).collect();
 
         let mut ctx = vello_cpu::RenderContext::new(canvas_size, canvas_size);
@@ -232,11 +197,7 @@ impl FontCell {
             .font_size(font_size_px)
             .hint(false)
             .normalized_coords(&coords)
-            .fill_glyphs(core::iter::once(vello_cpu::Glyph {
-                id: glyph_id.to_u32(),
-                x: origin_x as f32,
-                y: origin_y as f32,
-            }));
+            .fill_glyphs(core::iter::once(vello_cpu::Glyph { id: glyph_id.to_u32(), x: origin_x as f32, y: origin_y as f32 }));
         let mut pixmap = vello_cpu::Pixmap::new(canvas_size, canvas_size);
         ctx.render(&mut pixmap, &mut resources);
 
@@ -266,21 +227,13 @@ impl FontCell {
             .map(|(x, y)| {
                 let i = 4 * (y * canvas_size + x);
                 // `vello_cpu::Pixmap` holds premultiplied RGBA8:
-                Color32::from_rgba_premultiplied(
-                    pixels[i],
-                    pixels[i + 1],
-                    pixels[i + 2],
-                    pixels[i + 3],
-                )
+                Color32::from_rgba_premultiplied(pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3])
             })
             .collect();
 
         Some(GlyphBitmap {
             image: ColorImage::new([width, height], cropped),
-            offset_px: vec2(
-                min[0] as f32 - origin_x as f32,
-                min[1] as f32 - origin_y as f32,
-            ),
+            offset_px: vec2(min[0] as f32 - origin_x as f32, min[1] as f32 - origin_y as f32),
             is_color: true,
         })
     }
@@ -302,10 +255,7 @@ impl skrifa::outline::OutlinePen for VelloPen<'_> {
     }
 
     fn quad_to(&mut self, cx0: f32, cy0: f32, x: f32, y: f32) {
-        self.path.quad_to(
-            (cx0 as f64 + self.x_offset, -cy0 as f64),
-            (x as f64 + self.x_offset, -y as f64),
-        );
+        self.path.quad_to((cx0 as f64 + self.x_offset, -cy0 as f64), (x as f64 + self.x_offset, -y as f64));
     }
 
     fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
@@ -347,16 +297,9 @@ pub struct FontFace {
 }
 
 impl FontFace {
-    pub fn new(
-        options: TextOptions,
-        name: String,
-        font_data: Blob,
-        index: u32,
-        tweak: FontTweak,
-    ) -> Result<Self, Box<dyn core::error::Error>> {
+    pub fn new(options: TextOptions, name: String, font_data: Blob, index: u32, tweak: FontTweak) -> Result<Self, Box<dyn core::error::Error>> {
         let font = FontCell::try_new(font_data, |font_data| {
-            let skrifa_font =
-                skrifa::FontRef::from_index(AsRef::<[u8]>::as_ref(font_data.as_ref()), index)?;
+            let skrifa_font = skrifa::FontRef::from_index(AsRef::<[u8]>::as_ref(font_data.as_ref()), index)?;
 
             let charmap = skrifa_font.charmap();
             let glyphs = skrifa_font.outline_glyphs();
@@ -365,10 +308,7 @@ impl FontFace {
             // the actual weight will be applied via the stored location during rendering.
             // The metrics won't be significantly different at this unscaled size.
             // TODO(emilk): heed location for vertical metrics too (HVAR/MVAR).
-            let metrics = skrifa_font.metrics(
-                skrifa::instance::Size::unscaled(),
-                skrifa::instance::LocationRef::default(),
-            );
+            let metrics = skrifa_font.metrics(skrifa::instance::Size::unscaled(), skrifa::instance::LocationRef::default());
 
             let hinting_enabled = tweak.hinting.unwrap_or(options.font_hinting);
             let hinting_instance = hinting_enabled
@@ -388,10 +328,7 @@ impl FontFace {
             #[cfg(feature = "color_fonts")]
             let has_color_glyphs = {
                 use skrifa::raw::TableProvider as _;
-                skrifa_font.colr().is_ok()
-                    || skrifa_font.sbix().is_ok()
-                    || skrifa_font.cbdt().is_ok()
-                    || skrifa_font.ebdt().is_ok()
+                skrifa_font.colr().is_ok() || skrifa_font.sbix().is_ok() || skrifa_font.cbdt().is_ok() || skrifa_font.ebdt().is_ok()
             };
 
             Ok::<DependentFontData<'_>, Box<dyn core::error::Error>>(DependentFontData {
@@ -411,27 +348,14 @@ impl FontFace {
 
         let subpixel_binning = tweak.subpixel_binning.unwrap_or(options.subpixel_binning);
 
-        Ok(Self {
-            name,
-            font,
-            tweak,
-            subpixel_binning,
-            shaper_data,
-            glyph_id_cache: Default::default(),
-            advance_width_cache: Default::default(),
-        })
+        Ok(Self { name, font, tweak, subpixel_binning, shaper_data, glyph_id_cache: Default::default(), advance_width_cache: Default::default() })
     }
 
     /// Apply new [`TextOptions`]: hinting on/off and sub-pixel binning.
     ///
     /// Anything cached about glyph ids and advances stays valid, since neither affects them.
     pub(crate) fn set_options(&mut self, options: TextOptions) {
-        let Self {
-            font,
-            tweak,
-            subpixel_binning,
-            ..
-        } = self;
+        let Self { font, tweak, subpixel_binning, .. } = self;
         *subpixel_binning = tweak.subpixel_binning.unwrap_or(options.subpixel_binning);
         let hinting_enabled = tweak.hinting.unwrap_or(options.font_hinting);
         font.with_dependent_mut(|_, font_data| {
@@ -483,11 +407,7 @@ impl FontFace {
 
     /// An un-ordered iterator over all supported characters.
     pub fn characters(&self) -> impl Iterator<Item = char> + '_ {
-        self.font
-            .borrow_dependent()
-            .charmap
-            .mappings()
-            .filter_map(|(chr, _)| char::from_u32(chr).filter(|c| !self.ignore_character(*c)))
+        self.font.borrow_dependent().charmap.mappings().filter_map(|(chr, _)| char::from_u32(chr).filter(|c| !self.ignore_character(*c)))
     }
 
     /// Resolve a `char` to a [`GlyphId`] within this face.
@@ -511,12 +431,7 @@ impl FontFace {
         } else if invisible_char(c) {
             GlyphIdResolution::Invisible
         } else {
-            let glyph_id = self
-                .font
-                .borrow_dependent()
-                .charmap
-                .map(c)
-                .filter(|id| *id != GlyphId::NOTDEF)?;
+            let glyph_id = self.font.borrow_dependent().charmap.map(c).filter(|id| *id != GlyphId::NOTDEF)?;
             GlyphIdResolution::Glyph(glyph_id)
         };
 
@@ -546,9 +461,7 @@ impl FontFace {
                     return 0.0;
                 };
                 let font_data = self.font.borrow_dependent();
-                let glyph_metrics = font_data
-                    .skrifa
-                    .glyph_metrics(skrifa::instance::Size::unscaled(), &metrics.location);
+                let glyph_metrics = font_data.skrifa.glyph_metrics(skrifa::instance::Size::unscaled(), &metrics.location);
                 glyph_metrics.advance_width(glyph_id).unwrap_or_default()
             }
         };
@@ -565,10 +478,9 @@ impl FontFace {
         let resolution = self.glyph_id_resolution(c)?;
         let glyph_info = match resolution {
             GlyphIdResolution::Invisible => GlyphInfo::INVISIBLE,
-            GlyphIdResolution::Glyph(glyph_id) => GlyphInfo {
-                id: Some(glyph_id),
-                advance_width_unscaled: self.advance_width_unscaled(c, metrics).into(),
-            },
+            GlyphIdResolution::Glyph(glyph_id) => {
+                GlyphInfo { id: Some(glyph_id), advance_width_unscaled: self.advance_width_unscaled(c, metrics).into() }
+            }
         };
         Some(glyph_info)
     }
@@ -576,25 +488,12 @@ impl FontFace {
     /// The `.notdef` glyph ("tofu"), rendered in place of chars that no face has.
     pub(super) fn notdef_glyph_info(&self, metrics: &StyledMetrics) -> GlyphInfo {
         let font_data = self.font.borrow_dependent();
-        let glyph_metrics = font_data
-            .skrifa
-            .glyph_metrics(skrifa::instance::Size::unscaled(), &metrics.location);
-        GlyphInfo {
-            id: Some(GlyphId::NOTDEF),
-            advance_width_unscaled: glyph_metrics
-                .advance_width(GlyphId::NOTDEF)
-                .unwrap_or_default()
-                .into(),
-        }
+        let glyph_metrics = font_data.skrifa.glyph_metrics(skrifa::instance::Size::unscaled(), &metrics.location);
+        GlyphInfo { id: Some(GlyphId::NOTDEF), advance_width_unscaled: glyph_metrics.advance_width(GlyphId::NOTDEF).unwrap_or_default().into() }
     }
 
     #[inline(always)]
-    pub fn styled_metrics(
-        &self,
-        pixels_per_point: f32,
-        font_size: f32,
-        coords: &VariationCoords,
-    ) -> StyledMetrics {
+    pub fn styled_metrics(&self, pixels_per_point: f32, font_size: f32, coords: &VariationCoords) -> StyledMetrics {
         let pt_scale_factor = self.font.px_scale_factor(font_size * self.tweak.scale);
         let font_data = self.font.borrow_dependent();
         let ascent = (font_data.metrics.ascent * pt_scale_factor).round_ui();
@@ -604,9 +503,7 @@ impl FontFace {
         let scale = font_size * self.tweak.scale * pixels_per_point;
         let px_scale_factor = self.font.px_scale_factor(scale);
 
-        let y_offset_in_points = ((font_size * self.tweak.scale * self.tweak.y_offset_factor)
-            + self.tweak.y_offset)
-            .round_ui();
+        let y_offset_in_points = ((font_size * self.tweak.scale * self.tweak.y_offset_factor) + self.tweak.y_offset).round_ui();
 
         let axes = font_data.skrifa.axes();
         // Override the default coordinates with ones specified via FontTweak, then the ones specified directly via the
@@ -662,15 +559,9 @@ impl FontFace {
     /// Render a glyph to a bitmap: a color glyph if the font has one, else the outline as coverage.
     ///
     /// Not cached: see [`crate::text::glyph_atlas::GlyphAtlas::allocate_outline`].
-    pub(crate) fn rasterize_glyph(
-        &mut self,
-        metrics: &StyledMetrics,
-        glyph_id: GlyphId,
-        bin: SubpixelBin,
-    ) -> Option<GlyphBitmap> {
+    pub(crate) fn rasterize_glyph(&mut self, metrics: &StyledMetrics, glyph_id: GlyphId, bin: SubpixelBin) -> Option<GlyphBitmap> {
         let hinting_target = self.tweak.hinting_target.into();
-        self.font
-            .rasterize_glyph(metrics, glyph_id, bin, hinting_target)
+        self.font.rasterize_glyph(metrics, glyph_id, bin, hinting_target)
     }
 }
 

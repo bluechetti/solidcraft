@@ -15,10 +15,7 @@ pub struct FontId {
 impl Default for FontId {
     #[inline]
     fn default() -> Self {
-        Self {
-            size: 14.0,
-            family: FontFamily::Proportional,
-        }
+        Self { size: 14.0, family: FontFamily::Proportional }
     }
 }
 

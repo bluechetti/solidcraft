@@ -4,19 +4,10 @@
 
 use egui::accesskit::Role;
 use egui::text_edit::TextEditState;
-use egui::{
-    CompletionPopup, CompletionQuery, Id, Key, KeyboardShortcut, Modifiers, Suggestion, TextEdit,
-};
+use egui::{CompletionPopup, CompletionQuery, Id, Key, KeyboardShortcut, Modifiers, Suggestion, TextEdit};
 use egui_kittest::{Harness, kittest::Queryable as _};
 
-const COMMANDS: &[&str] = &[
-    "/clear",
-    "/compact",
-    "/config",
-    "/grill-me",
-    "/grill-with-docs",
-    "/help",
-];
+const COMMANDS: &[&str] = &["/clear", "/compact", "/config", "/grill-me", "/grill-with-docs", "/help"];
 
 fn id() -> Id {
     Id::unique("prompt")
@@ -27,11 +18,7 @@ fn suggest_commands(query: &CompletionQuery<'_>) -> Vec<Suggestion> {
     if !query.is_at_start() || !query.word.starts_with('/') {
         return vec![];
     }
-    COMMANDS
-        .iter()
-        .filter(|command| command.starts_with(query.word))
-        .map(|command| Suggestion::new(format!("{command} ")))
-        .collect()
+    COMMANDS.iter().filter(|command| command.starts_with(query.word)).map(|command| Suggestion::new(format!("{command} "))).collect()
 }
 
 #[derive(Default)]
@@ -47,29 +34,16 @@ fn harness<'a>() -> Harness<'a, State> {
 
 /// A chat composer: multiline, Shift+Enter for newline, Enter to send.
 fn chat_harness<'a>() -> Harness<'a, State> {
-    harness_with(|text| {
-        TextEdit::multiline(text)
-            .hint_text("Message")
-            .return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter))
-    })
+    harness_with(|text| TextEdit::multiline(text).hint_text("Message").return_key(KeyboardShortcut::new(Modifiers::SHIFT, Key::Enter)))
 }
 
-fn harness_with<'a>(
-    make_text_edit: impl for<'t> Fn(&'t mut String) -> TextEdit<'t> + 'a,
-) -> Harness<'a, State> {
+fn harness_with<'a>(make_text_edit: impl for<'t> Fn(&'t mut String) -> TextEdit<'t> + 'a) -> Harness<'a, State> {
     let mut harness = Harness::new_ui_state(
         move |ui, state: &mut State| {
-            let output = CompletionPopup::new(id()).show(
-                ui,
-                make_text_edit(&mut state.text),
-                suggest_commands,
-            );
+            let output = CompletionPopup::new(id()).show(ui, make_text_edit(&mut state.text), suggest_commands);
             state.popup_open = output.is_open;
             let response = &output.text_edit.response.response;
-            let enter = response.has_focus()
-                && ui.input_mut(|input| {
-                    !input.modifiers.shift && input.consume_key(Modifiers::NONE, Key::Enter)
-                });
+            let enter = response.has_focus() && ui.input_mut(|input| !input.modifiers.shift && input.consume_key(Modifiers::NONE, Key::Enter));
             if response.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter)) || enter {
                 response.request_focus();
                 state.submitted = Some(core::mem::take(&mut state.text));
@@ -84,10 +58,7 @@ fn harness_with<'a>(
 }
 
 fn text_input<'h>(harness: &'h Harness<'_, State>) -> egui_kittest::Node<'h> {
-    harness
-        .query_by_role(Role::TextInput)
-        .or_else(|| harness.query_by_role(Role::MultilineTextInput))
-        .unwrap()
+    harness.query_by_role(Role::TextInput).or_else(|| harness.query_by_role(Role::MultilineTextInput)).unwrap()
 }
 
 fn text_input_has_focus(harness: &Harness<'_, State>) -> bool {
@@ -95,9 +66,7 @@ fn text_input_has_focus(harness: &Harness<'_, State>) -> bool {
 }
 
 fn cursor(harness: &Harness<'_, State>) -> Option<usize> {
-    TextEditState::load(&harness.ctx, id())
-        .and_then(|state| state.cursor.char_range())
-        .map(|range| range.primary.index.0)
+    TextEditState::load(&harness.ctx, id()).and_then(|state| state.cursor.char_range()).map(|range| range.primary.index.0)
 }
 
 #[test]
@@ -117,11 +86,7 @@ fn arrows_and_enter_accept_completion() {
 
     harness.key_press(Key::Enter);
     harness.run();
-    assert_eq!(
-        harness.state().text,
-        "/grill-with-docs ",
-        "should wrap around"
-    );
+    assert_eq!(harness.state().text, "/grill-with-docs ", "should wrap around");
     assert_eq!(cursor(&harness), Some("/grill-with-docs ".len()));
     assert!(!harness.state().popup_open);
     assert!(text_input_has_focus(&harness));
@@ -235,10 +200,7 @@ fn enter_without_popup_submits() {
 /// The popup must still be there to take the click.
 #[test]
 fn clicking_a_suggestion_accepts_it() {
-    for surrender_focus_on in [
-        egui::SurrenderFocusOn::Clicks,
-        egui::SurrenderFocusOn::Presses,
-    ] {
+    for surrender_focus_on in [egui::SurrenderFocusOn::Clicks, egui::SurrenderFocusOn::Presses] {
         let mut harness = harness();
         harness.ctx.options_mut(|options| {
             options.input_options.surrender_focus_on = surrender_focus_on;
@@ -249,11 +211,7 @@ fn clicking_a_suggestion_accepts_it() {
 
         harness.get_by_label("/grill-with-docs ").click();
         harness.run();
-        assert_eq!(
-            harness.state().text,
-            "/grill-with-docs ",
-            "{surrender_focus_on:?}"
-        );
+        assert_eq!(harness.state().text, "/grill-with-docs ", "{surrender_focus_on:?}");
         assert!(!harness.state().popup_open, "{surrender_focus_on:?}");
         assert!(text_input_has_focus(&harness), "{surrender_focus_on:?}");
     }
@@ -262,10 +220,7 @@ fn clicking_a_suggestion_accepts_it() {
 /// Like [`clicking_a_suggestion_accepts_it`], but with text after the cursor.
 #[test]
 fn clicking_a_suggestion_with_cursor_mid_text() {
-    for surrender_focus_on in [
-        egui::SurrenderFocusOn::Clicks,
-        egui::SurrenderFocusOn::Presses,
-    ] {
+    for surrender_focus_on in [egui::SurrenderFocusOn::Clicks, egui::SurrenderFocusOn::Presses] {
         let mut harness = harness();
         harness.ctx.options_mut(|options| {
             options.input_options.surrender_focus_on = surrender_focus_on;
@@ -275,25 +230,13 @@ fn clicking_a_suggestion_with_cursor_mid_text() {
         harness.key_press(Key::ArrowLeft);
         harness.key_press(Key::ArrowLeft);
         harness.run();
-        assert_eq!(
-            cursor(&harness),
-            Some("/gr".len()),
-            "{surrender_focus_on:?}"
-        );
+        assert_eq!(cursor(&harness), Some("/gr".len()), "{surrender_focus_on:?}");
         assert!(harness.state().popup_open, "{surrender_focus_on:?}");
 
         harness.get_by_label("/grill-with-docs ").click();
         harness.run();
-        assert_eq!(
-            harness.state().text,
-            "/grill-with-docs  x",
-            "{surrender_focus_on:?}"
-        );
-        assert_eq!(
-            cursor(&harness),
-            Some("/grill-with-docs ".len()),
-            "{surrender_focus_on:?}"
-        );
+        assert_eq!(harness.state().text, "/grill-with-docs  x", "{surrender_focus_on:?}");
+        assert_eq!(cursor(&harness), Some("/grill-with-docs ".len()), "{surrender_focus_on:?}");
         assert!(!harness.state().popup_open, "{surrender_focus_on:?}");
         assert!(text_input_has_focus(&harness), "{surrender_focus_on:?}");
     }

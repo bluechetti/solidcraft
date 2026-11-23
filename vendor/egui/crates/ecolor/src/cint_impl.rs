@@ -5,10 +5,7 @@ use cint::{Alpha, ColorInterop, EncodedSrgb, Hsv, LinearSrgb, PremultipliedAlpha
 
 impl From<Alpha<EncodedSrgb<u8>>> for Color32 {
     fn from(srgba: Alpha<EncodedSrgb<u8>>) -> Self {
-        let Alpha {
-            color: EncodedSrgb { r, g, b },
-            alpha: a,
-        } = srgba;
+        let Alpha { color: EncodedSrgb { r, g, b }, alpha: a } = srgba;
 
         Self::from_rgba_unmultiplied(r, g, b, a)
     }
@@ -18,10 +15,7 @@ impl From<Alpha<EncodedSrgb<u8>>> for Color32 {
 
 impl From<PremultipliedAlpha<EncodedSrgb<u8>>> for Color32 {
     fn from(srgba: PremultipliedAlpha<EncodedSrgb<u8>>) -> Self {
-        let PremultipliedAlpha {
-            color: EncodedSrgb { r, g, b },
-            alpha: a,
-        } = srgba;
+        let PremultipliedAlpha { color: EncodedSrgb { r, g, b }, alpha: a } = srgba;
 
         Self::from_rgba_premultiplied(r, g, b, a)
     }
@@ -31,19 +25,13 @@ impl From<Color32> for PremultipliedAlpha<EncodedSrgb<u8>> {
     fn from(col: Color32) -> Self {
         let (r, g, b, a) = col.to_tuple();
 
-        Self {
-            color: EncodedSrgb { r, g, b },
-            alpha: a,
-        }
+        Self { color: EncodedSrgb { r, g, b }, alpha: a }
     }
 }
 
 impl From<PremultipliedAlpha<EncodedSrgb<f32>>> for Color32 {
     fn from(srgba: PremultipliedAlpha<EncodedSrgb<f32>>) -> Self {
-        let PremultipliedAlpha {
-            color: EncodedSrgb { r, g, b },
-            alpha: a,
-        } = srgba;
+        let PremultipliedAlpha { color: EncodedSrgb { r, g, b }, alpha: a } = srgba;
 
         // This is a bit of an abuse of the function name but it does what we want.
         let r = linear_u8_from_linear_f32(r);
@@ -65,10 +53,7 @@ impl From<Color32> for PremultipliedAlpha<EncodedSrgb<f32>> {
         let b = linear_f32_from_linear_u8(b);
         let a = linear_f32_from_linear_u8(a);
 
-        Self {
-            color: EncodedSrgb { r, g, b },
-            alpha: a,
-        }
+        Self { color: EncodedSrgb { r, g, b }, alpha: a }
     }
 }
 
@@ -80,10 +65,7 @@ impl ColorInterop for Color32 {
 
 impl From<PremultipliedAlpha<LinearSrgb<f32>>> for Rgba {
     fn from(srgba: PremultipliedAlpha<LinearSrgb<f32>>) -> Self {
-        let PremultipliedAlpha {
-            color: LinearSrgb { r, g, b },
-            alpha: a,
-        } = srgba;
+        let PremultipliedAlpha { color: LinearSrgb { r, g, b }, alpha: a } = srgba;
 
         Self([r, g, b, a])
     }
@@ -93,10 +75,7 @@ impl From<Rgba> for PremultipliedAlpha<LinearSrgb<f32>> {
     fn from(col: Rgba) -> Self {
         let (r, g, b, a) = col.to_tuple();
 
-        Self {
-            color: LinearSrgb { r, g, b },
-            alpha: a,
-        }
+        Self { color: LinearSrgb { r, g, b }, alpha: a }
     }
 }
 
@@ -108,10 +87,7 @@ impl ColorInterop for Rgba {
 
 impl From<Alpha<Hsv<f32>>> for Hsva {
     fn from(srgba: Alpha<Hsv<f32>>) -> Self {
-        let Alpha {
-            color: Hsv { h, s, v },
-            alpha: a,
-        } = srgba;
+        let Alpha { color: Hsv { h, s, v }, alpha: a } = srgba;
 
         Self::new(h, s, v, a)
     }
@@ -121,10 +97,7 @@ impl From<Hsva> for Alpha<Hsv<f32>> {
     fn from(col: Hsva) -> Self {
         let Hsva { h, s, v, a } = col;
 
-        Self {
-            color: Hsv { h, s, v },
-            alpha: a,
-        }
+        Self { color: Hsv { h, s, v }, alpha: a }
     }
 }
 
@@ -140,10 +113,7 @@ impl ColorInterop for HsvaGamma {
 
 impl From<Alpha<Hsv<f32>>> for HsvaGamma {
     fn from(srgba: Alpha<Hsv<f32>>) -> Self {
-        let Alpha {
-            color: Hsv { h, s, v },
-            alpha: a,
-        } = srgba;
+        let Alpha { color: Hsv { h, s, v }, alpha: a } = srgba;
 
         Hsva::new(h, s, v, a).into()
     }
@@ -153,9 +123,6 @@ impl From<HsvaGamma> for Alpha<Hsv<f32>> {
     fn from(col: HsvaGamma) -> Self {
         let Hsva { h, s, v, a } = col.into();
 
-        Self {
-            color: Hsv { h, s, v },
-            alpha: a,
-        }
+        Self { color: Hsv { h, s, v }, alpha: a }
     }
 }

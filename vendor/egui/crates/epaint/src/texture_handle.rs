@@ -1,9 +1,6 @@
 use alloc::sync::Arc;
 
-use crate::{
-    ImageData, ImageDelta, TextureId, TextureManager, emath::NumExt as _, mutex::RwLock,
-    textures::TextureOptions,
-};
+use crate::{ImageData, ImageDelta, TextureId, TextureManager, emath::NumExt as _, mutex::RwLock, textures::TextureOptions};
 
 /// Used to paint images.
 ///
@@ -31,10 +28,7 @@ impl Drop for TextureHandle {
 impl Clone for TextureHandle {
     fn clone(&self) -> Self {
         self.tex_mngr.write().retain(self.id);
-        Self {
-            tex_mngr: Arc::clone(&self.tex_mngr),
-            id: self.id,
-        }
+        Self { tex_mngr: Arc::clone(&self.tex_mngr), id: self.id }
     }
 }
 
@@ -68,30 +62,18 @@ impl TextureHandle {
     /// Assign a new image to an existing texture.
     #[expect(clippy::needless_pass_by_ref_mut)] // Intentionally hide interiority of mutability
     pub fn set(&mut self, image: impl Into<ImageData>, options: TextureOptions) {
-        self.tex_mngr
-            .write()
-            .set(self.id, ImageDelta::full(image.into(), options));
+        self.tex_mngr.write().set(self.id, ImageDelta::full(image.into(), options));
     }
 
     /// Assign a new image to a subregion of the whole texture.
     #[expect(clippy::needless_pass_by_ref_mut)] // Intentionally hide interiority of mutability
-    pub fn set_partial(
-        &mut self,
-        pos: [usize; 2],
-        image: impl Into<ImageData>,
-        options: TextureOptions,
-    ) {
-        self.tex_mngr
-            .write()
-            .set(self.id, ImageDelta::partial(pos, image.into(), options));
+    pub fn set_partial(&mut self, pos: [usize; 2], image: impl Into<ImageData>, options: TextureOptions) {
+        self.tex_mngr.write().set(self.id, ImageDelta::partial(pos, image.into(), options));
     }
 
     /// width x height
     pub fn size(&self) -> [usize; 2] {
-        self.tex_mngr
-            .read()
-            .meta(self.id)
-            .map_or([0, 0], |tex| tex.size)
+        self.tex_mngr.read().meta(self.id).map_or([0, 0], |tex| tex.size)
     }
 
     /// width x height
@@ -102,10 +84,7 @@ impl TextureHandle {
 
     /// `width x height x bytes_per_pixel`
     pub fn byte_size(&self) -> usize {
-        self.tex_mngr
-            .read()
-            .meta(self.id)
-            .map_or(0, |tex| tex.bytes_used())
+        self.tex_mngr.read().meta(self.id).map_or(0, |tex| tex.bytes_used())
     }
 
     /// width / height
@@ -116,10 +95,7 @@ impl TextureHandle {
 
     /// Debug-name.
     pub fn name(&self) -> String {
-        self.tex_mngr
-            .read()
-            .meta(self.id)
-            .map_or_else(|| "<none>".to_owned(), |tex| tex.name.clone())
+        self.tex_mngr.read().meta(self.id).map_or_else(|| "<none>".to_owned(), |tex| tex.name.clone())
     }
 }
 

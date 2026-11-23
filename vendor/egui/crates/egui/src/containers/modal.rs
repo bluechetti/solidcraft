@@ -1,8 +1,6 @@
 use emath::{Align2, Vec2};
 
-use crate::{
-    Area, Color32, Context, Frame, Id, InnerResponse, Order, Response, Sense, Ui, UiBuilder, UiKind,
-};
+use crate::{Area, Color32, Context, Frame, Id, InnerResponse, Order, Response, Sense, Ui, UiBuilder, UiKind};
 
 /// A modal dialog.
 ///
@@ -24,11 +22,7 @@ impl Modal {
     ///
     /// The id is passed to the area.
     pub fn new(id: Id) -> Self {
-        Self {
-            area: Self::default_area(id),
-            backdrop_color: Color32::from_black_alpha(100),
-            frame: None,
-        }
+        Self { area: Self::default_area(id), backdrop_color: Color32::from_black_alpha(100), frame: None }
     }
 
     /// Returns an area customized for a modal.
@@ -38,12 +32,7 @@ impl Modal {
     /// - anchor: center
     /// - order: foreground
     pub fn default_area(id: Id) -> Area {
-        Area::new(id)
-            .kind(UiKind::Modal)
-            .sense(Sense::hover())
-            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-            .order(Order::Foreground)
-            .interactable(true)
+        Area::new(id).kind(UiKind::Modal).sense(Sense::hover()).anchor(Align2::CENTER_CENTER, Vec2::ZERO).order(Order::Foreground).interactable(true)
     }
 
     /// Set the frame of the modal.
@@ -75,21 +64,14 @@ impl Modal {
 
     /// Show the modal.
     pub fn show<T>(self, ctx: &Context, content: impl FnOnce(&mut Ui) -> T) -> ModalResponse<T> {
-        let Self {
-            area,
-            backdrop_color,
-            frame,
-        } = self;
+        let Self { area, backdrop_color, frame } = self;
 
         let is_top_modal = ctx.memory_mut(|mem| {
             mem.set_modal_layer(area.layer());
             mem.top_modal_layer() == Some(area.layer())
         });
         let any_popup_open = crate::Popup::is_any_open(ctx);
-        let InnerResponse {
-            inner: (inner, backdrop_response),
-            response,
-        } = area.show(ctx, |ui| {
+        let InnerResponse { inner: (inner, backdrop_response), response } = area.show(ctx, |ui| {
             let bg_rect = ui.ctx().content_rect();
             let bg_sense = Sense::CLICK | Sense::DRAG;
             let mut backdrop = ui.new_child(UiBuilder::new().sense(bg_sense).max_rect(bg_rect));
@@ -101,22 +83,12 @@ impl Modal {
 
             // We need the extra scope with the sense since frame can't have a sense and since we
             // need to prevent the clicks from passing through to the backdrop.
-            let inner = ui
-                .scope_builder(UiBuilder::new().sense(Sense::CLICK | Sense::DRAG), |ui| {
-                    frame.show(ui, content).inner
-                })
-                .inner;
+            let inner = ui.scope_builder(UiBuilder::new().sense(Sense::CLICK | Sense::DRAG), |ui| frame.show(ui, content).inner).inner;
 
             (inner, backdrop_response)
         });
 
-        ModalResponse {
-            response,
-            backdrop_response,
-            inner,
-            is_top_modal,
-            any_popup_open,
-        }
+        ModalResponse { response, backdrop_response, inner, is_top_modal, any_popup_open }
     }
 }
 
@@ -152,13 +124,10 @@ impl<T> ModalResponse<T> {
         let ctx = &self.response.ctx;
 
         // this is a closure so that `Esc` is consumed only if the modal is topmost
-        let escape_clicked =
-            || ctx.input_mut(|i| i.consume_key(crate::Modifiers::NONE, crate::Key::Escape));
+        let escape_clicked = || ctx.input_mut(|i| i.consume_key(crate::Modifiers::NONE, crate::Key::Escape));
 
         let ui_close_called = self.response.should_close();
 
-        self.backdrop_response.clicked()
-            || ui_close_called
-            || (self.is_top_modal && !self.any_popup_open && escape_clicked())
+        self.backdrop_response.clicked() || ui_close_called || (self.is_top_modal && !self.any_popup_open && escape_clicked())
     }
 }

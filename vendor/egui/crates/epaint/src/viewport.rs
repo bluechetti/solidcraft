@@ -43,12 +43,6 @@ impl ViewportInPixels {
         let width_px = right_px - left_px;
         let height_px = bottom_px - top_px;
 
-        Self {
-            left_px,
-            top_px,
-            from_bottom_px: screen_height - height_px - top_px,
-            width_px,
-            height_px,
-        }
+        Self { left_px, top_px, from_bottom_px: screen_height - height_px - top_px, width_px, height_px }
     }
 }

@@ -119,10 +119,7 @@ impl Pos2 {
     /// Same as `Pos2::default()`.
     pub const ZERO: Self = Self { x: 0.0, y: 0.0 };
 
-    pub const NAN: Self = Self {
-        x: f32::NAN,
-        y: f32::NAN,
-    };
+    pub const NAN: Self = Self { x: f32::NAN, y: f32::NAN };
 
     #[inline(always)]
     pub const fn new(x: f32, y: f32) -> Self {
@@ -133,10 +130,7 @@ impl Pos2 {
     /// `p.to_vec2()` is equivalent to `p - Pos2::default()`.
     #[inline(always)]
     pub fn to_vec2(self) -> Vec2 {
-        Vec2 {
-            x: self.x,
-            y: self.y,
-        }
+        Vec2 { x: self.x, y: self.y }
     }
 
     #[inline]
@@ -191,18 +185,12 @@ impl Pos2 {
     #[must_use]
     #[inline]
     pub fn clamp(self, min: Self, max: Self) -> Self {
-        Self {
-            x: self.x.clamp(min.x, max.x),
-            y: self.y.clamp(min.y, max.y),
-        }
+        Self { x: self.x.clamp(min.x, max.x), y: self.y.clamp(min.y, max.y) }
     }
 
     /// Linearly interpolate towards another point, so that `0.0 => self, 1.0 => other`.
     pub fn lerp(&self, other: Self, t: f32) -> Self {
-        Self {
-            x: lerp(self.x..=other.x, t),
-            y: lerp(self.y..=other.y, t),
-        }
+        Self { x: lerp(self.x..=other.x, t), y: lerp(self.y..=other.y, t) }
     }
 }
 
@@ -250,20 +238,14 @@ impl Eq for Pos2 {}
 impl AddAssign<Vec2> for Pos2 {
     #[inline(always)]
     fn add_assign(&mut self, rhs: Vec2) {
-        *self = Self {
-            x: self.x + rhs.x,
-            y: self.y + rhs.y,
-        };
+        *self = Self { x: self.x + rhs.x, y: self.y + rhs.y };
     }
 }
 
 impl SubAssign<Vec2> for Pos2 {
     #[inline(always)]
     fn sub_assign(&mut self, rhs: Vec2) {
-        *self = Self {
-            x: self.x - rhs.x,
-            y: self.y - rhs.y,
-        };
+        *self = Self { x: self.x - rhs.x, y: self.y - rhs.y };
     }
 }
 
@@ -272,10 +254,7 @@ impl Add<Vec2> for Pos2 {
 
     #[inline(always)]
     fn add(self, rhs: Vec2) -> Self {
-        Self {
-            x: self.x + rhs.x,
-            y: self.y + rhs.y,
-        }
+        Self { x: self.x + rhs.x, y: self.y + rhs.y }
     }
 }
 
@@ -284,10 +263,7 @@ impl Sub for Pos2 {
 
     #[inline(always)]
     fn sub(self, rhs: Self) -> Vec2 {
-        Vec2 {
-            x: self.x - rhs.x,
-            y: self.y - rhs.y,
-        }
+        Vec2 { x: self.x - rhs.x, y: self.y - rhs.y }
     }
 }
 
@@ -296,10 +272,7 @@ impl Sub<Vec2> for Pos2 {
 
     #[inline(always)]
     fn sub(self, rhs: Vec2) -> Self {
-        Self {
-            x: self.x - rhs.x,
-            y: self.y - rhs.y,
-        }
+        Self { x: self.x - rhs.x, y: self.y - rhs.y }
     }
 }
 
@@ -308,10 +281,7 @@ impl Mul<f32> for Pos2 {
 
     #[inline(always)]
     fn mul(self, factor: f32) -> Self {
-        Self {
-            x: self.x * factor,
-            y: self.y * factor,
-        }
+        Self { x: self.x * factor, y: self.y * factor }
     }
 }
 
@@ -320,10 +290,7 @@ impl Mul<Pos2> for f32 {
 
     #[inline(always)]
     fn mul(self, vec: Pos2) -> Pos2 {
-        Pos2 {
-            x: self * vec.x,
-            y: self * vec.y,
-        }
+        Pos2 { x: self * vec.x, y: self * vec.y }
     }
 }
 
@@ -340,10 +307,7 @@ impl Div<f32> for Pos2 {
 
     #[inline(always)]
     fn div(self, factor: f32) -> Self {
-        Self {
-            x: self.x / factor,
-            y: self.y / factor,
-        }
+        Self { x: self.x / factor, y: self.y / factor }
     }
 }
 

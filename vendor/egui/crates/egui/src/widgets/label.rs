@@ -1,8 +1,8 @@
 use alloc::sync::Arc;
 
 use crate::{
-    Align, Direction, FontSelection, Galley, Pos2, Response, Role, Sense, Stroke, TextWrapMode, Ui,
-    Widget, WidgetInfo, WidgetText, epaint, pos2, text_selection::LabelSelectionState,
+    Align, Direction, FontSelection, Galley, Pos2, Response, Role, Sense, Stroke, TextWrapMode, Ui, Widget, WidgetInfo, WidgetText, epaint, pos2,
+    text_selection::LabelSelectionState,
 };
 
 /// Static text.
@@ -33,14 +33,7 @@ pub struct Label {
 
 impl Label {
     pub fn new(text: impl Into<WidgetText>) -> Self {
-        Self {
-            text: text.into(),
-            wrap_mode: None,
-            sense: None,
-            selectable: None,
-            halign: None,
-            show_tooltip_when_elided: true,
-        }
+        Self { text: text.into(), wrap_mode: None, sense: None, selectable: None, halign: None, show_tooltip_when_elided: true }
     }
 
     pub fn text(&self) -> &str {
@@ -138,9 +131,7 @@ impl Label {
 impl Label {
     /// Do layout and position the galley in the ui, without painting it or adding widget info.
     pub fn layout_in_ui(self, ui: &mut Ui) -> (Pos2, Arc<Galley>, Response) {
-        let selectable = self
-            .selectable
-            .unwrap_or_else(|| ui.style().interaction.selectable_labels);
+        let selectable = self.selectable.unwrap_or_else(|| ui.style().interaction.selectable_labels);
 
         let mut sense = self.sense.unwrap_or_else(|| {
             if ui.memory(|mem| mem.options.screen_reader) {
@@ -158,11 +149,7 @@ impl Label {
             // we prioritize touch-scrolling:
             let allow_drag_to_select = ui.input(|i| !i.has_touch_screen());
 
-            let mut select_sense = if allow_drag_to_select {
-                Sense::click_and_drag()
-            } else {
-                Sense::click()
-            };
+            let mut select_sense = if allow_drag_to_select { Sense::click_and_drag() } else { Sense::click() };
             select_sense -= Sense::FOCUSABLE; // Don't move focus to labels with TAB key.
 
             sense |= select_sense;
@@ -180,11 +167,7 @@ impl Label {
         }
 
         let valign = ui.text_valign();
-        let mut layout_job = Arc::unwrap_or_clone(self.text.into_layout_job(
-            ui.style(),
-            FontSelection::Default,
-            valign,
-        ));
+        let mut layout_job = Arc::unwrap_or_clone(self.text.into_layout_job(ui.style(), FontSelection::Default, valign));
 
         let available_width = ui.available_width();
 
@@ -199,10 +182,7 @@ impl Label {
 
             let cursor = ui.cursor();
             let first_row_indentation = available_width - ui.available_size_before_wrap().x;
-            debug_assert!(
-                first_row_indentation.is_finite(),
-                "first row indentation is not finite: {first_row_indentation}"
-            );
+            debug_assert!(first_row_indentation.is_finite(), "first row indentation is not finite: {first_row_indentation}");
 
             layout_job.wrap.max_width = available_width;
             layout_job.first_row_min_height = cursor.height();
@@ -216,9 +196,7 @@ impl Label {
             let pos = pos2(ui.max_rect().left(), ui.cursor().top());
             assert!(!galley.rows.is_empty(), "Galleys are never empty");
             // collect a response from many rows:
-            let rect = galley.rows[0]
-                .rect_without_leading_space()
-                .translate(pos.to_vec2());
+            let rect = galley.rows[0].rect_without_leading_space().translate(pos.to_vec2());
             let mut response = ui.allocate_rect(rect, sense);
             response.set_intrinsic_size(galley.intrinsic_size());
             for placed_row in galley.rows.iter().skip(1) {
@@ -248,9 +226,7 @@ impl Label {
                 layout_job.halign = Align::LEFT;
                 layout_job.justify = false;
             } else {
-                layout_job.halign = self
-                    .halign
-                    .unwrap_or_else(|| ui.layout().horizontal_placement());
+                layout_job.halign = self.halign.unwrap_or_else(|| ui.layout().horizontal_placement());
                 layout_job.justify = ui.layout().horizontal_justify();
             }
 
@@ -292,33 +268,15 @@ impl Widget for Label {
                 response = response.on_hover_text(job);
             }
 
-            let response_color = if interactive {
-                ui.style().interact(&response).text_color()
-            } else {
-                ui.style().visuals.text_color()
-            };
+            let response_color = if interactive { ui.style().interact(&response).text_color() } else { ui.style().visuals.text_color() };
 
-            let underline = if response.has_focus() || response.highlighted() {
-                Stroke::new(1.0, response_color)
-            } else {
-                Stroke::NONE
-            };
+            let underline = if response.has_focus() || response.highlighted() { Stroke::new(1.0, response_color) } else { Stroke::NONE };
 
             let selectable = selectable.unwrap_or_else(|| ui.style().interaction.selectable_labels);
             if selectable {
-                LabelSelectionState::label_text_selection(
-                    ui,
-                    &response,
-                    galley_pos,
-                    galley,
-                    response_color,
-                    underline,
-                );
+                LabelSelectionState::label_text_selection(ui, &response, galley_pos, galley, response_color, underline);
             } else {
-                ui.painter().add(
-                    epaint::TextShape::new(galley_pos, galley, response_color)
-                        .with_underline(underline),
-                );
+                ui.painter().add(epaint::TextShape::new(galley_pos, galley, response_color).with_underline(underline));
             }
         }
 

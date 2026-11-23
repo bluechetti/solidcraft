@@ -59,11 +59,7 @@ pub struct ScrollTarget {
 
 impl ScrollTarget {
     pub fn new(range: Rangef, align: Option<Align>, animation: style::ScrollAnimation) -> Self {
-        Self {
-            range,
-            align,
-            animation,
-        }
+        Self { range, align, animation }
     }
 }
 
@@ -84,49 +80,21 @@ pub struct DebugRect {
 #[cfg(debug_assertions)]
 impl DebugRect {
     pub fn paint(self, painter: &Painter) {
-        let Self {
-            rect,
-            callstack,
-            is_clicking,
-        } = self;
+        let Self { rect, callstack, is_clicking } = self;
 
         let ctx = painter.ctx();
 
         // Paint rectangle around widget:
         {
             // Print width and height:
-            let text_color = if ctx.global_style().visuals.dark_mode {
-                Color32::WHITE
-            } else {
-                Color32::BLACK
-            };
-            painter.debug_text(
-                rect.left_center() + 2.0 * Vec2::LEFT,
-                Align2::RIGHT_CENTER,
-                text_color,
-                format!("H: {:.1}", rect.height()),
-            );
-            painter.debug_text(
-                rect.center_top(),
-                Align2::CENTER_BOTTOM,
-                text_color,
-                format!("W: {:.1}", rect.width()),
-            );
+            let text_color = if ctx.global_style().visuals.dark_mode { Color32::WHITE } else { Color32::BLACK };
+            painter.debug_text(rect.left_center() + 2.0 * Vec2::LEFT, Align2::RIGHT_CENTER, text_color, format!("H: {:.1}", rect.height()));
+            painter.debug_text(rect.center_top(), Align2::CENTER_BOTTOM, text_color, format!("W: {:.1}", rect.width()));
 
             // Paint rect:
-            let rect_fg_color = if is_clicking {
-                Color32::WHITE
-            } else {
-                Color32::LIGHT_BLUE
-            };
+            let rect_fg_color = if is_clicking { Color32::WHITE } else { Color32::LIGHT_BLUE };
             let rect_bg_color = Color32::BLUE.gamma_multiply(0.5);
-            painter.rect(
-                rect,
-                0.0,
-                rect_bg_color,
-                (1.0, rect_fg_color),
-                crate::StrokeKind::Outside,
-            );
+            painter.rect(rect, 0.0, rect_bg_color, (1.0, rect_fg_color), crate::StrokeKind::Outside);
         }
 
         if !callstack.is_empty() {
@@ -145,30 +113,15 @@ impl DebugRect {
                 rect.bottom()
             };
 
-            let y = y
-                .at_most(content_rect.bottom() - galley.size().y)
-                .at_least(0.0);
+            let y = y.at_most(content_rect.bottom() - galley.size().y).at_least(0.0);
 
-            let x = rect
-                .left()
-                .at_most(content_rect.right() - galley.size().x)
-                .at_least(0.0);
+            let x = rect.left().at_most(content_rect.right() - galley.size().x).at_least(0.0);
             let text_pos = pos2(x, y);
 
             let text_bg_color = Color32::from_black_alpha(180);
-            let text_rect_stroke_color = if is_clicking {
-                Color32::WHITE
-            } else {
-                text_bg_color
-            };
+            let text_rect_stroke_color = if is_clicking { Color32::WHITE } else { text_bg_color };
             let text_rect = Rect::from_min_size(text_pos, galley.size());
-            painter.rect(
-                text_rect,
-                0.0,
-                text_bg_color,
-                (1.0, text_rect_stroke_color),
-                crate::StrokeKind::Middle,
-            );
+            painter.rect(text_rect, 0.0, text_bg_color, (1.0, text_rect_stroke_color), crate::StrokeKind::Middle);
             painter.galley(text_pos, galley, text_color);
 
             if is_clicking {

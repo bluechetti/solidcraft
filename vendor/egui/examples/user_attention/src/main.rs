@@ -9,15 +9,8 @@ use std::time::SystemTime;
 
 fn main() -> eframe::Result {
     env_logger::init(); // Log to stderr (if you run with `RUST_LOG=debug`).
-    let native_options = NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([400., 200.]),
-        ..Default::default()
-    };
-    eframe::run_native(
-        "User attention test",
-        native_options,
-        Box::new(|cc| Ok(Box::new(Application::new(cc)))),
-    )
+    let native_options = NativeOptions { viewport: egui::ViewportBuilder::default().with_inner_size([400., 200.]), ..Default::default() };
+    eframe::run_native("User attention test", native_options, Box::new(|cc| Ok(Box::new(Application::new(cc)))))
 }
 
 fn repr(attention: UserAttentionType) -> String {
@@ -34,12 +27,7 @@ struct Application {
 
 impl Application {
     fn new(_cc: &CreationContext<'_>) -> Self {
-        Self {
-            attention: UserAttentionType::Informational,
-            request_at: None,
-            auto_reset: false,
-            reset_at: None,
-        }
+        Self { attention: UserAttentionType::Informational, request_at: None, auto_reset: false, reset_at: None }
     }
 
     fn attention_reset_timeout() -> Duration {
@@ -72,33 +60,23 @@ impl eframe::App for Application {
             && reset_at < SystemTime::now()
         {
             self.reset_at = None;
-            ui.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
-                UserAttentionType::Reset,
-            ));
+            ui.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(UserAttentionType::Reset));
         }
 
         CentralPanel::default().show(ui, |ui| {
             ui.vertical(|ui| {
                 ui.horizontal(|ui| {
                     ui.label("Attention type:");
-                    egui::ComboBox::new("attention", "")
-                        .selected_text(repr(self.attention))
-                        .show_ui(ui, |ui| {
-                            for kind in [
-                                UserAttentionType::Informational,
-                                UserAttentionType::Critical,
-                            ] {
-                                ui.selectable_value(&mut self.attention, kind, repr(kind));
-                            }
-                        })
+                    egui::ComboBox::new("attention", "").selected_text(repr(self.attention)).show_ui(ui, |ui| {
+                        for kind in [UserAttentionType::Informational, UserAttentionType::Critical] {
+                            ui.selectable_value(&mut self.attention, kind, repr(kind));
+                        }
+                    })
                 });
 
                 let button_enabled = self.request_at.is_none() && self.reset_at.is_none();
                 let button_text = if button_enabled {
-                    format!(
-                        "Request in {} seconds",
-                        Self::attention_request_timeout().as_secs()
-                    )
+                    format!("Request in {} seconds", Self::attention_request_timeout().as_secs())
                 } else {
                     match self.reset_at {
                         None => "Unfocus the window, fast!".to_owned(),
@@ -114,17 +92,9 @@ impl eframe::App for Application {
 
                 let resp = ui
                     .add_enabled(button_enabled, Button::new(button_text))
-                    .on_hover_text_at_pointer(
-                        "After clicking, unfocus the application's window to see the effect",
-                    );
+                    .on_hover_text_at_pointer("After clicking, unfocus the application's window to see the effect");
 
-                ui.checkbox(
-                    &mut self.auto_reset,
-                    format!(
-                        "Reset after {} seconds",
-                        Self::attention_reset_timeout().as_secs()
-                    ),
-                );
+                ui.checkbox(&mut self.auto_reset, format!("Reset after {} seconds", Self::attention_reset_timeout().as_secs()));
 
                 if resp.clicked() {
                     self.request_at = Some(SystemTime::now() + Self::attention_request_timeout());

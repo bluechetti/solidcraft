@@ -59,6 +59,13 @@ pub fn levels(positions: &[Vec3], triangles: &[[u32; 3]], targets: &[usize]) -> 
     levels_in_pieces(positions, triangles, targets, PIECE, workers)
 }
 
+/// [`levels`] of a mesh body's own indexed triangles (upstream's entry point, which keeps the
+/// facets' vertex order). A mesh body's vertices are already shared, so the fork's simplifier in
+/// pieces takes them as they are.
+pub fn levels_from_indexed_facets(positions: &[Vec3], triangles: &[[u32; 3]], targets: &[usize]) -> Vec<Level> {
+    levels(positions, triangles, targets)
+}
+
 /// [`levels`], in pieces of about `piece` triangles on up to `workers` threads.
 /// A coarse copy of a mesh for a small picture: the vertices in each cube of side `cell` merged
 /// into one at their mean, and the triangles left with two corners in one cube dropped (vertex

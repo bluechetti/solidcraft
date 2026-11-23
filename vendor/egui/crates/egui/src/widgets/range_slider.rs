@@ -1,8 +1,8 @@
 use core::ops::RangeInclusive;
 
 use crate::{
-    Color32, IntoAtoms, Label, NumExt as _, Pos2, Rangef, Rect, Response, Role, Sense,
-    TextWrapMode, Ui, Widget, WidgetInfo, WidgetText, emath, style::HandleShape,
+    Color32, IntoAtoms, Label, NumExt as _, Pos2, Rangef, Rect, Response, Role, Sense, TextWrapMode, Ui, Widget, WidgetInfo, WidgetText, emath,
+    style::HandleShape,
 };
 
 use super::drag_value::{GetSetValue, clamp_value_to_range, get, set};
@@ -46,11 +46,7 @@ impl<'a> RangeSlider<'a> {
     /// Creates a new horizontal range slider.
     ///
     /// The values are clamped to `range`, and `low` is clamped to `high`.
-    pub fn new<Num: emath::Numeric>(
-        low: &'a mut Num,
-        high: &'a mut Num,
-        range: impl Into<RangeInclusive<Num>>,
-    ) -> Self {
+    pub fn new<Num: emath::Numeric>(low: &'a mut Num, high: &'a mut Num, range: impl Into<RangeInclusive<Num>>) -> Self {
         let range = range.into();
         let range_f64 = range.start().to_f64()..=range.end().to_f64();
         let slf = Self::from_get_set(
@@ -78,12 +74,7 @@ impl<'a> RangeSlider<'a> {
         get_set_low: impl 'a + FnMut(Option<f64>) -> f64,
         get_set_high: impl 'a + FnMut(Option<f64>) -> f64,
     ) -> Self {
-        Self {
-            get_set_low: Box::new(get_set_low),
-            get_set_high: Box::new(get_set_high),
-            core: SliderCore::new(range),
-            min_separation: 0.0,
-        }
+        Self { get_set_low: Box::new(get_set_low), get_set_high: Box::new(get_set_high), core: SliderCore::new(range), min_separation: 0.0 }
     }
 
     /// Helper: equivalent to `self.fixed_decimals(0).smallest_positive(1.0).step_by(1.0)`.
@@ -279,10 +270,7 @@ impl<'a> RangeSlider<'a> {
     }
 
     /// Set a formatter for both numbers.
-    pub fn custom_formatter(
-        mut self,
-        formatter: impl 'a + Fn(f64, RangeInclusive<usize>) -> String,
-    ) -> Self {
+    pub fn custom_formatter(mut self, formatter: impl 'a + Fn(f64, RangeInclusive<usize>) -> String) -> Self {
         self.core.drag_value.format = self.core.drag_value.format.custom_formatter(formatter);
         self
     }
@@ -304,11 +292,7 @@ impl<'a> RangeSlider<'a> {
     /// ```
     #[inline]
     pub fn binary(mut self, min_width: usize, twos_complement: bool) -> Self {
-        self.core.drag_value.format = self
-            .core
-            .drag_value
-            .format
-            .binary(min_width, twos_complement);
+        self.core.drag_value.format = self.core.drag_value.format.binary(min_width, twos_complement);
         self
     }
 
@@ -322,11 +306,7 @@ impl<'a> RangeSlider<'a> {
     /// ```
     #[inline]
     pub fn octal(mut self, min_width: usize, twos_complement: bool) -> Self {
-        self.core.drag_value.format = self
-            .core
-            .drag_value
-            .format
-            .octal(min_width, twos_complement);
+        self.core.drag_value.format = self.core.drag_value.format.octal(min_width, twos_complement);
         self
     }
 
@@ -340,11 +320,7 @@ impl<'a> RangeSlider<'a> {
     /// ```
     #[inline]
     pub fn hexadecimal(mut self, min_width: usize, twos_complement: bool, upper: bool) -> Self {
-        self.core.drag_value.format =
-            self.core
-                .drag_value
-                .format
-                .hexadecimal(min_width, twos_complement, upper);
+        self.core.drag_value.format = self.core.drag_value.format.hexadecimal(min_width, twos_complement, upper);
         self
     }
 
@@ -370,13 +346,7 @@ impl RangeSlider<'_> {
     /// As far as its neighbor, less any separation the widget insists on, and never past
     /// `within`: the rail for what the widget stores and reports, or all values when it
     /// never clamps.
-    fn bounds(
-        &self,
-        handle: Handle,
-        low: f64,
-        high: f64,
-        within: RangeInclusive<f64>,
-    ) -> RangeInclusive<f64> {
+    fn bounds(&self, handle: Handle, low: f64, high: f64, within: RangeInclusive<f64>) -> RangeInclusive<f64> {
         let (min, max) = (*within.start(), *within.end());
         match handle {
             Handle::Low => min..=(high - self.min_separation).clamp(min, max),
@@ -410,11 +380,7 @@ impl RangeSlider<'_> {
             Handle::High => "high",
         };
         let text = self.core.text.text();
-        if text.is_empty() {
-            end.to_owned()
-        } else {
-            format!("{text} {end}")
-        }
+        if text.is_empty() { end.to_owned() } else { format!("{text} {end}") }
     }
 
     /// Just the rail and its handles, no numbers.
@@ -423,8 +389,7 @@ impl RangeSlider<'_> {
         let (mut low, mut high) = (self.get_low(), self.get_high());
 
         if let Some(pointer_position_2d) = response.interact_pointer_pos() {
-            let value =
-                slider_core::value_at_pointer(ui, &geom, pointer_position_2d, self.core.smart_aim);
+            let value = slider_core::value_at_pointer(ui, &geom, pointer_position_2d, self.core.smart_aim);
 
             // Decided once per gesture, so dragging one handle into the other does not hand the
             // pointer over to its neighbor half way.
@@ -448,19 +413,9 @@ impl RangeSlider<'_> {
 
         // Each handle is its own focus stop, so the keyboard and a screen reader can reach
         // either end of the range.
-        let handle_rect = |value: f64| {
-            geom.handle_rect(geom.marker_center(geom.position_from_value(value), &response.rect))
-        };
-        let low_response = ui.interact(
-            handle_rect(low),
-            response.id.with("low"),
-            Sense::focusable_noninteractive(),
-        );
-        let high_response = ui.interact(
-            handle_rect(high),
-            response.id.with("high"),
-            Sense::focusable_noninteractive(),
-        );
+        let handle_rect = |value: f64| geom.handle_rect(geom.marker_center(geom.position_from_value(value), &response.rect));
+        let low_response = ui.interact(handle_rect(low), response.id.with("low"), Sense::focusable_noninteractive());
+        let high_response = ui.interact(handle_rect(high), response.id.with("high"), Sense::focusable_noninteractive());
 
         if let Some(value) = self.stepped_by_keyboard(ui, &geom, &low_response, low) {
             self.set(Handle::Low, value);
@@ -472,25 +427,13 @@ impl RangeSlider<'_> {
         // Rounding is applied on the way in, so read back what was actually stored.
         let (low, high) = (self.get_low(), self.get_high());
 
-        for (handle, handle_response, value) in [
-            (Handle::Low, &low_response, low),
-            (Handle::High, &high_response, high),
-        ] {
+        for (handle, handle_response, value) in [(Handle::Low, &low_response, low), (Handle::High, &high_response, high)] {
             // A screen reader is told the rail's extent, as for `Slider`, but may step past it
             // when the widget never clamps.
             let reported = self.bounds(handle, low, high, self.core.sorted_range());
             let editable = self.bounds(handle, low, high, self.core.editable_range());
-            slider_core::declare_accesskit_slider(
-                ui,
-                handle_response.id,
-                value,
-                &reported,
-                &editable,
-                self.core.step,
-            );
-            handle_response.widget_info(|| {
-                WidgetInfo::slider(ui.is_enabled(), value, self.handle_label(handle))
-            });
+            slider_core::declare_accesskit_slider(ui, handle_response.id, value, &reported, &editable, self.core.step);
+            handle_response.widget_info(|| WidgetInfo::slider(ui.is_enabled(), value, self.handle_label(handle)));
         }
 
         // Paint it:
@@ -510,24 +453,15 @@ impl RangeSlider<'_> {
             // Each handle shows its own state: the grabbed or focused one is active, and hovering
             // the rail lights up the handle a press there would grab. Highlighting the widget
             // lights up both, as it does the one handle of a `Slider`.
-            let dragged = response
-                .is_pointer_button_down_on()
-                .then(|| ui.data(|data| data.get_temp::<Handle>(response.id)))
-                .flatten();
-            let hovered = response
-                .hover_pos()
-                .filter(|_| response.hovered())
-                .map(|pos| nearer_handle(&geom, pos, low, high));
+            let dragged = response.is_pointer_button_down_on().then(|| ui.data(|data| data.get_temp::<Handle>(response.id))).flatten();
+            let hovered = response.hover_pos().filter(|_| response.hovered()).map(|pos| nearer_handle(&geom, pos, low, high));
             let visuals = |handle: Handle, handle_response: &Response| {
                 let widgets = &ui.visuals().widgets;
                 if !ui.is_enabled() {
                     &widgets.noninteractive
                 } else if handle_response.has_focus() || dragged == Some(handle) {
                     &widgets.active
-                } else if hovered == Some(handle)
-                    || handle_response.highlighted()
-                    || response.highlighted()
-                {
+                } else if hovered == Some(handle) || handle_response.highlighted() || response.highlighted() {
                     &widgets.hovered
                 } else {
                     &widgets.inactive
@@ -535,23 +469,12 @@ impl RangeSlider<'_> {
             };
 
             slider_core::paint_handle(ui, &geom, low_center, visuals(Handle::Low, &low_response));
-            slider_core::paint_handle(
-                ui,
-                &geom,
-                high_center,
-                visuals(Handle::High, &high_response),
-            );
+            slider_core::paint_handle(ui, &geom, high_center, visuals(Handle::High, &high_response));
         }
     }
 
     /// The value the keyboard or a screen reader asked this handle to take, if either did.
-    fn stepped_by_keyboard(
-        &self,
-        ui: &Ui,
-        geom: &SliderGeometry,
-        handle: &Response,
-        value: f64,
-    ) -> Option<f64> {
+    fn stepped_by_keyboard(&self, ui: &Ui, geom: &SliderGeometry, handle: &Response, value: f64) -> Option<f64> {
         let rail_steps = slider_core::keyboard_steps(ui, handle, geom);
         let stepped = (rail_steps != 0.0).then(|| self.core.stepped_value(geom, value, rail_steps));
 
@@ -591,9 +514,7 @@ impl RangeSlider<'_> {
         // The numbers are laid out before the rail exists, so their speed is read off a
         // geometry of the right size at an arbitrary position: a gradient only depends on the
         // length.
-        let probe = self
-            .core
-            .geometry(Rect::from_min_size(Pos2::ZERO, desired_size), ui);
+        let probe = self.core.geometry(Rect::from_min_size(Pos2::ZERO, desired_size), ui);
 
         // Each number sits at the end of the rail it belongs to: low first along a horizontal
         // rail, but high first along a vertical one, whose top is its high end.
@@ -611,9 +532,7 @@ impl RangeSlider<'_> {
         let mut response = ui.allocate_response(desired_size, Sense::DRAG);
         self.range_slider_ui(ui, &response);
 
-        response.widget_info(|| {
-            WidgetInfo::labeled(Role::Slider, ui.is_enabled(), self.core.text.text())
-        });
+        response.widget_info(|| WidgetInfo::labeled(Role::Slider, ui.is_enabled(), self.core.text.text()));
 
         let slider_response = response.clone();
 
@@ -626,10 +545,7 @@ impl RangeSlider<'_> {
         }
 
         for value_response in &value_responses {
-            if value_response.gained_focus()
-                || value_response.has_focus()
-                || value_response.lost_focus()
-            {
+            if value_response.gained_focus() || value_response.has_focus() || value_response.lost_focus() {
                 // Use the focused [`DragValue`] id as the id of the whole widget,
                 // so that the focus events work as expected.
                 response = value_response.clone().union(response);
@@ -639,8 +555,7 @@ impl RangeSlider<'_> {
         }
 
         if !self.core.text.is_empty() {
-            let label_response =
-                ui.add(Label::new(self.core.text.clone()).wrap_mode(TextWrapMode::Extend));
+            let label_response = ui.add(Label::new(self.core.text.clone()).wrap_mode(TextWrapMode::Extend));
             slider_response.labelled_by(label_response.id);
             for value_response in &value_responses {
                 value_response.clone().labelled_by(label_response.id);
@@ -698,10 +613,7 @@ mod tests {
     fn handles_meet_but_never_cross() {
         let slider = range_slider(0.0..=100.0);
         let rail = slider.core.sorted_range();
-        assert_eq!(
-            slider.bounds(Handle::Low, 10.0, 80.0, rail.clone()),
-            0.0..=80.0
-        );
+        assert_eq!(slider.bounds(Handle::Low, 10.0, 80.0, rail.clone()), 0.0..=80.0);
         assert_eq!(slider.bounds(Handle::High, 10.0, 80.0, rail), 10.0..=100.0);
     }
 
@@ -709,10 +621,7 @@ mod tests {
     fn handles_keep_their_separation() {
         let slider = range_slider(0.0..=100.0).min_separation(5.0);
         let rail = slider.core.sorted_range();
-        assert_eq!(
-            slider.bounds(Handle::Low, 10.0, 80.0, rail.clone()),
-            0.0..=75.0
-        );
+        assert_eq!(slider.bounds(Handle::Low, 10.0, 80.0, rail.clone()), 0.0..=75.0);
         assert_eq!(slider.bounds(Handle::High, 10.0, 80.0, rail), 15.0..=100.0);
     }
 
@@ -728,10 +637,7 @@ mod tests {
 
         let slider = range_slider(0.0..=100.0).min_separation(200.0);
         let rail = slider.core.sorted_range();
-        assert_eq!(
-            slider.bounds(Handle::Low, 0.0, 100.0, rail.clone()),
-            0.0..=0.0
-        );
+        assert_eq!(slider.bounds(Handle::Low, 0.0, 100.0, rail.clone()), 0.0..=0.0);
         assert_eq!(slider.bounds(Handle::High, 0.0, 100.0, rail), 100.0..=100.0);
     }
 
@@ -739,10 +645,7 @@ mod tests {
     fn a_rail_may_run_high_to_low() {
         let slider = range_slider(100.0..=0.0);
         let rail = slider.core.sorted_range();
-        assert_eq!(
-            slider.bounds(Handle::Low, 20.0, 80.0, rail.clone()),
-            0.0..=80.0
-        );
+        assert_eq!(slider.bounds(Handle::Low, 20.0, 80.0, rail.clone()), 0.0..=80.0);
         assert_eq!(slider.bounds(Handle::High, 20.0, 80.0, rail), 20.0..=100.0);
     }
 
@@ -750,13 +653,7 @@ mod tests {
     fn without_clamping_only_the_neighbor_bounds_a_handle() {
         let slider = range_slider(0.0..=100.0).clamping(SliderClamping::Never);
         let editable = slider.core.editable_range();
-        assert_eq!(
-            slider.bounds(Handle::Low, 20.0, 80.0, editable.clone()),
-            f64::NEG_INFINITY..=80.0
-        );
-        assert_eq!(
-            slider.bounds(Handle::High, 20.0, 80.0, editable),
-            20.0..=f64::INFINITY
-        );
+        assert_eq!(slider.bounds(Handle::Low, 20.0, 80.0, editable.clone()), f64::NEG_INFINITY..=80.0);
+        assert_eq!(slider.bounds(Handle::High, 20.0, 80.0, editable), 20.0..=f64::INFINITY);
     }
 }

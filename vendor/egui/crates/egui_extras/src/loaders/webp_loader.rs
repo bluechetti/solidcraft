@@ -17,46 +17,34 @@ enum WebP {
 
 impl WebP {
     fn load(data: &[u8]) -> Result<Self, String> {
-        let mut decoder = WebPDecoder::new(Cursor::new(data))
-            .map_err(|error| format!("WebP decode failure ({error})"))?;
+        let mut decoder = WebPDecoder::new(Cursor::new(data)).map_err(|error| format!("WebP decode failure ({error})"))?;
 
         if decoder.has_animation() {
             decoder
                 .set_background_color(Rgba([0, 0, 0, 0]))
-                .map_err(|error| {
-                    format!("Failure to set default background color for animated WebP ({error})")
-                })?;
+                .map_err(|error| format!("Failure to set default background color for animated WebP ({error})"))?;
 
             let mut images = vec![];
             let mut durations = vec![];
 
             for frame in decoder.into_frames() {
-                let frame =
-                    frame.map_err(|error| format!("WebP frame decode failure ({error})"))?;
+                let frame = frame.map_err(|error| format!("WebP frame decode failure ({error})"))?;
                 let image = frame.buffer();
                 let pixels = image.as_flat_samples();
 
-                images.push(Arc::new(ColorImage::from_rgba_unmultiplied(
-                    [image.width() as usize, image.height() as usize],
-                    pixels.as_slice(),
-                )));
+                images.push(Arc::new(ColorImage::from_rgba_unmultiplied([image.width() as usize, image.height() as usize], pixels.as_slice())));
 
                 let delay: Duration = frame.delay().into();
                 durations.push(delay);
             }
-            Ok(Self::Animated(AnimatedImage {
-                frames: images,
-                frame_durations: FrameDurations::new(durations),
-            }))
+            Ok(Self::Animated(AnimatedImage { frames: images, frame_durations: FrameDurations::new(durations) }))
         } else {
             // color_type() of WebPDecoder only returns Rgb8/Rgba8 variants of ColorType
             let create_image = match decoder.color_type() {
                 ColorType::Rgb8 => ColorImage::from_rgb,
                 ColorType::Rgba8 => ColorImage::from_rgba_unmultiplied,
                 unreachable => {
-                    return Err(format!(
-                        "Unreachable WebP color type, expected Rgb8/Rgba8, got {unreachable:?}"
-                    ));
+                    return Err(format!("Unreachable WebP color type, expected Rgb8/Rgba8, got {unreachable:?}"));
                 }
             };
 
@@ -64,14 +52,9 @@ impl WebP {
             let size = decoder.total_bytes() as usize;
 
             let mut data = vec![0; size];
-            decoder
-                .read_image(&mut data)
-                .map_err(|error| format!("WebP image read failure ({error})"))?;
+            decoder.read_image(&mut data).map_err(|error| format!("WebP image read failure ({error})"))?;
 
-            Ok(Self::Static(Arc::new(create_image(
-                [width as usize, height as usize],
-                &data,
-            ))))
+            Ok(Self::Static(Arc::new(create_image([width as usize, height as usize], &data))))
         }
     }
 
@@ -99,14 +82,7 @@ pub struct AnimatedImage {
 
 impl AnimatedImage {
     pub fn byte_len(&self) -> usize {
-        size_of::<Self>()
-            + self
-                .frames
-                .iter()
-                .map(|image| {
-                    image.pixels.len() * size_of::<egui::Color32>() + size_of::<Duration>()
-                })
-                .sum::<usize>()
+        size_of::<Self>() + self.frames.iter().map(|image| image.pixels.len() * size_of::<egui::Color32>() + size_of::<Duration>()).sum::<usize>()
     }
 
     pub fn get_image_by_index(&self, index: usize) -> Arc<ColorImage> {
@@ -120,9 +96,7 @@ pub struct WebPLoader {
 
 impl Default for WebPLoader {
     fn default() -> Self {
-        Self {
-            cache: DecodeCache::new("WebPLoader"),
-        }
+        Self { cache: DecodeCache::new("WebPLoader") }
     }
 }
 
@@ -136,8 +110,7 @@ impl ImageLoader for WebPLoader {
     }
 
     fn load(&self, ctx: &egui::Context, frame_uri: &str, _: SizeHint) -> ImageLoadResult {
-        let (image_uri, frame_index) =
-            decode_animated_image_uri(frame_uri).map_err(|_error| LoadError::NotSupported)?;
+        let (image_uri, frame_index) = decode_animated_image_uri(frame_uri).map_err(|_error| LoadError::NotSupported)?;
 
         let entry = match self.cache.get(image_uri) {
             Some(entry) => entry,
@@ -154,8 +127,7 @@ impl ImageLoader for WebPLoader {
                         // so that an animated WebP is never shown without its durations.
                         if let Ok(WebP::Animated(animated_image)) = &result {
                             ctx_clone.data_mut(|data| {
-                                *data.get_temp_mut_or_default(id) =
-                                    animated_image.frame_durations.clone();
+                                *data.get_temp_mut_or_default(id) = animated_image.frame_durations.clone();
                             });
                         }
                         result
@@ -167,9 +139,7 @@ impl ImageLoader for WebPLoader {
         };
 
         match entry {
-            Poll::Ready(Ok(image)) => Ok(ImagePoll::Ready {
-                image: image.get_image(frame_index),
-            }),
+            Poll::Ready(Ok(image)) => Ok(ImagePoll::Ready { image: image.get_image(frame_index) }),
             Poll::Ready(Err(error)) => Err(LoadError::Loading(error)),
             Poll::Pending => Ok(ImagePoll::Pending { size: None }),
         }

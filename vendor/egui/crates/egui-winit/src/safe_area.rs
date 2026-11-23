@@ -30,11 +30,7 @@ mod ios {
             // Look for the first window scene that's in the foreground
             for scene in app.connectedScenes() {
                 if scene.isKindOfClass(UIWindowScene::class())
-                    && matches!(
-                        scene.activationState(),
-                        UISceneActivationState::ForegroundActive
-                            | UISceneActivationState::ForegroundInactive
-                    )
+                    && matches!(scene.activationState(), UISceneActivationState::ForegroundActive | UISceneActivationState::ForegroundInactive)
                 {
                     // SAFETY: class kind was checked above with `isKindOfClass`
                     let window_scene = Retained::cast_unchecked::<UIWindowScene>(scene.clone());

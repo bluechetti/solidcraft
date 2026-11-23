@@ -447,6 +447,9 @@ struct Reader {
     used_items: HashSet<u64>,
     /// Items already instanced for the product being read.
     node_items: HashSet<u64>,
+    /// Items already instanced for the product being read, each with the placement it got: one
+    /// solid mapped several times at different places is one body per place.
+    node_placed: HashSet<(u64, [u64; 16])>,
     /// Occurrences and mapped representations visited so far.
     visits: usize,
     /// Items whose meshing was checked.
@@ -506,6 +509,7 @@ impl Reader {
             oriented: HashMap::new(),
             used_items: HashSet::new(),
             node_items: HashSet::new(),
+            node_placed: HashSet::new(),
             visits: 0,
             unmeshed_checked: HashSet::new(),
             modelling_checked: HashSet::new(),
@@ -951,7 +955,14 @@ impl Reader {
                     self.batches.push(Batch { m: *m, path: path.to_vec(), product: product.to_string(), instance: instance.map(str::to_string) });
                     for item in batch {
                         self.used_items.insert(item);
-                        if !self.node_items.insert(item) {
+                        if self.node_items.contains(&item) {
+                            continue;
+                        }
+                        let mut key = [0u64; 16];
+                        for (k, x) in key.iter_mut().zip(m.iter().flatten()) {
+                            *k = (*x + 0.0).to_bits();
+                        }
+                        if !self.node_placed.insert((item, key)) {
                             continue;
                         }
                         if self.bodies_so_far() >= MAX_BODIES {
@@ -1110,7 +1121,9 @@ impl Reader {
                             self.note(IssueKind::OpenBody, Some(item), 0, format!("{label}: imported as an open body (the shell is not closed)"));
                         }
                     }
-                    if !self.once.contains(&item) {
+                    // A solid one walk maps at several placements is planned more than once although
+                    // its representation is walked once: keep it oriented for its later instances too.
+                    if !self.once.contains(&item) || self.uses.get(&item).is_some_and(|n| *n > 1) {
                         self.oriented.entry(item).or_insert_with(|| part.clone());
                     }
                     let (closed, file_faces, face_origin) = (part.closed, part.file_faces, part.face_origin.clone());
@@ -1303,10 +1316,20 @@ impl Reader {
             let (u1, u2) = (self.units_of(r1), self.units_of(r2));
             if ope.name() == "ITEM_DEFINED_TRANSFORMATION" {
                 let p = ope.params();
-                let (i1, i2) = (
+                let (mut i1, mut i2) = (
                     p.get(2).and_then(Param::as_ref_id).ok_or("bad transformation")?,
                     p.get(3).and_then(Param::as_ref_id).ok_or("bad transformation")?,
                 );
+                // item_1 normally goes with rep_1 and item_2 with rep_2, but some writers
+                // cross them (rep_1 the component, item_1 the assembly's placement). Where an
+                // item is listed says whose it is: swap only when the lists say so plainly
+                // (both items listed in the assembly is the usual order).
+                let (side1, side2) = (self.rep_closure(&[r1]), self.rep_closure(&[r2]));
+                let lists = |side: &[u64], item: u64| side.iter().any(|r| self.reps.get(r).is_some_and(|rep| rep.0.contains(&item)));
+                let (i1_in_1, i1_in_2, i2_in_1, i2_in_2) = (lists(&side1, i1), lists(&side2, i1), lists(&side1, i2), lists(&side2, i2));
+                if (i1_in_2 && !i1_in_1 && !i2_in_2) || (i2_in_1 && !i2_in_2 && !i1_in_1) {
+                    std::mem::swap(&mut i1, &mut i2);
+                }
                 let m1 = self.placement_matrix(i1, u1)?;
                 let m2 = self.placement_matrix(i2, u2)?;
                 // rep_1 is normally the component: map its item onto the assembly's item.
@@ -1348,6 +1371,7 @@ impl Reader {
         let reps = self.rep_closure(&own);
         let mut bodies = Vec::new();
         self.node_items.clear();
+        self.node_placed.clear();
         for r in &reps {
             self.rep_bodies(*r, &world, &path, &name, instance, &mut bodies, 0);
         }
@@ -1375,7 +1399,7 @@ impl Reader {
 /// the file does not parse or has no solid the reader can read.
 pub fn step_orientation_errors(text: &str) -> std::result::Result<Vec<String>, String> {
     let ex = p21::parse(text)?;
-    let read = solidcore_step::topology::read_solids_with(&ex, &solidcraft_smlib::pcurves::SmlibTrims);
+    let read = solidcore_step::topology::read_solids_with(&ex, &solidcraft_smlib::pcurves::SmlibImportTrims);
     if read.solids.is_empty() {
         return Err(read.failures.first().map_or_else(|| "the file has no solids".into(), |f| format!("solid #{}: {}", f.item, f.message)));
     }

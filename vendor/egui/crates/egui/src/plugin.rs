@@ -71,20 +71,14 @@ pub struct TypedPluginHandle<P: Plugin> {
 
 impl<P: Plugin> TypedPluginHandle<P> {
     pub(crate) fn new(handle: Arc<Mutex<PluginHandle>>) -> Self {
-        Self {
-            handle,
-            _type: core::marker::PhantomData,
-        }
+        Self { handle, _type: core::marker::PhantomData }
     }
 
     /// Lock the plugin for access.
     ///
     /// Returns a guard that dereferences to the plugin.
     pub fn lock(&self) -> TypedPluginGuard<'_, P> {
-        TypedPluginGuard {
-            guard: self.handle.lock(),
-            _type: core::marker::PhantomData,
-        }
+        TypedPluginGuard { guard: self.handle.lock(), _type: core::marker::PhantomData }
     }
 }
 
@@ -112,9 +106,7 @@ impl<P: Plugin> core::ops::DerefMut for TypedPluginGuard<'_, P> {
 
 impl PluginHandle {
     pub fn new<P: Plugin>(plugin: P) -> Arc<Mutex<Self>> {
-        Arc::new(Mutex::new(Self {
-            plugin: Box::new(plugin),
-        }))
+        Arc::new(Mutex::new(Self { plugin: Box::new(plugin) }))
     }
 
     fn plugin_type_id(&self) -> core::any::TypeId {
@@ -126,15 +118,11 @@ impl PluginHandle {
     }
 
     fn typed_plugin<P: Plugin + 'static>(&self) -> &P {
-        (self.plugin.as_ref() as &dyn core::any::Any)
-            .downcast_ref::<P>()
-            .expect("PluginHandle: plugin is not of the expected type")
+        (self.plugin.as_ref() as &dyn core::any::Any).downcast_ref::<P>().expect("PluginHandle: plugin is not of the expected type")
     }
 
     pub fn typed_plugin_mut<P: Plugin + 'static>(&mut self) -> &mut P {
-        (self.plugin.as_mut() as &mut dyn core::any::Any)
-            .downcast_mut::<P>()
-            .expect("PluginHandle: plugin is not of the expected type")
+        (self.plugin.as_mut() as &mut dyn core::any::Any).downcast_mut::<P>().expect("PluginHandle: plugin is not of the expected type")
     }
 }
 

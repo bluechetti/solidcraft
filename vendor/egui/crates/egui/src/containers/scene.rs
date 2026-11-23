@@ -2,21 +2,14 @@ use core::f32;
 
 use emath::{GuiRounding as _, Pos2};
 
-use crate::{
-    InnerResponse, LayerId, PointerButton, Rangef, Rect, Response, Sense, Ui, UiBuilder, Vec2,
-    emath::TSTransform,
-};
+use crate::{InnerResponse, LayerId, PointerButton, Rangef, Rect, Response, Sense, Ui, UiBuilder, Vec2, emath::TSTransform};
 
 /// Creates a transformation that fits a given scene rectangle into the available screen size.
 ///
 /// The resulting visual scene bounds can be larger, due to letterboxing.
 ///
 /// Returns the transformation from `scene` to `global` coordinates.
-fn fit_to_rect_in_scene(
-    rect_in_global: Rect,
-    rect_in_scene: Rect,
-    zoom_range: Rangef,
-) -> TSTransform {
+fn fit_to_rect_in_scene(rect_in_global: Rect, rect_in_scene: Rect, zoom_range: Rangef) -> TSTransform {
     // Compute the scale factor to fit the bounding rectangle into the available screen size:
     let scale = rect_in_global.size() / rect_in_scene.size();
 
@@ -38,8 +31,7 @@ fn fit_to_rect_in_scene(
     let center_scene = rect_in_scene.center().to_vec2();
 
     // Set the transformation to scale and then translate to center.
-    TSTransform::from_translation(center_in_global - scale * center_scene)
-        * TSTransform::from_scaling(scale)
+    TSTransform::from_translation(center_in_global - scale * center_scene) * TSTransform::from_scaling(scale)
 }
 
 /// A container that allows you to zoom and pan.
@@ -156,19 +148,12 @@ impl Scene {
     /// then it will be reset to the inner rect of the inner ui.
     ///
     /// You need to store the `scene_rect` in your state between frames.
-    pub fn show<R>(
-        &self,
-        parent_ui: &mut Ui,
-        scene_rect: &mut Rect,
-        add_contents: impl FnOnce(&mut Ui) -> R,
-    ) -> InnerResponse<R> {
-        let (outer_rect, _outer_response) =
-            parent_ui.allocate_exact_size(parent_ui.available_size_before_wrap(), Sense::hover());
+    pub fn show<R>(&self, parent_ui: &mut Ui, scene_rect: &mut Rect, add_contents: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
+        let (outer_rect, _outer_response) = parent_ui.allocate_exact_size(parent_ui.available_size_before_wrap(), Sense::hover());
 
         let mut to_global = fit_to_rect_in_scene(outer_rect, *scene_rect, self.zoom_range);
 
-        let scene_rect_was_good =
-            to_global.is_valid() && scene_rect.is_finite() && scene_rect.size() != Vec2::ZERO;
+        let scene_rect_was_good = to_global.is_valid() && scene_rect.is_finite() && scene_rect.size() != Vec2::ZERO;
 
         let mut inner_rect = *scene_rect;
 
@@ -202,22 +187,13 @@ impl Scene {
         add_contents: impl FnOnce(&mut Ui) -> R,
     ) -> InnerResponse<R> {
         // Create a new egui paint layer, where we can draw our contents:
-        let scene_layer_id = LayerId::new(
-            parent_ui.layer_id().order,
-            parent_ui.scope_id().with("scene_area"),
-        );
+        let scene_layer_id = LayerId::new(parent_ui.layer_id().order, parent_ui.scope_id().with("scene_area"));
 
         // Put the layer directly on-top of the main layer of the ui:
-        parent_ui
-            .ctx()
-            .set_sublayer(parent_ui.layer_id(), scene_layer_id);
+        parent_ui.ctx().set_sublayer(parent_ui.layer_id(), scene_layer_id);
 
-        let mut local_ui = parent_ui.new_child(
-            UiBuilder::new()
-                .layer_id(scene_layer_id)
-                .max_rect(Rect::from_min_size(Pos2::ZERO, self.max_inner_size))
-                .sense(self.sense),
-        );
+        let mut local_ui = parent_ui
+            .new_child(UiBuilder::new().layer_id(scene_layer_id).max_rect(Rect::from_min_size(Pos2::ZERO, self.max_inner_size)).sense(self.sense));
 
         let mut pan_response = local_ui.response();
 
@@ -229,9 +205,7 @@ impl Scene {
         local_ui.set_clip_rect(to_global.inverse() * outer_rect.intersect(parent_ui.clip_rect()));
 
         // Tell egui to apply the transform on the layer:
-        local_ui
-            .ctx()
-            .set_transform_layer(scene_layer_id, *to_global);
+        local_ui.ctx().set_transform_layer(scene_layer_id, *to_global);
 
         // Add the actual contents to the area:
         let ret = add_contents(&mut local_ui);
@@ -239,10 +213,7 @@ impl Scene {
         // This ensures we catch clicks/drags/pans anywhere on the background.
         local_ui.force_set_min_rect((to_global.inverse() * outer_rect).round_ui());
 
-        InnerResponse {
-            response: pan_response,
-            inner: ret,
-        }
+        InnerResponse { response: pan_response, inner: ret }
     }
 
     /// Helper function to handle pan and zoom interactions on a response.
@@ -272,9 +243,7 @@ impl Scene {
             // and touch events.
             if self.scroll_zooms {
                 let scroll_zoom_speed = ui.ctx().options(|opt| opt.input_options.scroll_zoom_speed);
-                let scroll_delta = ui
-                    .ctx()
-                    .input(|i| i.smooth_scroll_delta.x + i.smooth_scroll_delta.y);
+                let scroll_delta = ui.ctx().input(|i| i.smooth_scroll_delta.x + i.smooth_scroll_delta.y);
                 zoom_delta += scroll_delta * scroll_zoom_speed;
             } else {
                 pan_delta = ui.ctx().input(|i| i.smooth_scroll_delta);
@@ -288,10 +257,7 @@ impl Scene {
 
             if zoom_delta != 1.0 {
                 // Zoom in on pointer, but only if we are not zoomed in or out too far.
-                let zoom_delta = zoom_delta.clamp(
-                    self.zoom_range.min / to_global.scaling,
-                    self.zoom_range.max / to_global.scaling,
-                );
+                let zoom_delta = zoom_delta.clamp(self.zoom_range.min / to_global.scaling, self.zoom_range.max / to_global.scaling);
 
                 *to_global = *to_global
                     * TSTransform::from_translation(pointer_in_scene.to_vec2())

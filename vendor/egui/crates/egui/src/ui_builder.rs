@@ -188,9 +188,7 @@ impl UiBuilder {
     /// This works by adding a [`ClosableTag`] to the [`UiStackInfo`].
     #[inline]
     pub fn closable(mut self) -> Self {
-        self.ui_stack_info
-            .tags
-            .insert(ClosableTag::NAME, Some(Arc::new(ClosableTag::default())));
+        self.ui_stack_info.tags.insert(ClosableTag::NAME, Some(Arc::new(ClosableTag::default())));
         self
     }
 

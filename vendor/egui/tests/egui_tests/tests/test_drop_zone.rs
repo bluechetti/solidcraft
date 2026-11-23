@@ -8,11 +8,8 @@ use egui_kittest::{Harness, SnapshotResults, kittest::Queryable as _};
 /// * During a drag, the zone under the pointer is highlighted and the others use the inactive style.
 #[test]
 fn drop_zone_styling() {
-    let styled_frame = Frame::NONE
-        .inner_margin(8)
-        .fill(Color32::from_rgb(40, 60, 110))
-        .stroke(Stroke::new(2.0, Color32::from_rgb(240, 170, 40)))
-        .corner_radius(8);
+    let styled_frame =
+        Frame::NONE.inner_margin(8).fill(Color32::from_rgb(40, 60, 110)).stroke(Stroke::new(2.0, Color32::from_rgb(240, 170, 40))).corner_radius(8);
 
     let mut harness = Harness::builder().build_ui(|ui| {
         ui.dnd_drag_source(Id::unique("drag_source"), 42_u32, |ui| {

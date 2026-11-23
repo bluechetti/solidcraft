@@ -138,12 +138,7 @@ impl Painter {
     /// * failed to compile shader
     /// * failed to create postprocess on webgl with `sRGB` support
     /// * failed to create buffer
-    pub fn new(
-        gl: Arc<glow::Context>,
-        shader_prefix: &str,
-        shader_version: Option<ShaderVersion>,
-        dithering: bool,
-    ) -> Result<Self, PainterError> {
+    pub fn new(gl: Arc<glow::Context>, shader_prefix: &str, shader_version: Option<ShaderVersion>, dithering: bool) -> Result<Self, PainterError> {
         profiling::function_scope!();
         crate::check_for_gl_error_even_in_release!(&gl, "before Painter::new");
 
@@ -152,9 +147,7 @@ impl Painter {
             let version = gl.get_parameter_string(glow::VERSION);
             let renderer = gl.get_parameter_string(glow::RENDERER);
             let vendor = gl.get_parameter_string(glow::VENDOR);
-            log::debug!(
-                "\nopengl version: {version}\nopengl renderer: {renderer}\nopengl vendor: {vendor}"
-            );
+            log::debug!("\nopengl version: {version}\nopengl renderer: {renderer}\nopengl vendor: {vendor}");
         }
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -297,11 +290,7 @@ impl Painter {
         None
     }
 
-    unsafe fn prepare_painting(
-        &mut self,
-        [width_in_pixels, height_in_pixels]: [u32; 2],
-        pixels_per_point: f32,
-    ) {
+    unsafe fn prepare_painting(&mut self, [width_in_pixels, height_in_pixels]: [u32; 2], pixels_per_point: f32) {
         unsafe {
             self.gl.enable(glow::SCISSOR_TEST);
             // egui outputs mesh in both winding orders
@@ -311,8 +300,7 @@ impl Painter {
             self.gl.color_mask(true, true, true, true);
 
             self.gl.enable(glow::BLEND);
-            self.gl
-                .blend_equation_separate(glow::FUNC_ADD, glow::FUNC_ADD);
+            self.gl.blend_equation_separate(glow::FUNC_ADD, glow::FUNC_ADD);
             self.gl.blend_func_separate(
                 // egui outputs colors with premultiplied alpha:
                 glow::ONE,
@@ -331,18 +319,15 @@ impl Painter {
             let width_in_points = width_in_pixels as f32 / pixels_per_point;
             let height_in_points = height_in_pixels as f32 / pixels_per_point;
 
-            self.gl
-                .viewport(0, 0, width_in_pixels as i32, height_in_pixels as i32);
+            self.gl.viewport(0, 0, width_in_pixels as i32, height_in_pixels as i32);
             self.gl.use_program(Some(self.program));
 
-            self.gl
-                .uniform_2_f32(Some(&self.u_screen_size), width_in_points, height_in_points);
+            self.gl.uniform_2_f32(Some(&self.u_screen_size), width_in_points, height_in_points);
             self.gl.uniform_1_i32(Some(&self.u_sampler), 0);
             self.gl.active_texture(glow::TEXTURE0);
 
             self.vao.bind(&self.gl);
-            self.gl
-                .bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.element_array_buffer));
+            self.gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.element_array_buffer));
         }
 
         check_for_gl_error!(&self.gl, "prepare_painting");
@@ -397,22 +382,13 @@ impl Painter {
     ///
     /// Please be mindful of these effects when integrating into your program, and also be mindful
     /// of the effects your program might have on this code. Look at the source if in doubt.
-    pub fn paint_primitives(
-        &mut self,
-        screen_size_px: [u32; 2],
-        pixels_per_point: f32,
-        clipped_primitives: &[egui::ClippedPrimitive],
-    ) {
+    pub fn paint_primitives(&mut self, screen_size_px: [u32; 2], pixels_per_point: f32, clipped_primitives: &[egui::ClippedPrimitive]) {
         profiling::function_scope!();
         self.assert_not_destroyed();
 
         unsafe { self.prepare_painting(screen_size_px, pixels_per_point) };
 
-        for egui::ClippedPrimitive {
-            clip_rect,
-            primitive,
-        } in clipped_primitives
-        {
+        for egui::ClippedPrimitive { clip_rect, primitive } in clipped_primitives {
             set_clip_rect(&self.gl, screen_size_px, pixels_per_point, *clip_rect);
 
             match primitive {
@@ -423,29 +399,17 @@ impl Painter {
                     if callback.rect.is_positive() {
                         profiling::scope!("callback");
 
-                        let info = egui::PaintCallbackInfo {
-                            viewport: callback.rect,
-                            clip_rect: *clip_rect,
-                            pixels_per_point,
-                            screen_size_px,
-                        };
+                        let info = egui::PaintCallbackInfo { viewport: callback.rect, clip_rect: *clip_rect, pixels_per_point, screen_size_px };
 
                         let viewport_px = info.viewport_in_pixels();
                         unsafe {
-                            self.gl.viewport(
-                                viewport_px.left_px,
-                                viewport_px.from_bottom_px,
-                                viewport_px.width_px,
-                                viewport_px.height_px,
-                            );
+                            self.gl.viewport(viewport_px.left_px, viewport_px.from_bottom_px, viewport_px.width_px, viewport_px.height_px);
                         }
 
                         if let Some(callback) = callback.callback.downcast_ref::<CallbackFn>() {
                             (callback.f)(info, self);
                         } else {
-                            log::warn!(
-                                "Warning: Unsupported render callback. Expected egui_glow::CallbackFn"
-                            );
+                            log::warn!("Warning: Unsupported render callback. Expected egui_glow::CallbackFn");
                         }
 
                         check_for_gl_error!(&self.gl, "callback");
@@ -473,30 +437,16 @@ impl Painter {
         if let Some(texture) = self.texture(mesh.texture_id) {
             unsafe {
                 self.gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.vbo));
-                self.gl.buffer_data_u8_slice(
-                    glow::ARRAY_BUFFER,
-                    bytemuck::cast_slice(&mesh.vertices),
-                    glow::STREAM_DRAW,
-                );
+                self.gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytemuck::cast_slice(&mesh.vertices), glow::STREAM_DRAW);
 
-                self.gl
-                    .bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.element_array_buffer));
-                self.gl.buffer_data_u8_slice(
-                    glow::ELEMENT_ARRAY_BUFFER,
-                    bytemuck::cast_slice(&mesh.indices),
-                    glow::STREAM_DRAW,
-                );
+                self.gl.bind_buffer(glow::ELEMENT_ARRAY_BUFFER, Some(self.element_array_buffer));
+                self.gl.buffer_data_u8_slice(glow::ELEMENT_ARRAY_BUFFER, bytemuck::cast_slice(&mesh.indices), glow::STREAM_DRAW);
 
                 self.gl.bind_texture(glow::TEXTURE_2D, Some(texture));
             }
 
             unsafe {
-                self.gl.draw_elements(
-                    glow::TRIANGLES,
-                    mesh.indices.len() as i32,
-                    glow::UNSIGNED_INT,
-                    0,
-                );
+                self.gl.draw_elements(glow::TRIANGLES, mesh.indices.len() as i32, glow::UNSIGNED_INT, 0);
             }
 
             check_for_gl_error!(&self.gl, "paint_mesh");
@@ -512,21 +462,14 @@ impl Painter {
 
         self.assert_not_destroyed();
 
-        let glow_texture = *self
-            .textures
-            .entry(tex_id)
-            .or_insert_with(|| unsafe { self.gl.create_texture().unwrap() });
+        let glow_texture = *self.textures.entry(tex_id).or_insert_with(|| unsafe { self.gl.create_texture().unwrap() });
         unsafe {
             self.gl.bind_texture(glow::TEXTURE_2D, Some(glow_texture));
         }
 
         match &delta.image {
             egui::ImageData::Color(image) => {
-                assert_eq!(
-                    image.width() * image.height(),
-                    image.pixels.len(),
-                    "Mismatch between texture size and texel count"
-                );
+                assert_eq!(image.width() * image.height(), image.pixels.len(), "Mismatch between texture size and texel count");
 
                 let data: &[u8] = bytemuck::cast_slice(image.pixels.as_ref());
 
@@ -535,20 +478,9 @@ impl Painter {
         }
     }
 
-    fn upload_texture_srgb(
-        &mut self,
-        pos: Option<[usize; 2]>,
-        [w, h]: [usize; 2],
-        options: egui::TextureOptions,
-        data: &[u8],
-    ) {
+    fn upload_texture_srgb(&mut self, pos: Option<[usize; 2]>, [w, h]: [usize; 2], options: egui::TextureOptions, data: &[u8]) {
         profiling::function_scope!();
-        assert_eq!(
-            data.len(),
-            w * h * 4,
-            "Mismatch between texture size and texel count, by {}",
-            data.len() % (w * h * 4)
-        );
+        assert_eq!(data.len(), w * h * 4, "Mismatch between texture size and texel count, by {}", data.len() % (w * h * 4));
         assert!(
             w <= self.max_texture_side && h <= self.max_texture_side,
             "Got a texture image of size {}x{}, but the maximum supported texture side is only {}",
@@ -558,35 +490,15 @@ impl Painter {
         );
 
         unsafe {
-            self.gl.tex_parameter_i32(
-                glow::TEXTURE_2D,
-                glow::TEXTURE_MAG_FILTER,
-                options.magnification.glow_code(None) as i32,
-            );
-            self.gl.tex_parameter_i32(
-                glow::TEXTURE_2D,
-                glow::TEXTURE_MIN_FILTER,
-                options.minification.glow_code(options.mipmap_mode) as i32,
-            );
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, options.magnification.glow_code(None) as i32);
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, options.minification.glow_code(options.mipmap_mode) as i32);
 
-            self.gl.tex_parameter_i32(
-                glow::TEXTURE_2D,
-                glow::TEXTURE_WRAP_S,
-                options.wrap_mode.glow_code() as i32,
-            );
-            self.gl.tex_parameter_i32(
-                glow::TEXTURE_2D,
-                glow::TEXTURE_WRAP_T,
-                options.wrap_mode.glow_code() as i32,
-            );
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, options.wrap_mode.glow_code() as i32);
+            self.gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_T, options.wrap_mode.glow_code() as i32);
             check_for_gl_error!(&self.gl, "tex_parameter");
 
             let (internal_format, src_format) = if self.is_webgl_1 {
-                let format = if self.srgb_textures {
-                    glow::SRGB_ALPHA
-                } else {
-                    glow::RGBA
-                };
+                let format = if self.srgb_textures { glow::SRGB_ALPHA } else { glow::RGBA };
                 (format, format)
             } else if self.srgb_textures {
                 (glow::SRGB8_ALPHA8, glow::RGBA)
@@ -665,15 +577,7 @@ impl Painter {
 
         let mut pixels = vec![0_u8; (w * h * 4) as usize];
         unsafe {
-            self.gl.read_pixels(
-                0,
-                0,
-                w as _,
-                h as _,
-                glow::RGBA,
-                glow::UNSIGNED_BYTE,
-                glow::PixelPackData::Slice(Some(&mut pixels)),
-            );
+            self.gl.read_pixels(0, 0, w as _, h as _, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut pixels)));
         }
         let mut flipped = Vec::with_capacity((w * h * 4) as usize);
         for row in pixels.chunks_exact((w * 4) as usize).rev() {
@@ -686,15 +590,7 @@ impl Painter {
         profiling::function_scope!();
         let mut pixels = vec![0_u8; (w * h * 3) as usize];
         unsafe {
-            self.gl.read_pixels(
-                0,
-                0,
-                w as _,
-                h as _,
-                glow::RGB,
-                glow::UNSIGNED_BYTE,
-                glow::PixelPackData::Slice(Some(&mut pixels)),
-            );
+            self.gl.read_pixels(0, 0, w as _, h as _, glow::RGB, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut pixels)));
         }
         pixels
     }
@@ -735,18 +631,8 @@ pub fn clear(gl: &glow::Context, screen_size_in_pixels: [u32; 2], clear_color: [
     unsafe {
         gl.disable(glow::SCISSOR_TEST);
 
-        gl.viewport(
-            0,
-            0,
-            screen_size_in_pixels[0] as i32,
-            screen_size_in_pixels[1] as i32,
-        );
-        gl.clear_color(
-            clear_color[0],
-            clear_color[1],
-            clear_color[2],
-            clear_color[3],
-        );
+        gl.viewport(0, 0, screen_size_in_pixels[0] as i32, screen_size_in_pixels[1] as i32);
+        gl.clear_color(clear_color[0], clear_color[1], clear_color[2], clear_color[3]);
         gl.clear(glow::COLOR_BUFFER_BIT);
     }
 }
@@ -754,19 +640,12 @@ pub fn clear(gl: &glow::Context, screen_size_in_pixels: [u32; 2], clear_color: [
 impl Drop for Painter {
     fn drop(&mut self) {
         if !self.destroyed {
-            log::warn!(
-                "You forgot to call destroy() on the egui glow painter. Resources will leak!"
-            );
+            log::warn!("You forgot to call destroy() on the egui glow painter. Resources will leak!");
         }
     }
 }
 
-fn set_clip_rect(
-    gl: &glow::Context,
-    [width_px, height_px]: [u32; 2],
-    pixels_per_point: f32,
-    clip_rect: Rect,
-) {
+fn set_clip_rect(gl: &glow::Context, [width_px, height_px]: [u32; 2], pixels_per_point: f32, clip_rect: Rect) {
     // Transform clip rect to physical pixels:
     let clip_min_x = pixels_per_point * clip_rect.min.x;
     let clip_min_y = pixels_per_point * clip_rect.min.y;
@@ -786,11 +665,6 @@ fn set_clip_rect(
     let clip_max_y = clip_max_y.clamp(clip_min_y, height_px as i32);
 
     unsafe {
-        gl.scissor(
-            clip_min_x,
-            height_px as i32 - clip_max_y,
-            clip_max_x - clip_min_x,
-            clip_max_y - clip_min_y,
-        );
+        gl.scissor(clip_min_x, height_px as i32 - clip_max_y, clip_max_x - clip_min_x, clip_max_y - clip_min_y);
     }
 }

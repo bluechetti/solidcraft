@@ -58,15 +58,7 @@ pub struct InteractionSnapshot {
 
 impl InteractionSnapshot {
     pub fn ui(&self, ui: &mut crate::Ui) {
-        let Self {
-            clicked,
-            long_touched,
-            drag_started,
-            dragged,
-            drag_stopped,
-            hovered,
-            contains_pointer,
-        } = self;
+        let Self { clicked, long_touched, drag_started, dragged, drag_stopped, hovered, contains_pointer } = self;
 
         fn id_ui<'a>(ui: &mut crate::Ui, widgets: impl IntoIterator<Item = &'a Id>) {
             for id in widgets {
@@ -142,10 +134,7 @@ pub(crate) fn interact(
 
     if input.is_long_touch() {
         // We implement "press-and-hold for context menu" on touch screens here
-        if let Some(widget) = interaction
-            .potential_click_id
-            .and_then(|id| widgets.get(id))
-        {
+        if let Some(widget) = interaction.potential_click_id.and_then(|id| widgets.get(id)) {
             dragged = None;
             clicked = Some(widget.id);
             long_touched = Some(widget.id);
@@ -174,9 +163,7 @@ pub(crate) fn interact(
             PointerEvent::Released { click, button: _ } => {
                 if click.is_some()
                     && !input.pointer.is_decidedly_dragging()
-                    && let Some(widget) = interaction
-                        .potential_click_id
-                        .and_then(|id| widgets.get(id))
+                    && let Some(widget) = interaction.potential_click_id.and_then(|id| widgets.get(id))
                 {
                     clicked = Some(widget.id);
                 }
@@ -212,8 +199,7 @@ pub(crate) fn interact(
                 // A widget on top might "steal" the click hit, but then the pointer is still inside
                 // us, and pressing that button must not start a drag. So we check both.
                 let pointer_is_inside = hits.contains_pointer.iter().any(|w| w.id == widget.id);
-                let could_still_be_clicked =
-                    pointer_is_inside || hits.click.is_some_and(|hit| hit.id == widget.id);
+                let could_still_be_clicked = pointer_is_inside || hits.click.is_some_and(|hit| hit.id == widget.id);
                 input.pointer.is_decidedly_dragging() || !could_still_be_clicked
             } else {
                 // This widget is just sensitive to drags, so we can mark it as dragged right away:
@@ -249,16 +235,11 @@ pub(crate) fn interact(
     //     );
     // }
 
-    let contains_pointer: IdSet =
-        itertools::chain!(&hits.contains_pointer, &hits.click, &hits.drag)
-            .map(|w| w.id)
-            .collect();
+    let contains_pointer: IdSet = itertools::chain!(&hits.contains_pointer, &hits.click, &hits.drag).map(|w| w.id).collect();
 
     let hovered = if clicked.is_some() || dragged.is_some() || long_touched.is_some() {
         // If currently clicking or dragging, only that and nothing else is hovered.
-        itertools::chain!(&clicked, &dragged, &long_touched)
-            .copied()
-            .collect()
+        itertools::chain!(&clicked, &dragged, &long_touched).copied().collect()
     } else {
         // We may be hovering an interactive widget or two.
         // We must also consider the case where non-interactive widgets
@@ -279,9 +260,7 @@ pub(crate) fn interact(
         let drag_order = hits.drag.and_then(|w| order(w.id)).unwrap_or(0);
         let top_interactive_order = click_order.max(drag_order);
 
-        let mut hovered: IdSet = core::iter::chain(&hits.click, &hits.drag)
-            .map(|w| w.id)
-            .collect();
+        let mut hovered: IdSet = core::iter::chain(&hits.click, &hits.drag).map(|w| w.id).collect();
 
         for w in &hits.contains_pointer {
             let is_interactive = w.sense.senses_click() || w.sense.senses_drag();
@@ -289,8 +268,7 @@ pub(crate) fn interact(
                 // The only interactive widgets we mark as hovered are the ones
                 // in `hits.click` and `hits.drag`!
             } else {
-                let is_on_top_of_the_interactive_widget =
-                    top_interactive_order <= order(w.id).unwrap_or(0);
+                let is_on_top_of_the_interactive_widget = top_interactive_order <= order(w.id).unwrap_or(0);
                 if is_on_top_of_the_interactive_widget {
                     hovered.insert(w.id);
                 }
@@ -300,13 +278,5 @@ pub(crate) fn interact(
         hovered
     };
 
-    InteractionSnapshot {
-        clicked,
-        long_touched,
-        drag_started,
-        dragged,
-        drag_stopped,
-        hovered,
-        contains_pointer,
-    }
+    InteractionSnapshot { clicked, long_touched, drag_started, dragged, drag_stopped, hovered, contains_pointer }
 }

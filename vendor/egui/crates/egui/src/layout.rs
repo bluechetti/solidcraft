@@ -71,16 +71,8 @@ impl Region {
     }
 
     pub fn sanity_check(&self) {
-        debug_assert!(
-            !self.min_rect.any_nan(),
-            "min rect has Nan: {:?}",
-            self.min_rect
-        );
-        debug_assert!(
-            !self.max_rect.any_nan(),
-            "max rect has Nan: {:?}",
-            self.max_rect
-        );
+        debug_assert!(!self.min_rect.any_nan(), "min rect has Nan: {:?}", self.min_rect);
+        debug_assert!(!self.max_rect.any_nan(), "max rect has Nan: {:?}", self.max_rect);
         debug_assert!(!self.cursor.any_nan(), "cursor has Nan: {:?}", self.cursor);
     }
 }
@@ -218,14 +210,7 @@ impl Layout {
     /// Only one widget may be added to the inner `Ui`!
     #[inline(always)]
     pub fn centered_and_justified(main_dir: Direction) -> Self {
-        Self {
-            main_dir,
-            main_wrap: false,
-            main_align: Align::Center,
-            main_justify: true,
-            cross_align: Align::Center,
-            cross_justify: true,
-        }
+        Self { main_dir, main_wrap: false, main_align: Align::Center, main_justify: true, cross_align: Align::Center, cross_justify: true }
     }
 
     /// Wrap widgets when we overflow the main axis?
@@ -249,10 +234,7 @@ impl Layout {
     /// For instance: in left-to-right layout, the main axis is horizontal and the cross axis is vertical.
     #[inline(always)]
     pub fn with_cross_align(self, cross_align: Align) -> Self {
-        Self {
-            cross_align,
-            ..self
-        }
+        Self { cross_align, ..self }
     }
 
     /// Justify widgets on the main axis?
@@ -260,10 +242,7 @@ impl Layout {
     /// Justify here means "take up all available space".
     #[inline(always)]
     pub fn with_main_justify(self, main_justify: bool) -> Self {
-        Self {
-            main_justify,
-            ..self
-        }
+        Self { main_justify, ..self }
     }
 
     /// Justify widgets along the cross axis?
@@ -274,10 +253,7 @@ impl Layout {
     /// For instance: in left-to-right layout, the main axis is horizontal and the cross axis is vertical.
     #[inline(always)]
     pub fn with_cross_justify(self, cross_justify: bool) -> Self {
-        Self {
-            cross_justify,
-            ..self
-        }
+        Self { cross_justify, ..self }
     }
 }
 
@@ -314,8 +290,7 @@ impl Layout {
     }
 
     pub fn prefer_right_to_left(&self) -> bool {
-        self.main_dir == Direction::RightToLeft
-            || self.main_dir.is_vertical() && self.cross_align == Align::Max
+        self.main_dir == Direction::RightToLeft || self.main_dir.is_vertical() && self.cross_align == Align::Max
     }
 
     /// e.g. for adjusting the placement of something.
@@ -331,20 +306,12 @@ impl Layout {
 
     /// e.g. for when aligning text within a button.
     pub fn horizontal_align(&self) -> Align {
-        if self.is_horizontal() {
-            self.main_align
-        } else {
-            self.cross_align
-        }
+        if self.is_horizontal() { self.main_align } else { self.cross_align }
     }
 
     /// e.g. for when aligning text within a button.
     pub fn vertical_align(&self) -> Align {
-        if self.is_vertical() {
-            self.main_align
-        } else {
-            self.cross_align
-        }
+        if self.is_vertical() { self.main_align } else { self.cross_align }
     }
 
     /// e.g. for when aligning text within a button.
@@ -353,19 +320,11 @@ impl Layout {
     }
 
     pub fn horizontal_justify(&self) -> bool {
-        if self.is_horizontal() {
-            self.main_justify
-        } else {
-            self.cross_justify
-        }
+        if self.is_horizontal() { self.main_justify } else { self.cross_justify }
     }
 
     pub fn vertical_justify(&self) -> bool {
-        if self.is_vertical() {
-            self.main_justify
-        } else {
-            self.cross_justify
-        }
+        if self.is_vertical() { self.main_justify } else { self.cross_justify }
     }
 }
 
@@ -418,14 +377,9 @@ impl Layout {
     /// For wrapping layouts, this is the maximum (after wrap).
     pub(crate) fn available_size(&self, r: &Region) -> Vec2 {
         if self.main_wrap {
-            if self.main_dir.is_horizontal() {
-                vec2(r.max_rect.width(), r.cursor.height())
-            } else {
-                vec2(r.cursor.width(), r.max_rect.height())
-            }
+            if self.main_dir.is_horizontal() { vec2(r.max_rect.width(), r.cursor.height()) } else { vec2(r.cursor.width(), r.max_rect.height()) }
         } else {
-            self.available_from_cursor_max_rect(r.cursor, r.max_rect)
-                .size()
+            self.available_from_cursor_max_rect(r.cursor, r.max_rect).size()
         }
     }
 
@@ -498,19 +452,12 @@ impl Layout {
     /// Use `justify_and_align` to get the inner `widget_rect`.
     pub(crate) fn next_frame(&self, region: &Region, child_size: Vec2, spacing: Vec2) -> Rect {
         region.sanity_check();
-        debug_assert!(
-            child_size.x >= 0.0 && child_size.y >= 0.0,
-            "Negative size: {child_size:?}"
-        );
+        debug_assert!(child_size.x >= 0.0 && child_size.y >= 0.0, "Negative size: {child_size:?}");
 
         if self.main_wrap {
             let available_size = self.available_rect_before_wrap(region).size();
 
-            let Region {
-                mut cursor,
-                mut max_rect,
-                min_rect,
-            } = *region;
+            let Region { mut cursor, mut max_rect, min_rect } = *region;
 
             match self.main_dir {
                 Direction::LeftToRight => {
@@ -519,10 +466,7 @@ impl Layout {
                         let new_row_height = cursor.height().max(child_size.y);
                         // let new_top = cursor.bottom() + spacing.y;
                         let new_top = min_rect.bottom() + spacing.y; // tighter packing
-                        cursor = Rect::from_min_max(
-                            pos2(max_rect.left(), new_top),
-                            pos2(INFINITY, new_top + new_row_height),
-                        );
+                        cursor = Rect::from_min_max(pos2(max_rect.left(), new_top), pos2(INFINITY, new_top + new_row_height));
                         max_rect.max.y = max_rect.max.y.max(cursor.max.y);
                     }
                 }
@@ -532,10 +476,7 @@ impl Layout {
                         let new_row_height = cursor.height().max(child_size.y);
                         // let new_top = cursor.bottom() + spacing.y;
                         let new_top = min_rect.bottom() + spacing.y; // tighter packing
-                        cursor = Rect::from_min_max(
-                            pos2(-INFINITY, new_top),
-                            pos2(max_rect.right(), new_top + new_row_height),
-                        );
+                        cursor = Rect::from_min_max(pos2(-INFINITY, new_top), pos2(max_rect.right(), new_top + new_row_height));
                         max_rect.max.y = max_rect.max.y.max(cursor.max.y);
                     }
                 }
@@ -556,10 +497,7 @@ impl Layout {
                         let new_col_width = cursor.width().max(child_size.x);
                         cursor = Rect::from_min_max(
                             pos2(cursor.right() + spacing.x, -INFINITY),
-                            pos2(
-                                cursor.right() + spacing.x + new_col_width,
-                                max_rect.bottom(),
-                            ),
+                            pos2(cursor.right() + spacing.x + new_col_width, max_rect.bottom()),
                         );
                         max_rect.max.x = max_rect.max.x.max(cursor.max.x);
                     }
@@ -567,11 +505,7 @@ impl Layout {
             }
 
             // Use the new cursor:
-            let region = Region {
-                min_rect,
-                max_rect,
-                cursor,
-            };
+            let region = Region { min_rect, max_rect, cursor };
 
             self.next_frame_ignore_wrap(&region, child_size)
         } else {
@@ -581,35 +515,20 @@ impl Layout {
 
     fn next_frame_ignore_wrap(&self, region: &Region, child_size: Vec2) -> Rect {
         region.sanity_check();
-        debug_assert!(
-            child_size.x >= 0.0 && child_size.y >= 0.0,
-            "Negative size: {child_size:?}"
-        );
+        debug_assert!(child_size.x >= 0.0 && child_size.y >= 0.0, "Negative size: {child_size:?}");
 
         let available_rect = self.available_rect_before_wrap(region);
 
         let mut frame_size = child_size;
 
-        if (self.is_vertical() && self.horizontal_align() == Align::Center)
-            || self.horizontal_justify()
-        {
+        if (self.is_vertical() && self.horizontal_align() == Align::Center) || self.horizontal_justify() {
             // For wrapping layouts, fill the current column width, not the entire layout width.
-            let width = if self.main_wrap {
-                region.cursor.width()
-            } else {
-                available_rect.width()
-            };
+            let width = if self.main_wrap { region.cursor.width() } else { available_rect.width() };
             frame_size.x = frame_size.x.max(width); // fill full width
         }
-        if (self.is_horizontal() && self.vertical_align() == Align::Center)
-            || self.vertical_justify()
-        {
+        if (self.is_horizontal() && self.vertical_align() == Align::Center) || self.vertical_justify() {
             // For wrapping layouts, fill the current row height, not the entire layout height.
-            let height = if self.main_wrap {
-                region.cursor.height()
-            } else {
-                available_rect.height()
-            };
+            let height = if self.main_wrap { region.cursor.height() } else { available_rect.height() };
             frame_size.y = frame_size.y.max(height); // fill full height
         }
 
@@ -637,10 +556,7 @@ impl Layout {
 
     /// Apply justify (fill width/height) and/or alignment after calling `next_space`.
     pub(crate) fn justify_and_align(&self, frame: Rect, mut child_size: Vec2) -> Rect {
-        debug_assert!(
-            child_size.x >= 0.0 && child_size.y >= 0.0,
-            "Negative size: {child_size:?}"
-        );
+        debug_assert!(child_size.x >= 0.0 && child_size.y >= 0.0, "Negative size: {child_size:?}");
         debug_assert!(!frame.is_negative(), "frame is negative");
 
         if self.horizontal_justify() {
@@ -652,11 +568,7 @@ impl Layout {
         self.align_size_within_rect(child_size, frame)
     }
 
-    pub(crate) fn next_widget_space_ignore_wrap_justify(
-        &self,
-        region: &Region,
-        size: Vec2,
-    ) -> Rect {
+    pub(crate) fn next_widget_space_ignore_wrap_justify(&self, region: &Region, size: Vec2) -> Rect {
         let frame = self.next_frame_ignore_wrap(region, size);
         let rect = self.align_size_within_rect(size, frame);
         debug_assert!(!rect.any_nan(), "rect is NaN: {rect:?}");
@@ -666,8 +578,7 @@ impl Layout {
 
     /// Where would the next tiny widget be centered?
     pub(crate) fn next_widget_position(&self, region: &Region) -> Pos2 {
-        self.next_widget_space_ignore_wrap_justify(region, Vec2::ZERO)
-            .center()
+        self.next_widget_space_ignore_wrap_justify(region, Vec2::ZERO).center()
     }
 
     /// Advance the cursor by this many points, and allocate in region.
@@ -696,13 +607,7 @@ impl Layout {
     ///
     /// * `frame_rect`: the frame inside which a widget was e.g. centered
     /// * `widget_rect`: the actual rect used by the widget
-    pub(crate) fn advance_after_rects(
-        &self,
-        cursor: &mut Rect,
-        frame_rect: Rect,
-        widget_rect: Rect,
-        item_spacing: Vec2,
-    ) {
+    pub(crate) fn advance_after_rects(&self, cursor: &mut Rect, frame_rect: Rect, widget_rect: Rect, item_spacing: Vec2) {
         debug_assert!(!cursor.any_nan(), "cursor is NaN: {cursor:?}");
         if self.main_wrap {
             if cursor.intersects(frame_rect.shrink(1.0)) {
@@ -712,28 +617,16 @@ impl Layout {
                 // this is a new row or column. We temporarily use NAN for what will be filled in later.
                 match self.main_dir {
                     Direction::LeftToRight => {
-                        *cursor = Rect::from_min_max(
-                            pos2(f32::NAN, frame_rect.min.y),
-                            pos2(INFINITY, frame_rect.max.y),
-                        );
+                        *cursor = Rect::from_min_max(pos2(f32::NAN, frame_rect.min.y), pos2(INFINITY, frame_rect.max.y));
                     }
                     Direction::RightToLeft => {
-                        *cursor = Rect::from_min_max(
-                            pos2(-INFINITY, frame_rect.min.y),
-                            pos2(f32::NAN, frame_rect.max.y),
-                        );
+                        *cursor = Rect::from_min_max(pos2(-INFINITY, frame_rect.min.y), pos2(f32::NAN, frame_rect.max.y));
                     }
                     Direction::TopDown => {
-                        *cursor = Rect::from_min_max(
-                            pos2(frame_rect.min.x, f32::NAN),
-                            pos2(frame_rect.max.x, INFINITY),
-                        );
+                        *cursor = Rect::from_min_max(pos2(frame_rect.min.x, f32::NAN), pos2(frame_rect.max.x, INFINITY));
                     }
                     Direction::BottomUp => {
-                        *cursor = Rect::from_min_max(
-                            pos2(frame_rect.min.x, -INFINITY),
-                            pos2(frame_rect.max.x, f32::NAN),
-                        );
+                        *cursor = Rect::from_min_max(pos2(frame_rect.min.x, -INFINITY), pos2(frame_rect.max.x, f32::NAN));
                     }
                 }
             }
@@ -771,17 +664,11 @@ impl Layout {
             match self.main_dir {
                 Direction::LeftToRight => {
                     let new_top = region.cursor.bottom() + spacing.y;
-                    region.cursor = Rect::from_min_max(
-                        pos2(region.max_rect.left(), new_top),
-                        pos2(INFINITY, new_top),
-                    );
+                    region.cursor = Rect::from_min_max(pos2(region.max_rect.left(), new_top), pos2(INFINITY, new_top));
                 }
                 Direction::RightToLeft => {
                     let new_top = region.cursor.bottom() + spacing.y;
-                    region.cursor = Rect::from_min_max(
-                        pos2(-INFINITY, new_top),
-                        pos2(region.max_rect.right(), new_top),
-                    );
+                    region.cursor = Rect::from_min_max(pos2(-INFINITY, new_top), pos2(region.max_rect.right(), new_top));
                 }
                 Direction::TopDown | Direction::BottomUp => {}
             }
@@ -802,13 +689,7 @@ impl Layout {
 impl Layout {
     /// Shows where the next widget is going to be placed
     #[cfg(debug_assertions)]
-    pub(crate) fn paint_text_at_cursor(
-        &self,
-        painter: &crate::Painter,
-        region: &Region,
-        stroke: epaint::Stroke,
-        text: impl ToString,
-    ) {
+    pub(crate) fn paint_text_at_cursor(&self, painter: &crate::Painter, region: &Region, stroke: epaint::Stroke, text: impl ToString) {
         let cursor = region.cursor;
         let next_pos = self.next_widget_position(region);
 

@@ -32,10 +32,7 @@ pub struct Rect {
 
 impl Rect {
     /// Infinite rectangle that contains every point.
-    pub const EVERYTHING: Self = Self {
-        min: pos2(-f32::INFINITY, -f32::INFINITY),
-        max: pos2(f32::INFINITY, f32::INFINITY),
-    };
+    pub const EVERYTHING: Self = Self { min: pos2(-f32::INFINITY, -f32::INFINITY), max: pos2(f32::INFINITY, f32::INFINITY) };
 
     /// The inverse of [`Self::EVERYTHING`]: stretches from positive infinity to negative infinity.
     /// Contains no points.
@@ -52,22 +49,13 @@ impl Rect {
     /// rect.extend_with(pos2(0.0, 3.0));
     /// assert_eq!(rect, Rect::from_min_max(pos2(0.0, 1.0), pos2(2.0, 3.0)))
     /// ```
-    pub const NOTHING: Self = Self {
-        min: pos2(f32::INFINITY, f32::INFINITY),
-        max: pos2(-f32::INFINITY, -f32::INFINITY),
-    };
+    pub const NOTHING: Self = Self { min: pos2(f32::INFINITY, f32::INFINITY), max: pos2(-f32::INFINITY, -f32::INFINITY) };
 
     /// An invalid [`Rect`] filled with [`f32::NAN`].
-    pub const NAN: Self = Self {
-        min: pos2(f32::NAN, f32::NAN),
-        max: pos2(f32::NAN, f32::NAN),
-    };
+    pub const NAN: Self = Self { min: pos2(f32::NAN, f32::NAN), max: pos2(f32::NAN, f32::NAN) };
 
     /// A [`Rect`] filled with zeroes.
-    pub const ZERO: Self = Self {
-        min: Pos2::ZERO,
-        max: Pos2::ZERO,
-    };
+    pub const ZERO: Self = Self { min: Pos2::ZERO, max: Pos2::ZERO };
 
     #[inline(always)]
     pub const fn from_min_max(min: Pos2, max: Pos2) -> Self {
@@ -77,46 +65,31 @@ impl Rect {
     /// left-top corner plus a size (stretching right-down).
     #[inline(always)]
     pub fn from_min_size(min: Pos2, size: Vec2) -> Self {
-        Self {
-            min,
-            max: min + size,
-        }
+        Self { min, max: min + size }
     }
 
     #[inline(always)]
     pub fn from_center_size(center: Pos2, size: Vec2) -> Self {
-        Self {
-            min: center - size * 0.5,
-            max: center + size * 0.5,
-        }
+        Self { min: center - size * 0.5, max: center + size * 0.5 }
     }
 
     #[inline(always)]
     pub fn from_x_y_ranges(x_range: impl Into<Rangef>, y_range: impl Into<Rangef>) -> Self {
         let x_range = x_range.into();
         let y_range = y_range.into();
-        Self {
-            min: pos2(x_range.min, y_range.min),
-            max: pos2(x_range.max, y_range.max),
-        }
+        Self { min: pos2(x_range.min, y_range.min), max: pos2(x_range.max, y_range.max) }
     }
 
     /// Returns the bounding rectangle of the two points.
     #[inline]
     pub fn from_two_pos(a: Pos2, b: Pos2) -> Self {
-        Self {
-            min: pos2(a.x.min(b.x), a.y.min(b.y)),
-            max: pos2(a.x.max(b.x), a.y.max(b.y)),
-        }
+        Self { min: pos2(a.x.min(b.x), a.y.min(b.y)), max: pos2(a.x.max(b.x), a.y.max(b.y)) }
     }
 
     /// A zero-sized rect at a specific point.
     #[inline]
     pub fn from_pos(point: Pos2) -> Self {
-        Self {
-            min: point,
-            max: point,
-        }
+        Self { min: point, max: point }
     }
 
     /// Bounding-box around the points.
@@ -239,19 +212,13 @@ impl Rect {
         let c = rot * self.left_bottom().to_vec2();
         let d = rot * self.right_bottom().to_vec2();
 
-        Self::from_min_max(
-            a.min(b).min(c).min(d).to_pos2(),
-            a.max(b).max(c).max(d).to_pos2(),
-        )
+        Self::from_min_max(a.min(b).min(c).min(d).to_pos2(), a.max(b).max(c).max(d).to_pos2())
     }
 
     #[must_use]
     #[inline]
     pub fn intersects(self, other: Self) -> bool {
-        self.min.x <= other.max.x
-            && other.min.x <= self.max.x
-            && self.min.y <= other.max.y
-            && other.min.y <= self.max.y
+        self.min.x <= other.max.x && other.min.x <= self.max.x && self.min.y <= other.max.y && other.min.y <= self.max.y
     }
 
     /// keep min
@@ -290,28 +257,19 @@ impl Rect {
     /// Floor the rect coordinates
     #[inline(always)]
     pub fn floor(self) -> Self {
-        Self {
-            min: self.min.floor(),
-            max: self.max.floor(),
-        }
+        Self { min: self.min.floor(), max: self.max.floor() }
     }
 
     /// Round the rect coordinates
     #[inline(always)]
     pub fn round(self) -> Self {
-        Self {
-            min: self.min.round(),
-            max: self.max.round(),
-        }
+        Self { min: self.min.round(), max: self.max.round() }
     }
 
     /// Ceil the rect coordinates
     #[inline(always)]
     pub fn ceil(self) -> Self {
-        Self {
-            min: self.min.ceil(),
-            max: self.max.ceil(),
-        }
+        Self { min: self.min.ceil(), max: self.max.ceil() }
     }
 
     #[inline(always)]
@@ -339,28 +297,19 @@ impl Rect {
     #[inline(always)]
     #[must_use]
     pub fn union(self, other: Self) -> Self {
-        Self {
-            min: self.min.min(other.min),
-            max: self.max.max(other.max),
-        }
+        Self { min: self.min.min(other.min), max: self.max.max(other.max) }
     }
 
     /// The intersection of two [`Rect`], i.e. the area covered by both.
     #[inline]
     #[must_use]
     pub fn intersect(self, other: Self) -> Self {
-        Self {
-            min: self.min.max(other.min),
-            max: self.max.min(other.max),
-        }
+        Self { min: self.min.max(other.min), max: self.max.min(other.max) }
     }
 
     #[inline(always)]
     pub fn center(&self) -> Pos2 {
-        Pos2 {
-            x: fast_midpoint(self.min.x, self.max.x),
-            y: fast_midpoint(self.min.y, self.max.y),
-        }
+        Pos2 { x: fast_midpoint(self.min.x, self.max.x), y: fast_midpoint(self.min.y, self.max.y) }
     }
 
     /// `rect.size() == Vec2 { x: rect.width(), y: rect.height() }`
@@ -396,11 +345,7 @@ impl Rect {
     pub fn square_proportions(&self) -> Vec2 {
         let w = self.width();
         let h = self.height();
-        if w > h {
-            vec2(w / h, 1.0)
-        } else {
-            vec2(1.0, h / w)
-        }
+        if w > h { vec2(w / h, 1.0) } else { vec2(1.0, h / w) }
     }
 
     /// This is never negative, and instead returns zero for negative rectangles.
@@ -478,19 +423,13 @@ impl Rect {
     #[inline]
     pub fn lerp_inside(&self, t: impl Into<Vec2>) -> Pos2 {
         let t = t.into();
-        Pos2 {
-            x: lerp(self.min.x..=self.max.x, t.x),
-            y: lerp(self.min.y..=self.max.y, t.y),
-        }
+        Pos2 { x: lerp(self.min.x..=self.max.x, t.x), y: lerp(self.min.y..=self.max.y, t.y) }
     }
 
     /// Linearly self towards other rect.
     #[inline]
     pub fn lerp_towards(&self, other: &Self, t: f32) -> Self {
-        Self {
-            min: self.min.lerp(other.min, t),
-            max: self.max.lerp(other.max, t),
-        }
+        Self { min: self.min.lerp(other.min, t), max: self.max.lerp(other.max, t) }
     }
 
     #[inline(always)]
@@ -707,11 +646,7 @@ impl Rect {
     ///
     /// A ray that starts inside the rect will return `true`.
     pub fn intersects_ray(&self, o: Pos2, d: Vec2) -> bool {
-        debug_assert!(
-            d.is_normalized(),
-            "Debug assert: expected normalized direction, but `d` has length {}",
-            d.length()
-        );
+        debug_assert!(d.is_normalized(), "Debug assert: expected normalized direction, but `d` has length {}", d.length());
 
         let mut tmin = -f32::INFINITY;
         let mut tmax = f32::INFINITY;
@@ -739,11 +674,7 @@ impl Rect {
     ///
     /// `d` is the direction of the ray and assumed to be normalized.
     pub fn intersects_ray_from_center(&self, d: Vec2) -> Pos2 {
-        debug_assert!(
-            d.is_normalized(),
-            "expected normalized direction, but `d` has length {}",
-            d.length()
-        );
+        debug_assert!(d.is_normalized(), "expected normalized direction, but `d` has length {}", d.length());
 
         let mut tmin = f32::NEG_INFINITY;
         let mut tmax = f32::INFINITY;
@@ -800,10 +731,7 @@ impl Mul<f32> for Rect {
 
     #[inline]
     fn mul(self, factor: f32) -> Self {
-        Self {
-            min: self.min * factor,
-            max: self.max * factor,
-        }
+        Self { min: self.min * factor, max: self.max * factor }
     }
 }
 
@@ -812,10 +740,7 @@ impl Mul<Rect> for f32 {
 
     #[inline]
     fn mul(self, vec: Rect) -> Rect {
-        Rect {
-            min: self * vec.min,
-            max: self * vec.max,
-        }
+        Rect { min: self * vec.min, max: self * vec.max }
     }
 }
 
@@ -824,10 +749,7 @@ impl Div<f32> for Rect {
 
     #[inline]
     fn div(self, factor: f32) -> Self {
-        Self {
-            min: self.min / factor,
-            max: self.max / factor,
-        }
+        Self { min: self.min / factor, max: self.max / factor }
     }
 }
 
@@ -870,18 +792,9 @@ mod tests {
         let c = pos2(100.0, 50.0);
         let r = Rect::from_center_size(c, vec2(30.0, 60.0));
 
-        assert_eq!(
-            r.scale_from_center(2.0),
-            Rect::from_center_size(c, vec2(60.0, 120.0))
-        );
-        assert_eq!(
-            r.scale_from_center(0.5),
-            Rect::from_center_size(c, vec2(15.0, 30.0))
-        );
-        assert_eq!(
-            r.scale_from_center2(vec2(2.0, 3.0)),
-            Rect::from_center_size(c, vec2(60.0, 180.0))
-        );
+        assert_eq!(r.scale_from_center(2.0), Rect::from_center_size(c, vec2(60.0, 120.0)));
+        assert_eq!(r.scale_from_center(0.5), Rect::from_center_size(c, vec2(15.0, 30.0)));
+        assert_eq!(r.scale_from_center2(vec2(2.0, 3.0)), Rect::from_center_size(c, vec2(60.0, 180.0)));
     }
 
     #[expect(clippy::print_stdout)]
@@ -912,52 +825,20 @@ mod tests {
     fn test_ray_from_center_intersection() {
         let rect = Rect::from_min_max(pos2(1.0, 1.0), pos2(3.0, 3.0));
 
-        assert_eq!(
-            rect.intersects_ray_from_center(Vec2::RIGHT),
-            pos2(3.0, 2.0),
-            "rightward ray"
-        );
+        assert_eq!(rect.intersects_ray_from_center(Vec2::RIGHT), pos2(3.0, 2.0), "rightward ray");
 
-        assert_eq!(
-            rect.intersects_ray_from_center(Vec2::UP),
-            pos2(2.0, 1.0),
-            "upward ray"
-        );
+        assert_eq!(rect.intersects_ray_from_center(Vec2::UP), pos2(2.0, 1.0), "upward ray");
 
-        assert_eq!(
-            rect.intersects_ray_from_center(Vec2::LEFT),
-            pos2(1.0, 2.0),
-            "leftward ray"
-        );
+        assert_eq!(rect.intersects_ray_from_center(Vec2::LEFT), pos2(1.0, 2.0), "leftward ray");
 
-        assert_eq!(
-            rect.intersects_ray_from_center(Vec2::DOWN),
-            pos2(2.0, 3.0),
-            "downward ray"
-        );
+        assert_eq!(rect.intersects_ray_from_center(Vec2::DOWN), pos2(2.0, 3.0), "downward ray");
 
-        assert_eq!(
-            rect.intersects_ray_from_center((Vec2::LEFT + Vec2::DOWN).normalized()),
-            pos2(1.0, 3.0),
-            "bottom-left corner ray"
-        );
+        assert_eq!(rect.intersects_ray_from_center((Vec2::LEFT + Vec2::DOWN).normalized()), pos2(1.0, 3.0), "bottom-left corner ray");
 
-        assert_eq!(
-            rect.intersects_ray_from_center((Vec2::LEFT + Vec2::UP).normalized()),
-            pos2(1.0, 1.0),
-            "top-left corner ray"
-        );
+        assert_eq!(rect.intersects_ray_from_center((Vec2::LEFT + Vec2::UP).normalized()), pos2(1.0, 1.0), "top-left corner ray");
 
-        assert_eq!(
-            rect.intersects_ray_from_center((Vec2::RIGHT + Vec2::DOWN).normalized()),
-            pos2(3.0, 3.0),
-            "bottom-right corner ray"
-        );
+        assert_eq!(rect.intersects_ray_from_center((Vec2::RIGHT + Vec2::DOWN).normalized()), pos2(3.0, 3.0), "bottom-right corner ray");
 
-        assert_eq!(
-            rect.intersects_ray_from_center((Vec2::RIGHT + Vec2::UP).normalized()),
-            pos2(3.0, 1.0),
-            "top-right corner ray"
-        );
+        assert_eq!(rect.intersects_ray_from_center((Vec2::RIGHT + Vec2::UP).normalized()), pos2(3.0, 1.0), "top-right corner ray");
     }
 }

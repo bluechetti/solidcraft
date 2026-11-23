@@ -7,10 +7,7 @@ use crate::{
     util::History,
 };
 use crate::{
-    data::input::{
-        Event, EventFilter, KeyboardShortcut, Modifiers, NUM_POINTER_BUTTONS, PointerButton,
-        RawInput, TouchDeviceId, ViewportInfo,
-    },
+    data::input::{Event, EventFilter, KeyboardShortcut, Modifiers, NUM_POINTER_BUTTONS, PointerButton, RawInput, TouchDeviceId, ViewportInfo},
     input_state::wheel_state::WheelState,
 };
 use alloc::collections::BTreeMap;
@@ -39,15 +36,10 @@ impl SurrenderFocusOn {
     pub fn ui(&mut self, ui: &mut crate::Ui) {
         ui.horizontal(|ui| {
             ui.selectable_value(self, Self::Presses, "Presses")
-                .on_hover_text(
-                    "Surrender focus if the user presses somewhere outside the focused widget.",
-                );
+                .on_hover_text("Surrender focus if the user presses somewhere outside the focused widget.");
             ui.selectable_value(self, Self::Clicks, "Clicks")
-                .on_hover_text(
-                    "Surrender focus if the user clicks somewhere outside the focused widget.",
-                );
-            ui.selectable_value(self, Self::Never, "Never")
-                .on_hover_text("Never surrender focus.");
+                .on_hover_text("Surrender focus if the user clicks somewhere outside the focused widget.");
+            ui.selectable_value(self, Self::Never, "Never").on_hover_text("Never surrender focus.");
         });
     }
 }
@@ -136,70 +128,48 @@ impl InputOptions {
             vertical_scroll_modifier,
             surrender_focus_on,
         } = self;
-        crate::Grid::new("InputOptions")
-            .num_columns(2)
-            .striped(true)
-            .show(ui, |ui| {
-                ui.label("Line scroll speed");
-                ui.add(crate::DragValue::new(line_scroll_speed).range(0.0..=f32::INFINITY))
-                    .on_hover_text(
-                        "How many lines to scroll with each tick of the mouse wheel",
-                    );
-                ui.end_row();
+        crate::Grid::new("InputOptions").num_columns(2).striped(true).show(ui, |ui| {
+            ui.label("Line scroll speed");
+            ui.add(crate::DragValue::new(line_scroll_speed).range(0.0..=f32::INFINITY))
+                .on_hover_text("How many lines to scroll with each tick of the mouse wheel");
+            ui.end_row();
 
-                ui.label("Scroll zoom speed");
-                ui.add(
-                    crate::DragValue::new(scroll_zoom_speed)
-                        .range(0.0..=f32::INFINITY)
-                        .speed(0.001),
-                )
+            ui.label("Scroll zoom speed");
+            ui.add(crate::DragValue::new(scroll_zoom_speed).range(0.0..=f32::INFINITY).speed(0.001))
                 .on_hover_text("How fast to zoom with ctrl/cmd + scroll");
-                ui.end_row();
+            ui.end_row();
 
-                ui.label("Max click distance");
-                ui.add(crate::DragValue::new(max_click_dist).range(0.0..=f32::INFINITY))
-                    .on_hover_text(
-                        "If the pointer moves more than this, it won't become a click",
-                    );
-                ui.end_row();
+            ui.label("Max click distance");
+            ui.add(crate::DragValue::new(max_click_dist).range(0.0..=f32::INFINITY))
+                .on_hover_text("If the pointer moves more than this, it won't become a click");
+            ui.end_row();
 
-                ui.label("Max click duration");
-                ui.add(
-                    crate::DragValue::new(max_click_duration)
-                        .range(0.1..=f64::INFINITY)
-                        .speed(0.1),
-                    )
-                    .on_hover_text(
-                        "If the pointer is down for longer than this it will no longer register as a click",
-                    );
-                ui.end_row();
+            ui.label("Max click duration");
+            ui.add(crate::DragValue::new(max_click_duration).range(0.1..=f64::INFINITY).speed(0.1))
+                .on_hover_text("If the pointer is down for longer than this it will no longer register as a click");
+            ui.end_row();
 
-                ui.label("Max double click delay");
-                ui.add(
-                    crate::DragValue::new(max_double_click_delay)
-                        .range(0.01..=f64::INFINITY)
-                        .speed(0.1),
-                )
+            ui.label("Max double click delay");
+            ui.add(crate::DragValue::new(max_double_click_delay).range(0.01..=f64::INFINITY).speed(0.1))
                 .on_hover_text("Max time interval for double click to count");
-                ui.end_row();
+            ui.end_row();
 
-                ui.label("zoom_modifier");
-                zoom_modifier.ui(ui);
-                ui.end_row();
+            ui.label("zoom_modifier");
+            zoom_modifier.ui(ui);
+            ui.end_row();
 
-                ui.label("horizontal_scroll_modifier");
-                horizontal_scroll_modifier.ui(ui);
-                ui.end_row();
+            ui.label("horizontal_scroll_modifier");
+            horizontal_scroll_modifier.ui(ui);
+            ui.end_row();
 
-                ui.label("vertical_scroll_modifier");
-                vertical_scroll_modifier.ui(ui);
-                ui.end_row();
+            ui.label("vertical_scroll_modifier");
+            vertical_scroll_modifier.ui(ui);
+            ui.end_row();
 
-                ui.label("surrender_focus_on");
-                surrender_focus_on.ui(ui);
-                ui.end_row();
-
-            });
+            ui.label("surrender_focus_on");
+            surrender_focus_on.ui(ui);
+            ui.end_row();
+        });
     }
 }
 
@@ -400,12 +370,7 @@ impl InputState {
 
         for event in &mut new.events {
             match event {
-                Event::Key {
-                    key,
-                    pressed,
-                    repeat,
-                    ..
-                } => {
+                Event::Key { key, pressed, repeat, .. } => {
                     if *pressed {
                         let first_press = keys_down.insert(*key);
                         *repeat = !first_press;
@@ -413,23 +378,8 @@ impl InputState {
                         keys_down.remove(key);
                     }
                 }
-                Event::MouseWheel {
-                    unit,
-                    delta,
-                    phase,
-                    source,
-                    modifiers,
-                } => {
-                    self.wheel.on_wheel_event(
-                        viewport_rect,
-                        &options,
-                        time,
-                        *unit,
-                        *delta,
-                        *phase,
-                        *source,
-                        *modifiers,
-                    );
+                Event::MouseWheel { unit, delta, phase, source, modifiers } => {
+                    self.wheel.on_wheel_event(viewport_rect, &options, time, *unit, *delta, *phase, *source, *modifiers);
                 }
                 Event::ModifiersChanged(new_modifiers) => {
                     modifiers = *new_modifiers;
@@ -462,9 +412,7 @@ impl InputState {
             let is_zoom = self.wheel.modifiers.matches_any(options.zoom_modifier);
 
             if is_zoom {
-                zoom_factor_delta *= (options.scroll_zoom_speed
-                    * (self.wheel.smooth_wheel_delta.x + self.wheel.smooth_wheel_delta.y))
-                    .exp();
+                zoom_factor_delta *= (options.scroll_zoom_speed * (self.wheel.smooth_wheel_delta.x + self.wheel.smooth_wheel_delta.y)).exp();
             } else {
                 smooth_scroll_delta = self.wheel.smooth_wheel_delta;
             }
@@ -567,8 +515,7 @@ impl InputState {
         // the distances of the finger tips. It is therefore potentially more accurate than
         // `zoom_factor_delta` which is based on the `ctrl-scroll` event which, in turn, may be
         // synthesized from an original touch gesture.
-        self.multi_touch()
-            .map_or(self.zoom_factor_delta, |touch| touch.zoom_delta)
+        self.multi_touch().map_or(self.zoom_factor_delta, |touch| touch.zoom_delta)
     }
 
     /// 2D non-proportional zoom scale factor this frame (e.g. from ctrl-scroll or pinch gesture).
@@ -595,12 +542,8 @@ impl InputState {
         } else {
             let mut zoom = Vec2::splat(self.zoom_factor_delta);
 
-            let is_horizontal = self
-                .modifiers
-                .matches_any(self.options.horizontal_scroll_modifier);
-            let is_vertical = self
-                .modifiers
-                .matches_any(self.options.vertical_scroll_modifier);
+            let is_horizontal = self.modifiers.matches_any(self.options.horizontal_scroll_modifier);
+            let is_vertical = self.modifiers.matches_any(self.options.vertical_scroll_modifier);
 
             if is_horizontal && !is_vertical {
                 // Horizontal-only zooming.
@@ -618,8 +561,7 @@ impl InputState {
     /// Rotation in radians this frame, measuring clockwise (e.g. from a rotation gesture).
     #[inline(always)]
     pub fn rotation_delta(&self) -> f32 {
-        self.multi_touch()
-            .map_or(self.rotation_radians, |touch| touch.rotation_delta)
+        self.multi_touch().map_or(self.rotation_radians, |touch| touch.rotation_delta)
     }
 
     /// Panning translation in pixels this frame (e.g. from scrolling or a pan gesture)
@@ -631,10 +573,7 @@ impl InputState {
     /// A positive Y-value indicates the content is being moved down, as when swiping down on a touch-screen or track-pad with natural scrolling.
     #[inline(always)]
     pub fn translation_delta(&self) -> Vec2 {
-        self.multi_touch().map_or_else(
-            || self.smooth_scroll_delta(),
-            |touch| touch.translation_delta,
-        )
+        self.multi_touch().map_or_else(|| self.smooth_scroll_delta(), |touch| touch.translation_delta)
     }
 
     /// True if there is an active scroll action that might scroll more when using [`Self::smooth_scroll_delta`].
@@ -677,15 +616,8 @@ impl InputState {
         // Pointer motion is the one input that can be asked not to schedule a frame by itself
         // (`RawInput::repaint_on_pointer_move`): it is still delivered on the next frame, but a
         // still view that only sees the pointer move stays still until something else repaints.
-        let pointer_motion_only = self
-            .pointer
-            .pointer_events
-            .iter()
-            .all(|e| matches!(e, PointerEvent::Moved(_)))
-            && self
-                .events
-                .iter()
-                .all(|e| matches!(e, Event::PointerMoved(_) | Event::MouseMoved(_)));
+        let pointer_motion_only = self.pointer.pointer_events.iter().all(|e| matches!(e, PointerEvent::Moved(_)))
+            && self.events.iter().all(|e| matches!(e, Event::PointerMoved(_) | Event::MouseMoved(_)));
         let motion_asks = self.raw.repaint_on_pointer_move || !pointer_motion_only;
         if ((self.pointer.wants_repaint() || !self.events.is_empty()) && motion_asks)
             || self.wheel.unprocessed_wheel_delta.abs().max_elem() > 0.2
@@ -700,9 +632,7 @@ impl InputState {
             // We need to wake up and check for press-and-hold for the context menu.
             if let Some(press_start_time) = self.pointer.press_start_time {
                 let press_duration = self.time - press_start_time;
-                if self.options.max_click_duration.is_finite()
-                    && press_duration < self.options.max_click_duration
-                {
+                if self.options.max_click_duration.is_finite() && press_duration < self.options.max_click_duration {
                     let secs_until_menu = self.options.max_click_duration - press_duration;
                     return Some(Duration::from_secs_f64(secs_until_menu));
                 }
@@ -766,10 +696,7 @@ impl InputState {
     /// i.e. check for `Cmd-Shift-S` ("Save as…") before `Cmd-S` ("Save"),
     /// so that a user pressing `Cmd-Shift-S` won't trigger the wrong command!
     pub fn consume_shortcut(&mut self, shortcut: &KeyboardShortcut) -> bool {
-        let KeyboardShortcut {
-            modifiers,
-            logical_key,
-        } = *shortcut;
+        let KeyboardShortcut { modifiers, logical_key } = *shortcut;
         self.consume_key(modifiers, logical_key)
     }
 
@@ -884,18 +811,12 @@ impl InputState {
     fn create_touch_states_for_new_devices(&mut self, events: &[Event]) {
         for event in events {
             if let Event::Touch { device_id, .. } = event {
-                self.touch_states
-                    .entry(*device_id)
-                    .or_insert_with(|| TouchState::new(*device_id));
+                self.touch_states.entry(*device_id).or_insert_with(|| TouchState::new(*device_id));
             }
         }
     }
 
-    pub fn accesskit_action_requests(
-        &self,
-        id: crate::Id,
-        action: accesskit::Action,
-    ) -> impl Iterator<Item = &accesskit::ActionRequest> {
+    pub fn accesskit_action_requests(&self, id: crate::Id, action: accesskit::Action) -> impl Iterator<Item = &accesskit::ActionRequest> {
         let accesskit_id = id.accesskit_id();
         self.events.iter().filter_map(move |event| {
             if let Event::AccessKitActionRequest(request) = event
@@ -909,11 +830,7 @@ impl InputState {
         })
     }
 
-    pub fn consume_accesskit_action_requests(
-        &mut self,
-        id: crate::Id,
-        mut consume: impl FnMut(&accesskit::ActionRequest) -> bool,
-    ) {
+    pub fn consume_accesskit_action_requests(&mut self, id: crate::Id, mut consume: impl FnMut(&accesskit::ActionRequest) -> bool) {
         let accesskit_id = id.accesskit_id();
         self.events.retain(|event| {
             if let Event::AccessKitActionRequest(request) = event
@@ -936,11 +853,7 @@ impl InputState {
 
     /// Get all events that matches the given filter.
     pub fn filtered_events(&self, filter: &EventFilter) -> Vec<Event> {
-        self.events
-            .iter()
-            .filter(|event| filter.matches(event))
-            .cloned()
-            .collect()
+        self.events.iter().filter(|event| filter.matches(event)).cloned().collect()
     }
 
     /// A long press is something we detect on touch screens
@@ -981,14 +894,8 @@ impl Click {
 #[cfg_attr(feature = "serde", derive(serde::Deserialize, serde::Serialize))]
 pub(crate) enum PointerEvent {
     Moved(Pos2),
-    Pressed {
-        position: Pos2,
-        button: PointerButton,
-    },
-    Released {
-        click: Option<Click>,
-        button: PointerButton,
-    },
+    Pressed { position: Pos2, button: PointerButton },
+    Released { click: Option<Click>, button: PointerButton },
 }
 
 impl PointerEvent {
@@ -1160,19 +1067,13 @@ impl PointerState {
                     self.interact_pos = Some(pos);
 
                     if let Some(press_origin) = self.press_origin {
-                        self.has_moved_too_much_for_a_click |=
-                            press_origin.distance(pos) > self.options.max_click_dist;
+                        self.has_moved_too_much_for_a_click |= press_origin.distance(pos) > self.options.max_click_dist;
                     }
 
                     self.last_move_time = time;
                     self.pointer_events.push(PointerEvent::Moved(pos));
                 }
-                Event::PointerButton {
-                    pos,
-                    button,
-                    pressed,
-                    modifiers,
-                } => {
+                Event::PointerButton { pos, button, pressed, modifiers } => {
                     let pos = *pos;
                     let button = *button;
                     let pressed = *pressed;
@@ -1195,10 +1096,7 @@ impl PointerState {
                         // Would a click ending this press be a double- or triple-click?
                         self.press_click_count = self.click_count(time, pos);
 
-                        self.pointer_events.push(PointerEvent::Pressed {
-                            position: pos,
-                            button,
-                        });
+                        self.pointer_events.push(PointerEvent::Pressed { position: pos, button });
                     } else {
                         // Released
                         let clicked = self.could_any_button_be_click();
@@ -1210,17 +1108,12 @@ impl PointerState {
                             self.last_click_time = time;
                             self.last_click_pos = Some(pos);
 
-                            Some(Click {
-                                pos,
-                                count,
-                                modifiers,
-                            })
+                            Some(Click { pos, count, modifiers })
                         } else {
                             None
                         };
 
-                        self.pointer_events
-                            .push(PointerEvent::Released { click, button });
+                        self.pointer_events.push(PointerEvent::Released { click, button });
 
                         self.press_origin = None;
                         self.press_start_time = None;
@@ -1243,11 +1136,7 @@ impl PointerState {
             }
         }
 
-        self.delta = if let (Some(old_pos), Some(new_pos)) = (old_pos, self.latest_pos) {
-            new_pos - old_pos
-        } else {
-            Vec2::ZERO
-        };
+        self.delta = if let (Some(old_pos), Some(new_pos)) = (old_pos, self.latest_pos) { new_pos - old_pos } else { Vec2::ZERO };
 
         if let Some(pos) = self.latest_pos {
             self.pos_history.add(time, pos);
@@ -1395,15 +1284,11 @@ impl PointerState {
     /// Used both when a button is pressed (for [`Self::press_click_count`])
     /// and when it is released (for [`Click::count`]), so that the two always agree.
     fn click_count(&self, time: f64, pos: Pos2) -> u32 {
-        let click_dist_sq = self
-            .last_click_pos
-            .map_or(0.0, |last_pos| last_pos.distance_sq(pos));
+        let click_dist_sq = self.last_click_pos.map_or(0.0, |last_pos| last_pos.distance_sq(pos));
 
         let double_click = (time - self.last_click_time) < self.options.max_double_click_delay
             && click_dist_sq < self.options.max_click_dist * self.options.max_click_dist;
-        let triple_click = double_click
-            && (self.last_click_time - self.last_last_click_time)
-                < self.options.max_double_click_delay;
+        let triple_click = double_click && (self.last_click_time - self.last_last_click_time) < self.options.max_double_click_delay;
 
         if triple_click {
             3
@@ -1439,16 +1324,12 @@ impl PointerState {
 
     /// Was the button given pressed this frame?
     pub fn button_pressed(&self, button: PointerButton) -> bool {
-        self.pointer_events
-            .iter()
-            .any(|event| matches!(event, &PointerEvent::Pressed{button: b, ..} if button == b))
+        self.pointer_events.iter().any(|event| matches!(event, &PointerEvent::Pressed{button: b, ..} if button == b))
     }
 
     /// Was the button given released this frame?
     pub fn button_released(&self, button: PointerButton) -> bool {
-        self.pointer_events
-            .iter()
-            .any(|event| matches!(event, &PointerEvent::Released{button: b, ..} if button == b))
+        self.pointer_events.iter().any(|event| matches!(event, &PointerEvent::Released{button: b, ..} if button == b))
     }
 
     /// Was the primary button pressed this frame?
@@ -1490,9 +1371,7 @@ impl PointerState {
     ///
     /// Returns true on double- and triple- clicks too.
     pub fn button_clicked(&self, button: PointerButton) -> bool {
-        self.pointer_events
-            .iter()
-            .any(|event| matches!(event, &PointerEvent::Released { button: b, click: Some(_) } if button == b))
+        self.pointer_events.iter().any(|event| matches!(event, &PointerEvent::Released { button: b, click: Some(_) } if button == b))
     }
 
     /// Was the button given double clicked this frame?
@@ -1576,10 +1455,7 @@ impl PointerState {
     ///
     /// See also [`Self::could_any_button_be_click`].
     pub fn is_decidedly_dragging(&self) -> bool {
-        (self.any_down() || self.any_released())
-            && !self.any_pressed()
-            && !self.could_any_button_be_click()
-            && !self.any_click()
+        (self.any_down() || self.any_released()) && !self.any_pressed() && !self.could_any_button_be_click() && !self.any_click()
     }
 
     /// A long press is something we detect on touch screens
@@ -1590,9 +1466,7 @@ impl PointerState {
         self.started_decidedly_dragging
             && !self.has_moved_too_much_for_a_click
             && self.button_down(PointerButton::Primary)
-            && self.press_start_time.is_some_and(|press_start_time| {
-                self.time - press_start_time > self.options.max_click_duration
-            })
+            && self.press_start_time.is_some_and(|press_start_time| self.time - press_start_time > self.options.max_click_duration)
     }
 
     /// Is the primary button currently down?
@@ -1666,11 +1540,9 @@ impl InputState {
 
         ui.collapsing("Raw Input", |ui| raw.ui(ui));
 
-        crate::containers::CollapsingHeader::new("🖱️ Pointer")
-            .default_open(false)
-            .show(ui, |ui| {
-                pointer.ui(ui);
-            });
+        crate::containers::CollapsingHeader::new("🖱️ Pointer").default_open(false).show(ui, |ui| {
+            pointer.ui(ui);
+        });
 
         for (device_id, touch_state) in touch_states {
             ui.collapsing(format!("Touch State [device {}]", device_id.0), |ui| {
@@ -1678,11 +1550,9 @@ impl InputState {
             });
         }
 
-        crate::containers::CollapsingHeader::new("↕️ Scroll")
-            .default_open(false)
-            .show(ui, |ui| {
-                wheel.ui(ui);
-            });
+        crate::containers::CollapsingHeader::new("↕️ Scroll").default_open(false).show(ui, |ui| {
+            wheel.ui(ui);
+        });
 
         ui.label(format!("smooth_scroll_delta: {smooth_scroll_delta:4.1}x"));
         ui.label(format!("zoom_factor_delta: {zoom_factor_delta:4.2}x"));
@@ -1690,17 +1560,10 @@ impl InputState {
 
         ui.label(format!("viewport_rect: {viewport_rect:?} points"));
         ui.label(format!("safe_area_insets: {safe_area_insets:?} points"));
-        ui.label(format!(
-            "{pixels_per_point} physical pixels for each logical point"
-        ));
-        ui.label(format!(
-            "max texture size (on each side): {max_texture_side}"
-        ));
+        ui.label(format!("{pixels_per_point} physical pixels for each logical point"));
+        ui.label(format!("max texture size (on each side): {max_texture_side}"));
         ui.label(format!("time: {time:.3} s"));
-        ui.label(format!(
-            "time since previous frame: {:.1} ms",
-            1e3 * unstable_dt
-        ));
+        ui.label(format!("time since previous frame: {:.1} ms", 1e3 * unstable_dt));
         ui.label(format!("predicted_dt: {:.1} ms", 1e3 * predicted_dt));
         ui.label(format!("stable_dt:    {:.1} ms", 1e3 * stable_dt));
         ui.label(format!("focused:   {focused}"));
@@ -1708,8 +1571,7 @@ impl InputState {
         ui.label(format!("keys_down: {keys_down:?}"));
         ui.scope(|ui| {
             ui.set_min_height(150.0);
-            ui.label(format!("events: {events:#?}"))
-                .on_hover_text("key presses etc");
+            ui.label(format!("events: {events:#?}")).on_hover_text("key presses etc");
         });
     }
 }
@@ -1743,20 +1605,13 @@ impl PointerState {
         ui.label(format!("interact_pos: {interact_pos:?}"));
         ui.label(format!("delta: {delta:?}"));
         ui.label(format!("motion: {motion:?}"));
-        ui.label(format!(
-            "velocity: [{:3.0} {:3.0}] points/sec",
-            velocity.x, velocity.y
-        ));
+        ui.label(format!("velocity: [{:3.0} {:3.0}] points/sec", velocity.x, velocity.y));
         ui.label(format!("direction: {direction:?}"));
         ui.label(format!("down: {down:#?}"));
         ui.label(format!("press_origin: {press_origin:?}"));
         ui.label(format!("press_start_time: {press_start_time:?} s"));
-        ui.label(format!(
-            "has_moved_too_much_for_a_click: {has_moved_too_much_for_a_click}"
-        ));
-        ui.label(format!(
-            "started_decidedly_dragging: {started_decidedly_dragging}"
-        ));
+        ui.label(format!("has_moved_too_much_for_a_click: {has_moved_too_much_for_a_click}"));
+        ui.label(format!("started_decidedly_dragging: {started_decidedly_dragging}"));
         ui.label(format!("press_click_count: {press_click_count}"));
         ui.label(format!("last_click_pos: {last_click_pos:#?}"));
         ui.label(format!("last_click_time: {last_click_time:#?}"));

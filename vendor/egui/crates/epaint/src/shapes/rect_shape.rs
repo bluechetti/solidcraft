@@ -66,10 +66,7 @@ fn rect_shape_size() {
         56,
         "RectShape changed size! If it shrank - good! Update this test. If it grew - bad! Try to find a way to avoid it."
     );
-    assert!(
-        core::mem::size_of::<RectShape>() <= 64,
-        "RectShape is getting way too big!"
-    );
+    assert!(core::mem::size_of::<RectShape>() <= 64, "RectShape is getting way too big!");
 }
 
 impl RectShape {
@@ -96,11 +93,7 @@ impl RectShape {
     }
 
     #[inline]
-    pub fn filled(
-        rect: Rect,
-        corner_radius: impl Into<CornerRadius>,
-        fill_color: impl Into<Color32>,
-    ) -> Self {
+    pub fn filled(rect: Rect, corner_radius: impl Into<CornerRadius>, fill_color: impl Into<Color32>) -> Self {
         Self::new(
             rect,
             corner_radius,
@@ -111,12 +104,7 @@ impl RectShape {
     }
 
     #[inline]
-    pub fn stroke(
-        rect: Rect,
-        corner_radius: impl Into<CornerRadius>,
-        stroke: impl Into<Stroke>,
-        stroke_kind: StrokeKind,
-    ) -> Self {
+    pub fn stroke(rect: Rect, corner_radius: impl Into<CornerRadius>, stroke: impl Into<Stroke>, stroke_kind: StrokeKind) -> Self {
         let fill = Color32::TRANSPARENT;
         Self::new(rect, corner_radius, fill, stroke, stroke_kind)
     }
@@ -154,10 +142,7 @@ impl RectShape {
     /// Set the texture to use when painting this rectangle, if any.
     #[inline]
     pub fn with_texture(mut self, fill_texture_id: TextureId, uv: Rect) -> Self {
-        self.brush = Some(Arc::new(Brush {
-            fill_texture_id,
-            uv,
-        }));
+        self.brush = Some(Arc::new(Brush { fill_texture_id, uv }));
         self
     }
 
@@ -198,9 +183,7 @@ impl RectShape {
                 // Rotate around the rectangle's center and compute bounding box
                 let center = self.rect.center();
                 let rect_relative = Rect::from_center_size(Pos2::ZERO, expanded.size());
-                rect_relative
-                    .rotate_bb(emath::Rot2::from_angle(self.angle))
-                    .translate(center.to_vec2())
+                rect_relative.rotate_bb(emath::Rot2::from_angle(self.angle)).translate(center.to_vec2())
             }
         }
     }
@@ -209,9 +192,7 @@ impl RectShape {
     ///
     /// If no texture is set, this will return [`TextureId::default`].
     pub fn fill_texture_id(&self) -> TextureId {
-        self.brush
-            .as_ref()
-            .map_or_else(TextureId::default, |brush| brush.fill_texture_id)
+        self.brush.as_ref().map_or_else(TextureId::default, |brush| brush.fill_texture_id)
     }
 }
 

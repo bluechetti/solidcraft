@@ -65,12 +65,7 @@ impl Family {
             }
         }
 
-        Self {
-            name: name.clone(),
-            chain,
-            face_cache: Default::default(),
-            characters: None,
-        }
+        Self { name: name.clone(), chain, face_cache: Default::default(), characters: None }
     }
 
     #[inline]
@@ -91,12 +86,7 @@ impl Family {
     /// and falls back to the primary face (whose `.notdef` glyph we then render)
     /// when they have no font for it either.
     #[inline]
-    pub fn resolve(
-        &mut self,
-        faces: &mut FaceStore,
-        providers: &mut FontProviders,
-        c: char,
-    ) -> FontFaceKey {
+    pub fn resolve(&mut self, faces: &mut FaceStore, providers: &mut FontProviders, c: char) -> FontFaceKey {
         let mut utf8 = [0_u8; 4];
         let cluster = c.encode_utf8(&mut utf8);
         self.resolve_cluster(faces, providers, cluster)
@@ -105,12 +95,7 @@ impl Family {
     /// Like [`Self::resolve`] for the first char of `cluster`,
     /// but lets the [`FontProviders`] see the whole grapheme cluster.
     #[inline]
-    pub fn resolve_cluster(
-        &mut self,
-        faces: &mut FaceStore,
-        providers: &mut FontProviders,
-        cluster: &str,
-    ) -> FontFaceKey {
+    pub fn resolve_cluster(&mut self, faces: &mut FaceStore, providers: &mut FontProviders, cluster: &str) -> FontFaceKey {
         let Some(base_char) = cluster.chars().next() else {
             return self.notdef_face();
         };
@@ -121,13 +106,7 @@ impl Family {
     }
 
     #[cold]
-    fn resolve_slow(
-        &mut self,
-        faces: &mut FaceStore,
-        providers: &mut FontProviders,
-        cluster: &str,
-        c: char,
-    ) -> FontFaceKey {
+    fn resolve_slow(&mut self, faces: &mut FaceStore, providers: &mut FontProviders, cluster: &str, c: char) -> FontFaceKey {
         let font_key = self
             // All the installed fonts, i.e. the configured ones
             // and then the ones we have already discovered…
@@ -136,11 +115,7 @@ impl Family {
             .or_else(|| self.discover(faces, providers, cluster))
             // No font has the char, so we will render the `.notdef` glyph ("tofu"):
             .unwrap_or_else(|| {
-                log::debug!(
-                    "No font for {c:?} (U+{:04X}) in {:?}: rendering the tofu glyph instead",
-                    c as u32,
-                    self.name
-                );
+                log::debug!("No font for {c:?} (U+{:04X}) in {:?}: rendering the tofu glyph instead", c as u32, self.name);
                 self.notdef_face()
             });
         self.face_cache.insert(c, font_key);
@@ -154,12 +129,7 @@ impl Family {
     }
 
     /// Ask the providers for a new font with the first char of `cluster`, and append it to the chain.
-    fn discover(
-        &mut self,
-        faces: &mut FaceStore,
-        providers: &mut FontProviders,
-        cluster: &str,
-    ) -> Option<FontFaceKey> {
+    fn discover(&mut self, faces: &mut FaceStore, providers: &mut FontProviders, cluster: &str) -> Option<FontFaceKey> {
         let key = providers.discover(faces, &self.name, cluster)?;
         if !self.chain.contains(&key) {
             self.chain.push(key);
@@ -176,25 +146,13 @@ impl Family {
     /// The first of `chain` whose charmap supports `c`.
     ///
     /// Does not touch [`Self::face_cache`].
-    fn find_face_for_char_in(
-        chain: &[FontFaceKey],
-        c: char,
-        faces: &mut FaceStore,
-    ) -> Option<FontFaceKey> {
-        chain.iter().copied().find(|&key| {
-            faces
-                .get_mut(key)
-                .is_some_and(|face| face.glyph_id_resolution(c).is_some())
-        })
+    fn find_face_for_char_in(chain: &[FontFaceKey], c: char, faces: &mut FaceStore) -> Option<FontFaceKey> {
+        chain.iter().copied().find(|&key| faces.get_mut(key).is_some_and(|face| face.glyph_id_resolution(c).is_some()))
     }
 
     /// The names of the faces in the fallback chain, in priority order.
     pub fn face_names(&self, faces: &FaceStore) -> Vec<String> {
-        self.chain
-            .iter()
-            .filter_map(|key| faces.get(*key))
-            .map(|face| face.name().to_owned())
-            .collect()
+        self.chain.iter().filter_map(|key| faces.get(*key)).map(|face| face.name().to_owned()).collect()
     }
 
     /// All supported characters, and in which faces they are available.
@@ -206,10 +164,7 @@ impl Family {
                     continue;
                 };
                 for chr in face.characters() {
-                    characters
-                        .entry(chr)
-                        .or_default()
-                        .push(face.name().to_owned());
+                    characters.entry(chr).or_default().push(face.name().to_owned());
                 }
             }
             characters

@@ -1,7 +1,10 @@
 //! Scan to CAD (#8615): the maths of the Scan workspace, on a scanned mesh as shared positions and
 //! triangles in millimetres, Z up. It knows nothing of documents or commands; the engine's `scan.*`
 //! commands hand it a mesh body's triangles and turn its answers into ordinary features (a move is
-//! a Move). Ported from SurfaceCraft, the same author's scan-to-CAD app.
+//! a Move). Ported from SurfaceCraft, this fork's author's own earlier scan-to-CAD app (private):
+//! "SurfaceCraft's" in this crate means that app. It is not d0pawlus/SurfaceCraft, a separate
+//! project of the same name; the parts adapted from that one say so where they are and are
+//! credited in the attribution files (Wrap Scan's rounds, the held reduction, the handle closer).
 //!
 //! - [`align`]: scans aligned by points picked in pairs, and several passes of one part at once.
 //! - [`base`]: the ways a scan could stand on the ground (its broad flat faces, the poses it would

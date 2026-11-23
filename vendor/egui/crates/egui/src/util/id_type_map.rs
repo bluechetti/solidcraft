@@ -36,16 +36,10 @@ impl nohash_hasher::IsEnabled for TypeId {}
 // -----------------------------------------------------------------------------------------------
 
 #[cfg(feature = "persistence")]
-pub trait SerializableAny:
-    'static + Any + Clone + serde::Serialize + for<'a> serde::Deserialize<'a> + Send + Sync
-{
-}
+pub trait SerializableAny: 'static + Any + Clone + serde::Serialize + for<'a> serde::Deserialize<'a> + Send + Sync {}
 
 #[cfg(feature = "persistence")]
-impl<T> SerializableAny for T where
-    T: 'static + Any + Clone + serde::Serialize + for<'a> serde::Deserialize<'a> + Send + Sync
-{
-}
+impl<T> SerializableAny for T where T: 'static + Any + Clone + serde::Serialize + for<'a> serde::Deserialize<'a> + Send + Sync {}
 
 #[cfg(not(feature = "persistence"))]
 pub trait SerializableAny: 'static + Any + Clone + for<'a> Send + Sync {}
@@ -117,20 +111,10 @@ impl Clone for Element {
 impl core::fmt::Debug for Element {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match &self {
-            Self::Value { value, .. } => f
-                .debug_struct("Element::Value")
-                .field("type_id", &(**value).type_id())
-                .finish_non_exhaustive(),
-            Self::Serialized(SerializedElement {
-                type_id,
-                ron,
-                generation,
-            }) => f
-                .debug_struct("Element::Serialized")
-                .field("type_id", type_id)
-                .field("ron", ron)
-                .field("generation", generation)
-                .finish(),
+            Self::Value { value, .. } => f.debug_struct("Element::Value").field("type_id", &(**value).type_id()).finish_non_exhaustive(),
+            Self::Serialized(SerializedElement { type_id, ron, generation }) => {
+                f.debug_struct("Element::Serialized").field("type_id", type_id).field("ron", ron).field("generation", generation).finish()
+            }
         }
     }
 }
@@ -211,10 +195,7 @@ impl Element {
     }
 
     #[inline]
-    pub(crate) fn get_temp_mut_or_insert_with<T: 'static + Any + Clone + Send + Sync>(
-        &mut self,
-        insert_with: impl FnOnce() -> T,
-    ) -> &mut T {
+    pub(crate) fn get_temp_mut_or_insert_with<T: 'static + Any + Clone + Send + Sync>(&mut self, insert_with: impl FnOnce() -> T) -> &mut T {
         match self {
             Self::Value { value, .. } => {
                 if !value.is::<T>() {
@@ -235,10 +216,7 @@ impl Element {
     }
 
     #[inline]
-    pub(crate) fn get_persisted_mut_or_insert_with<T: SerializableAny>(
-        &mut self,
-        insert_with: impl FnOnce() -> T,
-    ) -> &mut T {
+    pub(crate) fn get_persisted_mut_or_insert_with<T: SerializableAny>(&mut self, insert_with: impl FnOnce() -> T) -> &mut T {
         match self {
             Self::Value { value, .. } => {
                 if !value.is::<T>() {
@@ -287,18 +265,10 @@ impl Element {
     #[cfg(feature = "persistence")]
     fn to_serialize(&self) -> Option<SerializedElement> {
         match self {
-            Self::Value {
-                value,
-                serialize_fn,
-                ..
-            } => {
+            Self::Value { value, serialize_fn, .. } => {
                 if let Some(serialize_fn) = serialize_fn {
                     let ron = serialize_fn(value)?;
-                    Some(SerializedElement {
-                        type_id: (**value).type_id().into(),
-                        ron: ron.into(),
-                        generation: 1,
-                    })
+                    Some(SerializedElement { type_id: (**value).type_id().into(), ron: ron.into(), generation: 1 })
                 } else {
                     None
                 }
@@ -313,12 +283,7 @@ fn from_ron_str<T: serde::de::DeserializeOwned>(ron: &str) -> Option<T> {
     match ron::from_str::<T>(ron) {
         Ok(value) => Some(value),
         Err(_err) => {
-            log::warn!(
-                "egui: Failed to deserialize {} from memory: {}, ron error: {:?}",
-                core::any::type_name::<T>(),
-                _err,
-                ron
-            );
+            log::warn!("egui: Failed to deserialize {} from memory: {}, ron error: {:?}", core::any::type_name::<T>(), _err, ron);
             None
         }
     }
@@ -412,21 +377,14 @@ pub struct IdTypeMap {
 
 impl Default for IdTypeMap {
     fn default() -> Self {
-        Self {
-            map: Default::default(),
-            max_bytes_per_type: 256 * 1024,
-        }
+        Self { map: Default::default(), max_bytes_per_type: 256 * 1024 }
     }
 }
 
 impl IdTypeMap {
     /// Insert a value that will not be persisted.
     #[inline]
-    pub fn insert_temp<T: 'static + Any + Clone + Send + Sync>(
-        &mut self,
-        id: Id,
-        value: T,
-    ) -> RawKey {
+    pub fn insert_temp<T: 'static + Any + Clone + Send + Sync>(&mut self, id: Id, value: T) -> RawKey {
         let key = RawKey::new::<T>(id);
         self.map.insert(key, Element::new_temp(value));
         key
@@ -479,18 +437,11 @@ impl IdTypeMap {
     #[inline]
     pub fn get_persisted<T: SerializableAny>(&mut self, id: Id) -> Option<T> {
         let key = RawKey::new::<T>(id);
-        self.map
-            .get_mut(&key)
-            .and_then(|x| x.get_mut_persisted())
-            .cloned()
+        self.map.get_mut(&key).and_then(|x| x.get_mut_persisted()).cloned()
     }
 
     #[inline]
-    pub fn get_temp_mut_or<T: 'static + Any + Clone + Send + Sync>(
-        &mut self,
-        id: Id,
-        or_insert: T,
-    ) -> &mut T {
+    pub fn get_temp_mut_or<T: 'static + Any + Clone + Send + Sync>(&mut self, id: Id, or_insert: T) -> &mut T {
         self.get_temp_mut_or_insert_with(id, || or_insert)
     }
 
@@ -500,10 +451,7 @@ impl IdTypeMap {
     }
 
     #[inline]
-    pub fn get_temp_mut_or_default<T: 'static + Any + Clone + Send + Sync + Default>(
-        &mut self,
-        id: Id,
-    ) -> &mut T {
+    pub fn get_temp_mut_or_default<T: 'static + Any + Clone + Send + Sync + Default>(&mut self, id: Id) -> &mut T {
         self.get_temp_mut_or_insert_with(id, Default::default)
     }
 
@@ -512,47 +460,29 @@ impl IdTypeMap {
         self.get_persisted_mut_or_insert_with(id, Default::default)
     }
 
-    pub fn get_temp_mut_or_insert_with<T: 'static + Any + Clone + Send + Sync>(
-        &mut self,
-        id: Id,
-        insert_with: impl FnOnce() -> T,
-    ) -> &mut T {
+    pub fn get_temp_mut_or_insert_with<T: 'static + Any + Clone + Send + Sync>(&mut self, id: Id, insert_with: impl FnOnce() -> T) -> &mut T {
         let key = RawKey::new::<T>(id);
         use std::collections::hash_map::Entry;
         match self.map.entry(key) {
             Entry::Vacant(vacant) => {
                 // this unwrap will never panic, because we insert correct type right now
                 #[expect(clippy::unwrap_used)]
-                vacant
-                    .insert(Element::new_temp(insert_with()))
-                    .get_mut_temp()
-                    .unwrap()
+                vacant.insert(Element::new_temp(insert_with())).get_mut_temp().unwrap()
             }
-            Entry::Occupied(occupied) => {
-                occupied.into_mut().get_temp_mut_or_insert_with(insert_with)
-            }
+            Entry::Occupied(occupied) => occupied.into_mut().get_temp_mut_or_insert_with(insert_with),
         }
     }
 
-    pub fn get_persisted_mut_or_insert_with<T: SerializableAny>(
-        &mut self,
-        id: Id,
-        insert_with: impl FnOnce() -> T,
-    ) -> &mut T {
+    pub fn get_persisted_mut_or_insert_with<T: SerializableAny>(&mut self, id: Id, insert_with: impl FnOnce() -> T) -> &mut T {
         let key = RawKey::new::<T>(id);
         use std::collections::hash_map::Entry;
         match self.map.entry(key) {
             Entry::Vacant(vacant) => {
                 // this unwrap will never panic, because we insert correct type right now
                 #[expect(clippy::unwrap_used)]
-                vacant
-                    .insert(Element::new_persisted(insert_with()))
-                    .get_mut_persisted()
-                    .unwrap()
+                vacant.insert(Element::new_persisted(insert_with())).get_mut_persisted().unwrap()
             }
-            Entry::Occupied(occupied) => occupied
-                .into_mut()
-                .get_persisted_mut_or_insert_with(insert_with),
+            Entry::Occupied(occupied) => occupied.into_mut().get_persisted_mut_or_insert_with(insert_with),
         }
     }
 
@@ -609,25 +539,13 @@ impl IdTypeMap {
     /// Iterate over all values of the given type, ignoring serialized values
     pub fn iter_temp_by_type<T: 'static>(&self) -> impl Iterator<Item = &T> {
         let key = TypeId::of::<T>();
-        self.map.values().filter_map(move |e| {
-            if e.type_id() == key {
-                e.get_temp()
-            } else {
-                None
-            }
-        })
+        self.map.values().filter_map(move |e| if e.type_id() == key { e.get_temp() } else { None })
     }
 
     /// Mutable version of [`IdTypeMap::iter_temp_by_type()`]
     pub fn iter_mut_temp_by_type<T: 'static>(&mut self) -> impl Iterator<Item = &mut T> {
         let key = TypeId::of::<T>();
-        self.map.values_mut().filter_map(move |e| {
-            if (e as &Element).type_id() == key {
-                e.get_mut_temp()
-            } else {
-                None
-            }
-        })
+        self.map.values_mut().filter_map(move |e| if (e as &Element).type_id() == key { e.get_mut_temp() } else { None })
     }
 
     #[inline]
@@ -651,19 +569,13 @@ impl IdTypeMap {
     ///
     /// Serializable values will be ignored.
     pub fn temp_keys(&self) -> impl Iterator<Item = RawKey> {
-        self.map
-            .iter()
-            .filter(|(_, v)| v.is_temp())
-            .map(|(k, _)| *k)
+        self.map.iter().filter(|(_, v)| v.is_temp()).map(|(k, _)| *k)
     }
 
     /// Count how many values are stored but not yet deserialized.
     #[inline]
     pub fn count_serialized(&self) -> usize {
-        self.map
-            .values()
-            .filter(|e| matches!(e, Element::Serialized(_)))
-            .count()
+        self.map.values().filter(|e| matches!(e, Element::Serialized(_))).count()
     }
 
     /// Count the number of values are stored with the given type.
@@ -756,9 +668,7 @@ impl PersistedMap {
                 // Start with the most recently read values, and then go as far as we are allowed.
                 // Always include at least one generation.
                 for generation in stats.generations.values() {
-                    if bytes_written == 0
-                        || bytes_written + generation.num_bytes <= max_bytes_per_type
-                    {
+                    if bytes_written == 0 || bytes_written + generation.num_bytes <= max_bytes_per_type {
                         persisted.append(&mut generation.elements.clone());
                         bytes_written += generation.num_bytes;
                     } else {
@@ -777,30 +687,18 @@ impl PersistedMap {
         let map = self
             .0
             .into_iter()
-            .map(
-                |(
-                    raw,
-                    SerializedElement {
+            .map(|(raw, SerializedElement { type_id, ron, generation })| {
+                (
+                    RawKey(raw),
+                    Element::Serialized(SerializedElement {
                         type_id,
                         ron,
-                        generation,
-                    },
-                )| {
-                    (
-                        RawKey(raw),
-                        Element::Serialized(SerializedElement {
-                            type_id,
-                            ron,
-                            generation: generation + 1, // This is where we increment the generation!
-                        }),
-                    )
-                },
-            )
+                        generation: generation + 1, // This is where we increment the generation!
+                    }),
+                )
+            })
             .collect();
-        IdTypeMap {
-            map,
-            ..Default::default()
-        }
+        IdTypeMap { map, ..Default::default() }
     }
 }
 
@@ -831,21 +729,13 @@ impl<'de> serde::Deserialize<'de> for IdTypeMap {
 // Iterator test helpers
 
 #[cfg(test)]
-fn assert_iterator_contents<'a, T: 'static + PartialEq>(
-    mut expected: Vec<T>,
-    iterator: impl Iterator<Item = &'a T>,
-) {
+fn assert_iterator_contents<'a, T: 'static + PartialEq>(mut expected: Vec<T>, iterator: impl Iterator<Item = &'a T>) {
     iterator.for_each(|element| {
-        let found_at = expected
-            .iter()
-            .position(|expected_element| expected_element == element)
-            .expect("Iterator should yield only expected elements");
+        let found_at =
+            expected.iter().position(|expected_element| expected_element == element).expect("Iterator should yield only expected elements");
         expected.swap_remove(found_at);
     });
-    assert!(
-        expected.is_empty(),
-        "Iterator should yield all expected elements"
-    );
+    assert!(expected.is_empty(), "Iterator should yield all expected elements");
 }
 
 #[cfg(test)]
@@ -996,14 +886,8 @@ fn test_mix_serialize() {
     map.insert_temp(id, NonSerializable(1.0));
 
     assert_eq!(map.get_temp::<Serializable>(id), Some(Serializable(555)));
-    assert_eq!(
-        map.get_persisted::<Serializable>(id),
-        Some(Serializable(555))
-    );
-    assert_eq!(
-        map.get_temp::<NonSerializable>(id),
-        Some(NonSerializable(1.0))
-    );
+    assert_eq!(map.get_persisted::<Serializable>(id), Some(Serializable(555)));
+    assert_eq!(map.get_temp::<NonSerializable>(id), Some(NonSerializable(1.0)));
 
     // -----------
 
@@ -1018,10 +902,7 @@ fn test_mix_serialize() {
 
     // Other type is still there, even though it is the same if:
     assert_eq!(map.get_temp::<Serializable>(id), Some(Serializable(555)));
-    assert_eq!(
-        map.get_persisted::<Serializable>(id),
-        Some(Serializable(555))
-    );
+    assert_eq!(map.get_persisted::<Serializable>(id), Some(Serializable(555)));
 
     // But we can still remove the last:
     map.remove::<Serializable>(id);
@@ -1033,10 +914,7 @@ fn test_mix_serialize() {
 
     let mut map: IdTypeMap = ron::from_str(&serialized).unwrap();
     assert_eq!(map.get_temp::<Serializable>(id), None);
-    assert_eq!(
-        map.get_persisted::<Serializable>(id),
-        Some(Serializable(555))
-    );
+    assert_eq!(map.get_persisted::<Serializable>(id), Some(Serializable(555)));
     assert_eq!(map.get_temp::<Serializable>(id), Some(Serializable(555)));
 }
 
@@ -1129,16 +1007,8 @@ fn test_serialize_gc() {
 
     map = serialize_and_deserialize(map, 100);
 
-    assert_eq!(
-        map.count::<A>(),
-        2,
-        "We should have dropped the oldest generation, but kept the new value and the read value"
-    );
-    assert_eq!(
-        map.count::<B>(),
-        num_b + 1,
-        "B should fit under the byte limit"
-    );
+    assert_eq!(map.count::<A>(), 2, "We should have dropped the oldest generation, but kept the new value and the read value");
+    assert_eq!(map.count::<B>(), num_b + 1, "B should fit under the byte limit");
 
     // Create another small generation:
     map.insert_persisted(Id::unique(2_000_000), A(2_000_000));
@@ -1156,12 +1026,6 @@ fn test_serialize_gc() {
     assert_eq!(map.count::<A>(), 1);
     assert_eq!(map.count::<B>(), 1);
 
-    assert_eq!(
-        map.get_persisted::<A>(Id::unique(2_000_000)),
-        Some(A(2_000_000))
-    );
-    assert_eq!(
-        map.get_persisted::<B>(Id::unique(2_000_000)),
-        Some(B(2_000_000))
-    );
+    assert_eq!(map.get_persisted::<A>(Id::unique(2_000_000)), Some(A(2_000_000)));
+    assert_eq!(map.get_persisted::<B>(Id::unique(2_000_000)), Some(B(2_000_000)));
 }
