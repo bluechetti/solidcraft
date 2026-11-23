@@ -191,6 +191,10 @@ struct Agent {
     /// The options of the last listing: a call runs with the tools as the listing it was checked
     /// against defined them.
     listed: Options,
+    /// The backend's notice as last said: it goes on the first result after it appears or
+    /// changes, not on every result: an agent reads it once, and the same paragraph on every
+    /// reply only fills its context.
+    noticed: Option<String>,
 }
 
 impl Agent {
@@ -247,11 +251,14 @@ impl Tools for Agent {
                 self.scope = self.scope.take().map(|s| s.with_design_file(file));
             }
         }
-        if let Some(note) = self.backend.notice()
+        let note = self.backend.notice();
+        if note != self.noticed
+            && let Some(text) = note.as_deref()
             && let Some(content) = result.get_mut("content").and_then(Value::as_array_mut)
         {
-            content.push(json!({"type": "text", "text": note}));
+            content.push(json!({"type": "text", "text": text}));
         }
+        self.noticed = note;
         result
     }
 
@@ -288,7 +295,7 @@ pub struct Server {
 impl Server {
     pub fn new(backend: Box<dyn Backend>) -> Self {
         let info = Info { name: "solidcraft", title: "SolidCraft", version: env!("CARGO_PKG_VERSION"), max_line: solidcraft_engine::MAX_LINE };
-        let agent = Agent { backend, scope: None, options: Options::default(), app_options: None, listed: Options::default() };
+        let agent = Agent { backend, scope: None, options: Options::default(), app_options: None, listed: Options::default(), noticed: None };
         Self { inner: solidcraft_mcp_server::Server::new(info, agent) }
     }
     /// Confine the files tool calls may reach to `scope` (`None`: anywhere). `solidcraft-cli mcp`

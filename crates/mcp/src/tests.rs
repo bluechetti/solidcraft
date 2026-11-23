@@ -1825,15 +1825,102 @@ fn a_batch_with_a_matching_expect_reports_the_expectation_met() {
     let box40 = json!({"command": "solid.box", "params": {"length": 40, "width": 30, "height": 20, "corner": [0, 0, 0]}});
     let r = tool(&mut s, "batch", json!({"commands": [box40]}));
     assert!(r.get("expectation").is_none(), "{r}");
-    // `expect` is the tool's argument, not a step key: a step carrying one is refused, as any step
-    // with a stray key is, saying where `expect` goes, instead of running with nothing checked.
+    // A step's own `expect` is checked right after that step: a miss fails the batch at the step
+    // that missed, with what was measured, and the batch goes back as for any failed step.
     let sphere = json!({"command": "solid.sphere", "params": {"radius": 5, "center": [100, 0, 0]}, "expect": {"bodies": 7}});
     let r = raw_tool(&mut s, "batch", json!({"commands": [sphere]}));
     assert_eq!(r["result"]["isError"], true, "{r}");
     let body: Value = serde_json::from_str(r["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!((body["completed"].clone(), body["failed"]["index"].clone()), (json!(0), json!(0)), "{body}");
-    assert!(body["failed"]["error"].as_str().is_some_and(|e| e.contains("`expect` is the batch's argument")), "{body}");
-    assert_eq!(tool(&mut s, "measure", json!({}))["body_count"], 1, "the sphere did not run");
+    assert!(
+        body["failed"]["error"].as_str().is_some_and(|e| e.starts_with("expectation not met after this step: bodies: measured 2, expected 7")),
+        "{body}"
+    );
+    assert_eq!(body["failed"]["expectation"]["measured"]["bodies"], 2, "{body}");
+    assert_eq!(body["failed"]["result"]["created_bodies"], json!(["Body2"]), "{body}");
+    assert_eq!(body["rolled_back"], true, "{body}");
+    assert_eq!(tool(&mut s, "measure", json!({}))["body_count"], 1, "the sphere went back");
+    // A malformed step `expect` is refused before anything runs, naming the step.
+    let r = raw_tool(&mut s, "batch", json!({"commands": [{"command": "solid.sphere", "params": {"radius": 5}, "expect": {"volume": 1}}]}));
+    assert!(text_of(&r).contains("step 0: expect: unknown key `volume`"), "{r}");
+}
+
+fn text_of(r: &Value) -> String {
+    r["result"]["content"].as_array().into_iter().flatten().filter_map(|c| c["text"].as_str()).collect::<Vec<_>>().join("\n")
+}
+
+/// A step uses an earlier step's result by reference (`$N.path`), so a whole build needs no
+/// guessed ids, and each step's own `expect` checks it where it stands.
+#[test]
+fn batch_steps_use_earlier_results_and_check_their_own_expect() {
+    let mut s = server();
+    let r = tool(
+        &mut s,
+        "batch",
+        json!({"verbose": false, "commands": [
+            {"command": "sketch.create", "params": {"plane": "XY"}},
+            {"command": "sketch.rectangle.two_point", "params": {"p0": [0, 0], "p1": [10, 10]}},
+            {"command": "sketch.dimension", "params": {"entities": ["$1.created.curves[0]"], "value": 20}},
+            {"command": "sketch.finish"},
+            {"command": "solid.extrude", "params": {"distance": 5}, "expect": {"volume_mm3": 1000, "bodies": 1}},
+        ]}),
+    );
+    assert_eq!(r["completed"], 5, "{r}");
+    assert_eq!(r["results"][4]["expectation"]["ok"], true, "{r}");
+    assert!(rel(volume(&mut s), 1000.0) < 1e-9, "the dimension reached the rectangle's first side");
+    // `.0` reads a list as `[0]` does, and `$N` alone is the whole result.
+    let r = tool(
+        &mut s,
+        "batch",
+        json!({"commands": [
+            {"command": "measure", "params": {"summary": true}},
+            {"command": "solid.box", "params": {"length": "$0.bodies.0.bbox.max.0", "width": 2, "height": 2, "corner": [0, 20, 0]}},
+        ]}),
+    );
+    assert_eq!(r["completed"], 2, "{r}");
+    assert!(rel(volume(&mut s), 1000.0 + 80.0) < 1e-9, "the box is as long as the block");
+
+    let refused = |s: &mut Server, reference: &str| {
+        let steps = json!([
+            {"command": "solid.box", "params": {"length": 3, "width": 3, "height": 3, "corner": [50, 0, 0]}},
+            {"command": "solid.box", "params": {"length": reference, "width": 3, "height": 3, "corner": [60, 0, 0]}},
+        ]);
+        let r = raw_tool(s, "batch", json!({"commands": steps}));
+        assert_eq!(r["result"]["isError"], true, "{reference}: {r}");
+        let body: Value = serde_json::from_str(r["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(body["failed"]["index"], 1, "{body}");
+        assert_eq!(body["rolled_back"], true, "{body}");
+        body["failed"]["error"].as_str().unwrap_or_default().to_string()
+    };
+    let e = refused(&mut s, "$1.created_bodies");
+    assert!(e.contains("step 1 runs at or after this one"), "{e}");
+    let e = refused(&mut s, "$0.created_bodys");
+    assert!(e.contains("step 0's result has no `created_bodys`; it has") && e.contains("created_bodies"), "{e}");
+    let e = refused(&mut s, "$0.created_bodies[3]");
+    assert!(e.contains("`created_bodies` of step 0 has 1 items, so no [3]"), "{e}");
+    let e = refused(&mut s, "$0.created_bodies[");
+    assert!(e.contains("a `[` without its `]`"), "{e}");
+    let e = refused(&mut s, "$0.created_bodies[0].x");
+    assert!(e.contains("is a string, so it has no `x`"), "{e}");
+    assert!(rel(volume(&mut s), 1080.0) < 1e-9, "each refused batch went back");
+    // Text that only starts like one is no reference: it goes as it is.
+    for text in ["$L", "$5 off"] {
+        let r = raw_tool(&mut s, "batch", json!({"commands": [{"command": "solid.box", "params": {"length": text, "width": 1, "height": 1}}]}));
+        assert!(!text_of(&r).contains("a reference is") && !text_of(&r).contains("runs at or after"), "{text}: {r}");
+    }
+}
+
+/// Bridged, a batch with references runs step by step (the references are filled in between
+/// steps), inside one checkpoint, instead of as one `engine.batch` request.
+#[test]
+fn a_bridged_batch_with_references_runs_step_by_step() {
+    let steps = json!([{"command": "a.one"}, {"command": "a.two", "params": {"from": "$0.ran", "all": ["$0"]}}]);
+    let (b, body, is_error) = recorded_batch(Ok(json!({})), json!({"commands": steps}));
+    assert!(!is_error, "{body}");
+    assert!(!methods(&b).contains(&"engine.batch"), "{:?}", methods(&b));
+    let sent: Vec<&Value> = b.calls.iter().filter(|(_, p)| p["command"] == "a.two").map(|(_, p)| &p["params"]).collect();
+    assert_eq!(sent, [&json!({"from": "a.one", "all": [{"ran": "a.one"}]})]);
+    assert_eq!(body["completed"], 2, "{body}");
 }
 
 /// A volume the design does not match flags the reply as an error that names the mismatch
@@ -2058,6 +2145,26 @@ fn tool_unknown_command_errors_suggest_close_ids() {
     assert!(text.contains("solid.box") && text.contains("length"), "{text}");
 }
 
+/// Ids agents write for a command with another name (recorded runs: `sketch.polyline`,
+/// `body.hide`) name that command and how to call it, as the engine's own error does.
+#[test]
+fn guessed_command_ids_name_the_real_command() {
+    let mut s = server();
+    for (guess, real) in [("sketch.polyline", "sketch.line"), ("body.hide", "browser.visibility"), ("Body.Show", "browser.visibility")] {
+        assert!(solidcraft_engine::find_command(real).is_some(), "{real}");
+        for name in ["execute", "batch"] {
+            let step = json!({"command": guess});
+            let args = if name == "batch" { json!({"commands": [step]}) } else { step };
+            let r = raw_tool(&mut s, name, args);
+            assert_eq!(r["result"]["isError"], true, "{r}");
+            let text = r["result"]["content"][0]["text"].as_str().unwrap();
+            assert!(text.contains(&format!("unknown command `{guess}`; use `{real}`: {real} {{")), "{text}");
+        }
+        let engine = solidcraft_engine::Session::default().execute(guess, &json!({})).unwrap_err().to_string();
+        assert!(engine.contains(&format!("(use `{real}`: ")), "{engine}");
+    }
+}
+
 #[test]
 fn tool_unknown_commands_suggest_equivalent_verbs() {
     let mut s = server();
@@ -2254,6 +2361,21 @@ fn list_commands_filter_by_a_command_id_matches_ids() {
     let ids: Vec<&str> = cmds.as_array().unwrap().iter().filter_map(|c| c["id"].as_str()).collect();
     assert!(ids.contains(&"sketch.delete"), "{ids:?}");
     assert!(ids.iter().all(|id| id.contains("sketch.delete")), "{} commands matched: {ids:?}", ids.len());
+}
+
+/// A word no id, label, panel or tab holds is looked for in the parameter docs, so a word for
+/// what a command does still finds it; a word a label holds keeps to the names.
+#[test]
+fn list_commands_falls_back_to_the_parameter_docs() {
+    let mut s = server();
+    let ids = |v: &Value| -> Vec<String> { v.as_array().unwrap().iter().filter_map(|c| c["id"].as_str()).map(str::to_owned).collect() };
+    let names = ids(&tool(&mut s, "list_commands", json!({"filter": "visibility"})));
+    assert!(names.contains(&"browser.visibility".to_string()), "{names:?}");
+    let docs = ids(&tool(&mut s, "list_commands", json!({"filter": "visible"})));
+    assert!(docs.contains(&"browser.visibility".to_string()), "found in its parameter docs: {docs:?}");
+    let paged = tool(&mut s, "list_commands", json!({"filter": "visible", "prefix": "browser.", "limit": 50}));
+    assert!(ids(&paged["commands"]).iter().all(|id| id.starts_with("browser.")), "{paged}");
+    assert_eq!(tool(&mut s, "list_commands", json!({"filter": "zzqqxx"})), json!([]));
 }
 
 /// #11726: `list_commands` narrows by id prefix and by panel, shrinks each entry to id and label
@@ -2741,6 +2863,54 @@ fn screenshot_renders_a_saved_named_view() {
     let direct = tool(&mut s, "screenshot", json!({"camera": camera, "width": 96, "height": 64}));
     assert_eq!(direct["data"].as_str().unwrap_or_default(), photo);
     assert_eq!(shot(&mut s, "iso"), iso);
+}
+
+/// `views` puts several views in one picture: each tile is the picture that view gives alone at
+/// the tile's size, laid out left to right, top to bottom, and the reply says where each is.
+#[test]
+fn screenshot_puts_several_views_in_one_picture() {
+    let mut s = server();
+    for (args, says) in [
+        (json!({"views": []}), "a list of 1 to 6 view names"),
+        (json!({"views": ["front", 3]}), "a list of 1 to 6 view names"),
+        (json!({"views": ["front", "top", "right", "iso", "left", "back", "bottom"]}), "a list of 1 to 6 view names"),
+        (json!({"views": ["front"], "view": "top"}), "not both"),
+        (json!({"views": ["front"], "source": "window"}), "model renders"),
+    ] {
+        let r = raw_tool(&mut s, "screenshot", args.clone());
+        assert_eq!(r["result"]["isError"], true, "{args}: {r}");
+        assert!(text_of(&r).contains(says), "{args}: {r}");
+    }
+    if !renders() {
+        return;
+    }
+    tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length": 40, "width": 20, "height": 10}}));
+    let dir = std::env::temp_dir().join(format!("solidcraft-mcp-views-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let sheet_path = dir.join("sheet.png");
+    let r = raw_tool(
+        &mut s,
+        "screenshot",
+        json!({"views": ["front", "top", "right", "iso"], "width": 200, "height": 124, "path": sheet_path.to_string_lossy()}),
+    );
+    let content = r["result"]["content"].as_array().unwrap();
+    assert_eq!(content[0]["type"], "image", "{r}");
+    let info: Value = serde_json::from_str(content.iter().find_map(|c| c["text"].as_str()).unwrap()).unwrap();
+    assert_eq!((info["width"].clone(), info["height"].clone()), (json!(200), json!(124)), "{info}");
+    let tiles = info["tiles"].as_array().unwrap();
+    assert_eq!(tiles.iter().map(|t| t["view"].as_str().unwrap()).collect::<Vec<_>>(), ["front", "top", "right", "iso"]);
+    assert_eq!((tiles[3]["x"].clone(), tiles[3]["y"].clone(), tiles[3]["width"].clone()), (json!(101), json!(63), json!(99)), "{info}");
+    let sheet = image::open(&sheet_path).unwrap().into_rgba8();
+    assert_eq!(sheet.dimensions(), (200, 124));
+    for t in tiles {
+        let alone = dir.join(format!("{}.png", t["view"].as_str().unwrap()));
+        tool(&mut s, "screenshot", json!({"view": t["view"], "width": 99, "height": 61, "path": alone.to_string_lossy()}));
+        let alone = image::open(&alone).unwrap().into_rgba8();
+        let (x, y) = (t["x"].as_u64().unwrap() as u32, t["y"].as_u64().unwrap() as u32);
+        let tile = image::imageops::crop_imm(&sheet, x, y, 99, 61).to_image();
+        assert!(tile == alone, "the {} tile is not that view's picture", t["view"]);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// The ground grid lies on Z 0 and cuts through a part that straddles it: `grid: false` and
@@ -4703,7 +4873,7 @@ fn a_bridged_server_at_strict_refuses_an_unconfirmed_reply() {
     }
 }
 
-/// Plain `mcp` with no app running: the session is headless, says so on every result, and bridges
+/// Plain `mcp` with no app running: the session is headless, says so on its first result, and bridges
 /// to the app once one runs, but only while it holds no work of its own.
 #[test]
 fn auto_session_bridges_to_a_late_app_only_while_empty() {
@@ -4746,9 +4916,11 @@ fn auto_session_bridges_to_a_late_app_only_while_empty() {
     )));
     let r = raw_tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10}}));
     assert_ne!(r["result"]["isError"], json!(true), "{r}");
+    assert!(text(&r).contains("headless session because the SolidCraft app was not found"), "said on the first result: {r}");
     port.set(Some(1));
+    // Still headless, and said once: the later results leave the paragraph out.
     let r = raw_tool(&mut s, "inspect_design", json!({}));
-    assert!(text(&r).contains("headless session because the SolidCraft app was not found"), "{r}");
+    assert!(!text(&r).contains("headless session because"), "said once per session: {r}");
     assert!(!s.backend().has_ui());
 }
 

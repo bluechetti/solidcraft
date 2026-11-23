@@ -1440,6 +1440,12 @@ fn unknown_commands_suggest_the_closest_ids() {
     assert!(msg("solid.extrud").starts_with("unknown command `solid.extrud` (did you mean `solid.extrude`"), "{}", msg("solid.extrud"));
     assert!(msg("Extrude").contains("`solid.extrude`"), "{}", msg("Extrude"));
     assert_eq!(msg("FusionFilletEdgesCommand"), "unknown command `FusionFilletEdgesCommand`");
+    // An id agents write for a command with another name names it, and how to call it.
+    assert_eq!(
+        msg("body.hide"),
+        "unknown command `body.hide` (use `browser.visibility`: browser.visibility {items: [body names], visible: false} hides bodies)"
+    );
+    assert!(msg("sketch.polyline").contains("(use `sketch.line`: "), "{}", msg("sketch.polyline"));
     let long = "x".repeat(10_000);
     assert_eq!(msg(&long), format!("unknown command `{long}`"));
 }

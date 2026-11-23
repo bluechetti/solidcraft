@@ -81,8 +81,9 @@ pub fn tool_definitions_with(opts: Options) -> Vec<Value> {
             "The command catalog: id, label, toolbar tab/panel, shortcut, one-line parameter docs and whether the command is \
              enabled right now. Ids are dotted and lower-case (solid.extrude, sketch.create, \
              solid.fillet, sketch.inspect, timeline.rollback). Optional case-insensitive \
-             substring `filter` over id, label, tab and panel (not the parameter docs, so a command id \
-             finds that command rather than every command whose docs mention it). Narrow it further with `prefix` \
+             substring `filter` over id, label, tab and panel; only when none of those holds it are the parameter docs \
+             searched (\"visible\" finds browser.visibility), so a command id finds that command rather than every \
+             command whose docs mention it. Narrow it further with `prefix` \
              (start of the id) and `panel` (a whole panel or tab name); shrink each entry with `compact` (id and label) \
              or `fields`; page it with `limit` and `offset`, which make the reply {commands, total, offset, next_offset}. \
              With none of these the reply is the whole catalog, about 350 KB.",
@@ -164,13 +165,15 @@ pub fn tool_definitions_with(opts: Options) -> Vec<Value> {
              finish, extrude, fillet… in one call. A long one (a polyline of hundreds of points) can be written to a JSON \
              file and passed as `path` instead of `commands`. Give `expect` {volume_mm3, tol, bodies, bbox} with the numbers \
              you computed beforehand: after the last step the design is measured and compared, so no separate measure call is \
-             needed; a mismatch is flagged as an error naming it, and the design is kept as built.",
+             needed; a mismatch is flagged as an error naming it, and the design is kept as built. A step's own `expect` is \
+             checked right after it, and a miss fails the batch at that step. A param value \"$N\" or \"$N.key[i]\" (a whole \
+             string) is that part of step N's result (from 0), e.g. \"$1.created.curves[0]\", so later steps need not guess ids.",
             object(
                 json!({
                     "commands": {
                         "type": "array",
                         "description": "Steps: [{\"command\": id, \"params\": {...}}, ...]",
-                        "items": {"type": "object", "properties": {"command": {"type": "string"}, "params": {"type": "object"}}, "required": ["command"]},
+                        "items": {"type": "object", "properties": {"command": {"type": "string"}, "params": {"type": "object"}, "expect": expect_schema()}, "required": ["command"]},
                     },
                     "path": string("Instead of `commands`: a JSON file holding the steps, an array or {\"commands\": [...]} (as \
                      `solidcraft-cli run` takes and `solidcraft-cli script` writes), read by this server within the folders the \
@@ -283,7 +286,7 @@ pub fn tool_definitions_with(opts: Options) -> Vec<Value> {
             "Render the design and return it as a PNG image. Headless: a CPU render of the model, fitted to the view. \
              Connected to the app: a screenshot of the window (source \"window\", the default) or a render of the model \
              with the app's camera (source \"model\"). Both show an active section (inspect.section) with its cut face \
-             capped. `view` first turns the camera to a standard view or a saved named view (view.save), `camera` to              any camera (as view.apply). \
+             capped. `view` first turns the camera to a standard view or a saved named view (view.save), `camera` to              any camera (as view.apply); `views` puts several views (front, top, right, iso) in one picture. \
              `grid: false` and `axes: false` leave the ground grid (on Z 0) and the origin's axes out of a model render. \
              A body whose appearance is see-through (appearance.assign with an `opacity` below 1) is drawn see-through, \
              so what is inside it shows: that is how to look at the body a cut would remove inside the material it meets.",
@@ -293,6 +296,15 @@ pub fn tool_definitions_with(opts: Options) -> Vec<Value> {
                         "Standard view (iso, home, front, back, top, bottom, left, right, fit) or the name of a saved named view                          (default: keep the current one; headless starts at iso)"
                     ),
                     "camera": {"type": "object", "description": "Look from this camera instead: {target: [x,y,z], yaw, pitch, distance, fov?}                         (radians, mm; as view.save and view.apply)"},
+                    "views": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 1,
+                        "maxItems": MAX_VIEWS,
+                        "description": "Several views in one picture, e.g. [\"front\", \"top\", \"right\", \"iso\"] (standard or saved named views, up to 6): \
+                                        each a model render, laid out left to right, top to bottom in tiles that share width × height; the reply's \
+                                        `tiles` says where each view is. One such picture instead of one screenshot per view. The camera is left at the last view"
+                    },
                     "path": string("Also keep the PNG at this path"),
                     "width": {"type": "integer", "description": "Render width in pixels (model renders; default 960)"},
                     "height": {"type": "integer", "description": "Render height in pixels (model renders; default 600)"},
@@ -717,6 +729,14 @@ impl Expect {
     }
 
     /// What was expected, for the reply.
+    /// [`Expect::check`], with a design that could not be measured as a mismatch saying so.
+    fn checked(&self, b: &mut dyn Backend) -> Value {
+        match self.check(b) {
+            Ok(e) => e,
+            Err(e) => json!({"ok": false, "expected": self.expected(), "mismatch": [format!("the design could not be measured: {e}")]}),
+        }
+    }
+
     fn expected(&self) -> Value {
         let mut e = Map::new();
         if let Some(v) = self.volume_mm3 {
@@ -817,10 +837,7 @@ fn xyz_text(c: [f64; 3]) -> String {
 /// tool error that names it first; the design stays as built (the agent decides what to do).
 fn with_expectation(b: &mut dyn Backend, mut reply: Value, expect: Option<Expect>) -> Value {
     let Some(expect) = expect else { return text_result(&reply, false) };
-    let expectation = match expect.check(b) {
-        Ok(e) => e,
-        Err(e) => json!({"ok": false, "expected": expect.expected(), "mismatch": [format!("the design could not be measured: {e}")]}),
-    };
+    let expectation = expect.checked(b);
     let mismatch: Vec<&str> = expectation["mismatch"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
     let note = (expectation["ok"] != true).then(|| {
         format!(
@@ -860,6 +877,10 @@ fn command_error(command: &str, error: String) -> String {
         return tool_name_error(id);
     }
     let packed = id != command.trim();
+    // An id agents write for a command with another name: that command and how to call it.
+    if !packed && let Some((real, how)) = solidcraft_engine::cmd::guessed_command(id) {
+        return format!("unknown command `{command}`; use `{real}`: {how}");
+    }
     let normalize = |s: &str| s.chars().filter(char::is_ascii_alphanumeric).map(|c| c.to_ascii_lowercase()).collect::<String>();
     let normalized = normalize(id);
     if normalized.is_empty() {
@@ -1121,17 +1142,25 @@ impl CommandQuery {
         })
     }
 
-    fn matches(&self, c: &Value) -> bool {
+    /// Whether entry `c` is asked for. `filter` is looked for in `keys`: the id, label, panel and
+    /// tab first, and the parameter docs only when those match nothing (see [`Self::apply`]).
+    fn matches(&self, c: &Value, keys: &[&str]) -> bool {
         let field = |k: &str| c.get(k).and_then(Value::as_str).map(str::to_lowercase).unwrap_or_default();
-        self.filter.as_ref().is_none_or(|f| ["id", "label", "panel", "tab"].iter().any(|k| field(k).contains(f.as_str())))
+        self.filter.as_ref().is_none_or(|f| keys.iter().any(|k| field(k).contains(f.as_str())))
             && self.prefix.as_ref().is_none_or(|p| field("id").starts_with(p.as_str()))
             && self.panel.as_ref().is_none_or(|p| field("panel") == *p || field("tab") == *p)
     }
 
-    /// The catalog narrowed: a list, or `{commands, total, offset, next_offset}` when paged.
+    /// The catalog narrowed: a list, or `{commands, total, offset, next_offset}` when paged. A
+    /// `filter` no id, label, panel or tab holds is looked for in the parameter docs instead
+    /// (`"visible"` finds `browser.visibility`), so a word for what a command does still finds
+    /// it; a command id as the filter keeps finding that command, not every command whose docs
+    /// mention it.
     fn apply(&self, all: Value) -> Value {
         let Value::Array(all) = all else { return all };
-        let hits: Vec<Value> = all.into_iter().filter(|c| self.matches(c)).collect();
+        let names = ["id", "label", "panel", "tab"];
+        let keys: &[&str] = if self.filter.is_some() && !all.iter().any(|c| self.matches(c, &names)) { &["params"] } else { &names };
+        let hits: Vec<Value> = all.into_iter().filter(|c| self.matches(c, keys)).collect();
         let total = hits.len();
         let offset = self.offset.unwrap_or(0).min(total);
         let take = self.limit.unwrap_or(usize::MAX);
@@ -1202,12 +1231,9 @@ fn batch_step(step: &Value) -> Result<(String, Value, Option<Narrow>), String> {
     let command = step.get("command").or_else(|| step.get("id")).and_then(Value::as_str).ok_or("missing `command`")?;
     // Any other key would be dropped and the command run without its parameters, failing (if at
     // all) with an error about a parameter that seems to be there: `args` for `params`.
-    if let Some(k) = step.as_object().into_iter().flat_map(Map::keys).find(|k| !matches!(k.as_str(), "command" | "id" | "params")) {
-        if k == "expect" {
-            return Err("unknown key `expect` in a step: `expect` is the batch's argument, checked after the last step".into());
-        }
+    if let Some(k) = step.as_object().into_iter().flat_map(Map::keys).find(|k| !matches!(k.as_str(), "command" | "id" | "params" | "expect")) {
         let k: String = k.chars().take(64).collect();
-        return Err(format!("unknown key `{k}` in a step: a step is {{command, params}}, its parameters go in `params`"));
+        return Err(format!("unknown key `{k}` in a step: a step is {{command, params, expect?}}, its parameters go in `params`"));
     }
     let empty = Map::new();
     let params = step.get("params").cloned().filter(|p| !p.is_null()).unwrap_or(json!({}));
@@ -1272,6 +1298,184 @@ fn batch_step(step: &Value) -> Result<(String, Value, Option<Narrow>), String> {
         // An engine command: the step goes as it is.
         _ => Ok((String::new(), Value::Null, None)),
     }
+}
+
+/// The reply of a batch refused at step `i` before anything ran: the design is where the batch
+/// started, as a rollback leaves it (#10749).
+fn nothing_run(i: usize, step: &Value, len: usize, rollback: bool, error: String) -> Value {
+    let command = step.get("command").or_else(|| step.get("id")).and_then(Value::as_str);
+    json!({
+        "ok": false,
+        "completed": 0,
+        "failed": {"index": i, "command": command, "error": error},
+        "rolled_back": rollback,
+        "undone": 0,
+        "applied": [],
+        "not_run": (0..len).collect::<Vec<_>>(),
+        "results": [],
+        "note": "nothing was run",
+    })
+}
+
+/// A step without its `expect`, which the batch checks itself: the runner gets {command, params}.
+fn without_expect(step: &Value) -> Value {
+    match step {
+        Value::Object(o) if o.contains_key("expect") => {
+            Value::Object(o.iter().filter(|(k, _)| *k != "expect").map(|(k, v)| (k.clone(), v.clone())).collect())
+        }
+        other => other.clone(),
+    }
+}
+
+/// The longest `$N.path` a step may give, in bytes.
+const MAX_STEP_REF: usize = 256;
+
+/// One piece of a `$N.path` reference: a key of an object, or a place in a list (`[2]`, or `.2`).
+enum RefPart<'a> {
+    Key(&'a str),
+    Index(usize),
+}
+
+/// A string that refers to an earlier step's result: `$N` (step N's whole result, counted from
+/// 0) or `$N.key.key[i]`. `None` for any other string (`$L`, `$5 off` are left as they are);
+/// `Some(Err)` for one that starts like a reference (`$N.` or `$N[`) and is malformed, so a typo
+/// is never sent as a literal.
+fn step_ref(s: &str) -> Option<Result<(usize, Vec<RefPart<'_>>), String>> {
+    let rest = s.strip_prefix('$')?;
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    // `$L`, `$5 off`: text, not a reference.
+    if digits == 0 || !matches!(rest.as_bytes().get(digits), None | Some(b'.' | b'[')) {
+        return None;
+    }
+    let bad = |why: &str| {
+        let shown: String = s.chars().take(64).collect();
+        Some(Err(format!("`{shown}`: {why}; a reference is `$N` or `$N.key.key[i]`, N the step's index from 0")))
+    };
+    if s.len() > MAX_STEP_REF {
+        return bad("too long");
+    }
+    let Ok(step) = rest[..digits].parse::<usize>() else { return bad("no such step") };
+    let mut parts = Vec::new();
+    let mut path = &rest[digits..];
+    while !path.is_empty() {
+        if let Some(after) = path.strip_prefix('.') {
+            let end = after.find(['.', '[']).unwrap_or(after.len());
+            let key = &after[..end];
+            if key.is_empty() || !key.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-') {
+                return bad("a key is letters, digits, `_` or `-`");
+            }
+            parts.push(match key.parse::<usize>() {
+                Ok(n) if key.bytes().all(|c| c.is_ascii_digit()) => RefPart::Index(n),
+                _ => RefPart::Key(key),
+            });
+            path = &after[end..];
+        } else if let Some(after) = path.strip_prefix('[') {
+            let Some(end) = after.find(']') else { return bad("a `[` without its `]`") };
+            let Ok(n) = after[..end].parse::<usize>() else { return bad("a list index is a whole number, `[0]`") };
+            parts.push(RefPart::Index(n));
+            path = &after[end + 1..];
+        } else {
+            return bad("after the step's number comes `.key` or `[i]`");
+        }
+    }
+    Some(Ok((step, parts)))
+}
+
+/// Whether `v` holds a `$N…` reference anywhere (a malformed one counts: it is refused at its turn).
+fn has_step_refs(v: &Value) -> bool {
+    match v {
+        Value::String(s) => step_ref(s).is_some(),
+        Value::Array(a) => a.iter().any(has_step_refs),
+        Value::Object(o) => o.values().any(has_step_refs),
+        _ => false,
+    }
+}
+
+/// Step `at`'s params with each `$N…` string replaced by that part of step N's result (`raw`,
+/// the earlier steps' whole results). The error says which reference failed and what is there.
+fn resolve_step_refs(raw: &[Value], at: usize, v: Value) -> Result<Value, String> {
+    match v {
+        Value::String(s) => match step_ref(&s) {
+            None => Ok(Value::String(s)),
+            Some(Err(e)) => Err(e),
+            Some(Ok((n, parts))) => step_ref_value(raw, at, n, &parts).map_err(|why| format!("`{s}`: {why}")),
+        },
+        Value::Array(a) => a.into_iter().map(|x| resolve_step_refs(raw, at, x)).collect::<Result<Vec<_>, _>>().map(Value::Array),
+        Value::Object(o) => {
+            o.into_iter().map(|(k, x)| resolve_step_refs(raw, at, x).map(|x| (k, x))).collect::<Result<Map<_, _>, _>>().map(Value::Object)
+        }
+        other => Ok(other),
+    }
+}
+
+/// What `$n.parts` names in step `n`'s result, for step `at`.
+fn step_ref_value(raw: &[Value], at: usize, n: usize, parts: &[RefPart<'_>]) -> Result<Value, String> {
+    if n >= at {
+        return Err(format!("step {n} runs at or after this one (step {at}); a step can use only the results of the steps before it"));
+    }
+    let mut here = raw.get(n).ok_or_else(|| format!("step {n} has no result to read"))?;
+    let mut walked = String::new();
+    for part in parts {
+        let at_text = if walked.is_empty() { format!("step {n}'s result") } else { format!("`{walked}` of step {n}") };
+        here = match (part, here) {
+            (RefPart::Key(k), Value::Object(o)) => o.get(*k).ok_or_else(|| {
+                let keys: Vec<&str> = o.keys().map(String::as_str).take(16).collect();
+                format!("{at_text} has no `{k}`; it has {}", if keys.is_empty() { "no keys".into() } else { keys.join(", ") })
+            })?,
+            (RefPart::Index(i), Value::Array(a)) => a.get(*i).ok_or_else(|| format!("{at_text} has {} items, so no [{i}]", a.len()))?,
+            (RefPart::Index(i), Value::Object(o)) => o.get(&i.to_string()).ok_or_else(|| format!("{at_text} is an object, not a list: no [{i}]"))?,
+            (RefPart::Key(k), other) => return Err(format!("{at_text} is {}, so it has no `{k}`", kind_of(other))),
+            (RefPart::Index(i), other) => return Err(format!("{at_text} is {}, so it has no [{i}]", kind_of(other))),
+        };
+        match part {
+            RefPart::Key(k) => {
+                if !walked.is_empty() {
+                    walked.push('.');
+                }
+                walked.push_str(k);
+            }
+            RefPart::Index(i) => walked.push_str(&format!("[{i}]")),
+        }
+    }
+    Ok(here.clone())
+}
+
+fn kind_of(v: &Value) -> &'static str {
+    match v {
+        Value::Null => "null",
+        Value::Bool(_) => "true or false",
+        Value::Number(_) => "a number",
+        Value::String(_) => "a string",
+        Value::Array(_) => "a list",
+        Value::Object(_) => "an object",
+    }
+}
+
+/// The batch preflight (#5853) for steps some of which refer to earlier results: every step's
+/// command id is checked, and at `Strict` the contracts of the steps whose params are all known
+/// now; a referring step's params are checked at its turn, once filled in.
+fn preflight(
+    steps: &[Value],
+    referring: &[bool],
+    level: solidcraft_engine::schema::ParamCheck,
+) -> Option<solidcraft_engine::batch_preflight::Refusal> {
+    use solidcraft_engine::batch_preflight::{check, contracts};
+    use solidcraft_engine::schema::ParamCheck;
+    if !referring.iter().any(|r| *r) {
+        return check(steps, level, &[]);
+    }
+    if let Some(refusal) = check(steps, ParamCheck::Off, &[]) {
+        return Some(refusal);
+    }
+    if level != ParamCheck::Strict {
+        return None;
+    }
+    steps.iter().enumerate().filter(|(i, _)| !referring.get(*i).copied().unwrap_or(false)).find_map(|(i, step)| {
+        contracts(std::slice::from_ref(step)).map(|mut refusal| {
+            refusal.index = i;
+            refusal
+        })
+    })
 }
 
 /// The tool names a `batch` step may not be (or is mapped from): `execute` must not wrap them.
@@ -1726,7 +1930,17 @@ fn batch_run(b: &mut dyn Backend, a: &Map<String, Value>) -> (Value, bool) {
     // fails the batch before anything is sent.
     let mut mapped: Vec<Value> = Vec::with_capacity(steps.len());
     let mut narrows: Vec<(usize, Narrow)> = Vec::new();
+    // Each step's own `expect`, checked right after it runs.
+    let mut expects: Vec<Option<Expect>> = Vec::with_capacity(steps.len());
     for (i, step) in steps.iter().enumerate() {
+        let expect = match step.as_object().map(Expect::parse) {
+            Some(Err(e)) => return (nothing_run(i, step, steps.len(), rollback, format!("step {i}: {e}")), true),
+            Some(Ok(e)) => e,
+            None => None,
+        };
+        expects.push(expect);
+        // The step as the runner gets it: its `expect` is checked here.
+        let step = &without_expect(step);
         // The window goes to another design's tab for these, however the step names them: the
         // batch's later steps and its rollback would land in the wrong design.
         let step_result = batch_step(step).and_then(|(command, params, narrow)| {
@@ -1748,31 +1962,25 @@ fn batch_run(b: &mut dyn Backend, a: &Map<String, Value>) -> (Value, bool) {
             }
             // A step without a command fails where it stands, as before.
             Err(e) if e == "missing `command`" => mapped.push(step.clone()),
-            Err(e) => {
-                let command = step.get("command").or_else(|| step.get("id")).and_then(Value::as_str);
-                // Nothing ran: the design is where the batch started, as a rollback leaves it (#10749).
-                let reply = json!({
-                    "ok": false,
-                    "completed": 0,
-                    "failed": {"index": i, "command": command, "error": e},
-                    "rolled_back": rollback,
-                    "undone": 0,
-                    "applied": [],
-                    "not_run": (0..steps.len()).collect::<Vec<_>>(),
-                    "results": [],
-                    "note": "nothing was run",
-                });
-                return (reply, true);
-            }
+            Err(e) => return (nothing_run(i, step, steps.len(), rollback, e), true),
         }
     }
     let steps = &mapped;
     let atomic_layout = rollback && steps.iter().any(layout_step);
+    // Steps that use an earlier step's result (`$N.path`) or carry their own `expect` run one by
+    // one here: the references are filled in, and the design measured, between steps.
+    let referring: Vec<bool> = steps.iter().map(|step| step.get("params").is_some_and(has_step_refs)).collect();
+    let stepwise = referring.iter().any(|r| *r) || expects.iter().any(Option::is_some);
+    if stepwise && atomic_layout {
+        let e = "this batch runs step by step (a step refers to an earlier one's result, or has its own `expect`), and an atomic \
+                 layout batch must go to the app whole: send the layout steps in a batch of their own, or give rollback: false";
+        return (nothing_run(0, &steps[0], steps.len(), rollback, e.into()), true);
+    }
     // A step the batch would refuse at its turn refuses it now, before anything runs (#5853).
     // Only where the commands run in this process: a running app may be another version, with
     // commands this one lacks, and checks the batch against its own registry when it gets it.
     if b.in_process()
-        && let Some(refusal) = solidcraft_engine::batch_preflight::check(steps, b.param_check(), &[])
+        && let Some(refusal) = preflight(steps, &referring, b.param_check())
     {
         let mut reply = refusal.reply(steps.len(), rollback);
         if let Some(o) = reply.as_object_mut() {
@@ -1803,7 +2011,7 @@ fn batch_run(b: &mut dyn Backend, a: &Map<String, Value>) -> (Value, bool) {
         o.insert("profile".into(), Value::Bool(profile));
     }
     let fits_transport = params.to_string().len().saturating_add(64 * 1024) <= solidcraft_engine::MAX_LINE;
-    if fits_transport {
+    if fits_transport && !stepwise {
         match b.call("engine.batch", params) {
             Ok(mut r) => {
                 if let Some(failed) = r.get_mut("failed")
@@ -1848,6 +2056,9 @@ fn batch_run(b: &mut dyn Backend, a: &Map<String, Value>) -> (Value, bool) {
     }
     let start = if rollback { Undo::begin(b) } else { Undo::None };
     let mut results = Vec::with_capacity(steps.len());
+    // Each step's whole result, before `verbose: false` or a tool step narrows it: what `$N.path`
+    // reads.
+    let mut raw: Vec<Value> = Vec::with_capacity(steps.len());
     let mut rows = Vec::new();
     let clock = timing::Clock::start();
     // The kernel's share can only be measured where the commands run: in this process.
@@ -1857,6 +2068,13 @@ fn batch_run(b: &mut dyn Backend, a: &Map<String, Value>) -> (Value, bool) {
     for run in solidcraft_engine::batch_params::plan(steps, coalesce) {
         let singles = match run {
             solidcraft_engine::batch_params::BatchRun::Step(i) => vec![i],
+            // A run in which a step refers to another's result or has its own `expect` goes step
+            // by step.
+            solidcraft_engine::batch_params::BatchRun::Params { steps: indices, .. }
+                if indices.iter().any(|&i| referring.get(i).copied().unwrap_or(false) || expects.get(i).is_some_and(Option::is_some)) =>
+            {
+                indices
+            }
             solidcraft_engine::batch_params::BatchRun::Params { steps: indices, changes } => {
                 let (r, took) = timing::time(profile, || exec(b, "parameters.change", solidcraft_engine::batch_params::combined_params(&changes)));
                 match r {
@@ -1865,6 +2083,7 @@ fn batch_run(b: &mut dyn Backend, a: &Map<String, Value>) -> (Value, bool) {
                             rows.push(took.to_json(indices.first().copied().unwrap_or(0), "parameters.change"));
                         }
                         let rows = solidcraft_engine::batch_params::step_results(steps, &indices, &v);
+                        raw.extend(rows.iter().cloned());
                         results.extend(rows.into_iter().map(|v| if verbose { v } else { compact(v) }));
                         continue;
                     }
@@ -1876,14 +2095,39 @@ fn batch_run(b: &mut dyn Backend, a: &Map<String, Value>) -> (Value, bool) {
             let Some(step) = steps.get(i) else { continue };
             let command = step.get("command").or_else(|| step.get("id")).and_then(Value::as_str);
             let (r, took) = timing::time(profile, || match command {
-                Some(id) => exec(b, id, step.get("params").cloned().filter(|p| !p.is_null()).unwrap_or(json!({}))),
+                Some(id) => {
+                    let params = step.get("params").cloned().filter(|p| !p.is_null()).unwrap_or(json!({}));
+                    let params = if referring.get(i).copied().unwrap_or(false) { resolve_step_refs(&raw, i, params) } else { Ok(params) };
+                    params.and_then(|params| exec(b, id, params))
+                }
                 None => Err("missing `command`".to_string()),
             });
             if timed {
                 rows.push(took.to_json(i, command.unwrap_or_default()));
             }
+            // The step's own `expect`: measured now, and a mismatch fails the step that missed.
+            let mut missed = None;
+            let r = match (r, expects.get(i).and_then(Option::as_ref)) {
+                (Ok(mut v), Some(expect)) => {
+                    let expectation = expect.checked(b);
+                    if expectation["ok"] == true {
+                        if !v.is_object() {
+                            v = json!({"result": v});
+                        }
+                        v["expectation"] = expectation;
+                        Ok(v)
+                    } else {
+                        let mismatch: Vec<&str> = expectation["mismatch"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                        let e = format!("expectation not met after this step: {}", mismatch.join("; "));
+                        missed = Some((expectation, if verbose { narrow(i, v) } else { compact(narrow(i, v)) }));
+                        Err(e)
+                    }
+                }
+                (r, _) => r,
+            };
             match r {
                 Ok(v) => {
+                    raw.push(v.clone());
                     let v = narrow(i, v);
                     results.push(if verbose { v } else { compact(v) })
                 }
@@ -1895,6 +2139,10 @@ fn batch_run(b: &mut dyn Backend, a: &Map<String, Value>) -> (Value, bool) {
                     // Only a rollback asked for is reported as one.
                     let rolled_back = rollback && went_back;
                     let mut failed = json!({"index": i, "command": command, "error": e});
+                    if let Some((expectation, result)) = missed {
+                        failed["expectation"] = expectation;
+                        failed["result"] = result;
+                    }
                     // Applied: the steps before it, unless rolled back; and the step itself while it
                     // still runs, as it will apply when it finishes.
                     let mut applied: Vec<usize> = if rolled_back { Vec::new() } else { (0..i).collect() };
@@ -2492,10 +2740,100 @@ static SHOT: AtomicU64 = AtomicU64::new(0);
 
 /// `screenshot`: render or capture to a file, return it as an MCP image content block.
 fn screenshot(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
-    match capture(b, a) {
+    let shot = match a.get("views").filter(|v| !v.is_null()) {
+        Some(views) => capture_views(b, a, views),
+        None => capture(b, a),
+    };
+    match shot {
         Ok((png, info)) => solidcraft_mcp_server::image_result(&png, "image/png", info.to_string()),
         Err(e) => text_result(&Value::String(e), true),
     }
+}
+
+/// Turn the camera to `view`: a standard view, framing the model, or a saved named view.
+fn turn_to(b: &mut dyn Backend, view: &str) -> Result<(), String> {
+    if VIEWS.contains(&view) {
+        b.call("ui.view", json!({"view": view}))?;
+        // Turning to a standard view also frames the model (like a axis view click).
+        if view != "fit" && view != "home" {
+            b.call("ui.view", json!({"view": "fit"}))?;
+        }
+    } else {
+        b.call("engine.execute", json!({"command": "view.apply", "params": {"view": view}}))?;
+    }
+    Ok(())
+}
+
+/// Most views one `screenshot {views}` lays out.
+const MAX_VIEWS: usize = 6;
+/// Pixels between the tiles of a several-view screenshot, drawn in [`TILE_GAP_RGBA`].
+const TILE_GAP: u32 = 2;
+const TILE_GAP_RGBA: [u8; 4] = [128, 128, 128, 255];
+
+/// `screenshot {views: [...]}`: each view rendered as a model render and laid out in one picture,
+/// left to right, top to bottom (two columns for up to four views, three for five or six), the
+/// whole picture `width × height`. One picture of four views costs what one view costs at that
+/// size: an agent that would take a screenshot per view takes one. The camera is left at the
+/// last view.
+fn capture_views(b: &mut dyn Backend, a: &Map<String, Value>, views: &Value) -> Result<(Vec<u8>, Value), String> {
+    let views: Vec<&str> = views
+        .as_array()
+        .filter(|v| (1..=MAX_VIEWS).contains(&v.len()))
+        .and_then(|v| v.iter().map(Value::as_str).collect::<Option<Vec<_>>>())
+        .ok_or_else(|| format!("screenshot: `views` is a list of 1 to {MAX_VIEWS} view names, e.g. [\"front\", \"top\", \"right\", \"iso\"]"))?;
+    if a.get("view").is_some_and(|v| !v.is_null()) || a.get("camera").is_some_and(|v| !v.is_null()) {
+        return Err("screenshot: give `views`, or `view` or `camera`, not both".into());
+    }
+    if str_arg(a, "source") == Some("window") {
+        return Err("screenshot: `views` are model renders; leave `source` out or give \"model\"".into());
+    }
+    let n = u32::try_from(views.len()).unwrap_or(1);
+    let cols = match n {
+        1 => 1,
+        2..=4 => 2,
+        _ => 3,
+    };
+    let rows = n.div_ceil(cols);
+    let size = |k: &str, d: u64| u32::try_from(a.get(k).and_then(Value::as_u64).unwrap_or(d).clamp(16, 4096)).unwrap_or(16);
+    let (width, height) = (size("width", 960), size("height", 600));
+    let tile_w = (width.saturating_sub(TILE_GAP * (cols - 1)) / cols).max(16);
+    let tile_h = (height.saturating_sub(TILE_GAP * (rows - 1)) / rows).max(16);
+    let (width, height) = (tile_w * cols + TILE_GAP * (cols - 1), tile_h * rows + TILE_GAP * (rows - 1));
+    let mut sheet = image::RgbaImage::from_pixel(width, height, image::Rgba(TILE_GAP_RGBA));
+    let mut tiles = Vec::with_capacity(views.len());
+    let mut info = Value::Null;
+    for (k, view) in (0u32..).zip(&views) {
+        turn_to(b, view).map_err(|e| format!("screenshot: view `{view}`: {e}"))?;
+        let mut tile_args = a.clone();
+        for key in ["views", "path", "source"] {
+            tile_args.remove(key);
+        }
+        tile_args.insert("source".into(), json!("model"));
+        tile_args.insert("width".into(), json!(tile_w));
+        tile_args.insert("height".into(), json!(tile_h));
+        let (png, tile_info) = capture(b, &tile_args)?;
+        let tile = image::load_from_memory_with_format(&png, image::ImageFormat::Png)
+            .map_err(|e| format!("screenshot: view `{view}` gave no readable picture ({e})"))?
+            .into_rgba8();
+        let (x, y) = ((k % cols) * (tile_w + TILE_GAP), (k / cols) * (tile_h + TILE_GAP));
+        image::imageops::replace(&mut sheet, &tile, i64::from(x), i64::from(y));
+        tiles.push(json!({"view": view, "x": x, "y": y, "width": tile.width(), "height": tile.height()}));
+        info = tile_info;
+    }
+    let mut png = std::io::Cursor::new(Vec::new());
+    sheet.write_to(&mut png, image::ImageFormat::Png).map_err(|e| format!("screenshot: the views could not be put in one picture ({e})"))?;
+    let png = png.into_inner();
+    let keep = str_arg(a, "path").filter(|p| !p.trim().is_empty()).map(str::to_string);
+    if let Some(path) = &keep {
+        vfs::write(path, &png).map_err(|e| format!("{path}: {e}"))?;
+    }
+    let mut reply = json!({"source": "model", "path": keep, "width": width, "height": height, "bytes": png.len(), "tiles": tiles});
+    for k in ["renderer", "warning"] {
+        if let Some(v) = info.get(k).filter(|v| !v.is_null()) {
+            reply[k] = v.clone();
+        }
+    }
+    Ok((png, reply))
 }
 
 /// `compare_picture`: run the engine comparison and hand the overlay PNG back as an MCP
@@ -2531,23 +2869,12 @@ fn capture(b: &mut dyn Backend, a: &Map<String, Value>) -> Result<(Vec<u8>, Valu
         Some("window") => true,
         _ => b.has_ui() && guides.is_empty(),
     };
-    let apply = |b: &mut dyn Backend, params: Value| b.call("engine.execute", json!({"command": "view.apply", "params": params}));
     match (str_arg(a, "view"), a.get("camera").filter(|c| !c.is_null())) {
         (Some(_), Some(_)) => return Err("screenshot: give `view` or `camera`, not both".into()),
         (None, Some(c)) => {
-            apply(b, json!({"camera": c}))?;
+            b.call("engine.execute", json!({"command": "view.apply", "params": {"camera": c}}))?;
         }
-        (Some(v), None) if VIEWS.contains(&v) => {
-            b.call("ui.view", json!({"view": v}))?;
-            // Turning to a standard view also frames the model (like a axis view click).
-            if v != "fit" && v != "home" {
-                b.call("ui.view", json!({"view": "fit"}))?;
-            }
-        }
-        // A saved named view.
-        (Some(v), None) => {
-            apply(b, json!({"view": v}))?;
-        }
+        (Some(v), None) => turn_to(b, v)?,
         (None, None) => {}
     }
     let keep = str_arg(a, "path").filter(|p| !p.trim().is_empty()).map(str::to_string);

@@ -625,11 +625,31 @@ pub fn normalize_command_id(id: &str) -> Option<&str> {
     (!id.is_empty() && id.bytes().all(|b| b.is_ascii_graphic())).then_some(id)
 }
 
-/// The end of an unknown command's error: up to three ids like `id`. Alternative verbs in
-/// the same namespace (`note.create` → `note.add`) come first. Otherwise, ids a few
+/// Ids agents write for a command that has another name, seen in recorded agent runs (the MCP
+/// replay of 2026-11-22: each of these six times), with the command and how to call it for that
+/// purpose. Like [`command_verb_alternative`] this only words the error; it never runs the command.
+const GUESSED_IDS: &[(&str, &str, &str)] = &[
+    ("body.hide", "browser.visibility", "browser.visibility {items: [body names], visible: false} hides bodies"),
+    ("body.show", "browser.visibility", "browser.visibility {items: [body names], visible: true} shows bodies"),
+    ("sketch.polyline", "sketch.line", "sketch.line {points: [[x, y], ...], closed?} draws a chain of lines"),
+];
+
+/// The command an agent most likely meant by an id no command has, and how to call it: `None`
+/// for an id that is not one of the [`GUESSED_IDS`].
+pub fn guessed_command(id: &str) -> Option<(&'static str, &'static str)> {
+    let id = id.trim();
+    GUESSED_IDS.iter().find(|(guess, _, _)| guess.eq_ignore_ascii_case(id)).map(|&(_, real, how)| (real, how))
+}
+
+/// The end of an unknown command's error: up to three ids like `id`. A guessed id with another
+/// name (`body.hide`, see [`guessed_command`]) names that command and how to call it. Alternative
+/// verbs in the same namespace (`note.create` → `note.add`) come first. Otherwise, ids a few
 /// letters away (`solid.extrud` → `solid.extrude`) come before ids that end in the same word
 /// (`file.open` → `doc.open`). Empty when nothing is close.
 pub(crate) fn did_you_mean(id: &str) -> String {
+    if let Some((real, how)) = guessed_command(id) {
+        return format!(" (use `{real}`: {how})");
+    }
     let id = id.to_ascii_lowercase();
     if id.len() > 64 {
         return String::new();

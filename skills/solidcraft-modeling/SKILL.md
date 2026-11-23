@@ -32,6 +32,8 @@ Work the part out as numbers first. Then build it in a few large `batch` calls, 
   - Each sketch counts each kind from 1 (`l1`, `c1`, `a1`, `p1`).
   - Count what the earlier steps of that sketch created. For example, `rectangle.center` makes `l1`-`l6` and `p1`-`p5`.
   - Do not split a batch just to read ids back.
+  - Where an id is hard to count, a step can use an earlier step's result: a parameter value `"$1.created.curves[0]"` is step 1's (counted from 0) first new curve, and `"$0"` alone is step 0's whole result. It must be the whole string, not part of an expression.
+- **Check a stage where it stands:** a step can carry its own `expect` (`{"command":"solid.extrude","params":{...},"expect":{"volume_mm3":1000}}`). A miss fails the batch at that step, so a cut that missed is found at the cut, not at the end.
 - **Positions that must follow a parameter** come from:
   - sketch dimensions to `"origin"` with expression values (`"w/2 - wall - 6"`)
   - expression fields such as `solid.cylinder base:["w/2-6","d/2-6","wall"]`
@@ -57,7 +59,7 @@ Work the part out as numbers first. Then build it in a few large `batch` calls, 
   - On a symmetric part (a mirrored or patterned layout) the COM does not move, so take a top-view screenshot and compare distances in pixels against a known size.
   - For holes and bosses, `body_topology {"body":"Body1","faces":"cylinders"}`: one entry per cylinder (`radius`, `origin`, `axis`, `extent` along the axis, the merged faces' `names`), a few lines.
   - The full `body_topology` is a last resort: it costs 25-45 KB and splits cylinders into half faces.
-- **Final look:** one `screenshot {"source":"model","view":"iso","width":480,"height":320}`. Use `"view":"top"` for features inside walls, which the iso view hides.
+- **Final look:** one `screenshot {"source":"model","view":"iso","width":480,"height":320}`. Use `"view":"top"` for features inside walls, which the iso view hides. To see several sides, ask for them in one picture, `screenshot {"views":["front","top","right","iso"],"width":960,"height":600}`, not one screenshot each.
   - `width` and `height` apply only to model renders.
   - When the server is bridged, `source` defaults to the whole app window and `view` also turns the user's camera, so pass `"source":"model"` and leave out `view` unless the user wants the camera moved.
 
