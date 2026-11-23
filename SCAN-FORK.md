@@ -7,8 +7,9 @@ and nothing here is endorsed by the SolidCraft maintainers.
 
 ## Build and run
 
-A prebuilt Linux x86_64 build is on this fork's Releases page (unofficial, unsigned). To build it
-yourself, the same as upstream (see README.md and docs/building.md):
+Build it yourself, the same as upstream. (No prebuilt builds are offered: LICENSE-BRAND asks for the
+maintainers' permission before a modified build is handed out under SolidCraft's name and look.)
+See README.md and docs/building.md:
 
 ```sh
 cargo run --release -p solidcraft            # the desktop app; Workspace › Scan
