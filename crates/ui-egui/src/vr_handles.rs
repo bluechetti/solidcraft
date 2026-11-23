@@ -230,14 +230,36 @@ pub fn snapped(by: [f64; 3], fine: bool) -> [f64; 3] {
 }
 
 /// The command and parameters that move `part` by `by` (model millimetres, world axes): a body of
-/// its own by `solid.move`, a placed part by `occurrence.move` in world space.
+/// its own by `solid.move`, a placed part by `occurrence.move` in world space (a grounded one too:
+/// moved by hand on purpose, it stays grounded where it is put).
 pub fn move_command(part: &crate::vr_pick::Part, by: [f64; 3]) -> Option<(&'static str, Value)> {
     match &part.sel {
         solidcraft_engine::Sel::Body { name } => Some(("solid.move", json!({"bodies": [name], "translate": by}))),
         solidcraft_engine::Sel::Occurrence { path } => {
             let id = path.last()?;
-            Some(("occurrence.move", json!({"occurrence": id, "path": path, "space": "world", "translate": by})))
+            Some(("occurrence.move", json!({"occurrence": id, "path": path, "space": "world", "translate": by, "move_grounded": true})))
         }
         _ => None,
     }
+}
+
+/// Where a part lands when it is let go over another part (as SC View lays one part on another):
+/// the face pointed at is taken as the side of `target` (its box, model units) nearest `point`;
+/// the part (its box `moved`) moves, without turning, until the middle of its own side that faces
+/// back toward that face touches `point`. The move (model units), and the way the face looks.
+pub fn landing(moved: [[f64; 3]; 2], target: [[f64; 3]; 2], point: [f64; 3]) -> Option<([f64; 3], [f64; 3])> {
+    if !point.iter().chain(moved.iter().flatten()).chain(target.iter().flatten()).all(|v| v.is_finite()) {
+        return None;
+    }
+    let [tlo, thi] = target;
+    // The target's side nearest the point: its axis and whether it is the far (max) side.
+    let (k, far) = (0..3)
+        .flat_map(|k| [(k, false, (point[k] - tlo[k]).abs()), (k, true, (point[k] - thi[k]).abs())])
+        .min_by(|a, b| a.2.total_cmp(&b.2))
+        .map(|(k, far, _)| (k, far))?;
+    let normal: [f64; 3] = std::array::from_fn(|j| if j == k { if far { 1.0 } else { -1.0 } } else { 0.0 });
+    let [lo, hi] = moved;
+    let mut side: [f64; 3] = std::array::from_fn(|j| (lo[j] + hi[j]) / 2.0);
+    side[k] = if far { lo[k] } else { hi[k] };
+    Some((std::array::from_fn(|j| point[j] - side[j]), normal))
 }

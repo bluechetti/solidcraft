@@ -181,3 +181,41 @@ pub fn sweep(app: &mut SolveApp, axis: &Axis) -> Result<Swept, String> {
     }
     Ok(Swept { reached, touches })
 }
+
+/// Whether any of `bodies` overlaps another body now (`inspect.clearance` of them against every
+/// other shown body, pairs among `bodies` left out): what stops a joint drag at contact.
+pub fn touching(app: &mut SolveApp, bodies: &[String]) -> Result<bool, String> {
+    if bodies.is_empty() {
+        return Ok(false);
+    }
+    let st = crate::open_meshing::shown_world(app);
+    let against: Vec<String> = crate::viewport::body_bounds(app, &st).iter().map(|(name, _)| name.clone()).filter(|n| !bodies.contains(n)).collect();
+    if against.is_empty() {
+        return Ok(false);
+    }
+    let reply = app.session.execute("inspect.clearance", &json!({"bodies": bodies, "against": against})).map_err(|e| e.to_string())?;
+    Ok(!clashes_of(&reply).is_empty())
+}
+
+/// When an overlap looks round (a pin in a hole): about π/4 of its box filled, with two of its
+/// sizes alike. Then the axis it runs along (the third size), to draw it as a cylinder.
+pub fn round_axis(c: &Clash) -> Option<usize> {
+    let size: [f64; 3] = std::array::from_fn(|k| c.bbox[1][k] - c.bbox[0][k]);
+    let box_volume = size.iter().product::<f64>();
+    if !(box_volume > 1e-9 && box_volume.is_finite()) {
+        return None;
+    }
+    let fill = c.volume / box_volume;
+    if (fill - std::f64::consts::FRAC_PI_4).abs() > 0.06 {
+        return None;
+    }
+    // The axis whose cross-section is the most nearly square.
+    (0..3)
+        .map(|k| {
+            let (a, b) = (size[(k + 1) % 3], size[(k + 2) % 3]);
+            (k, (a - b).abs() / a.max(b).max(1e-9))
+        })
+        .filter(|(_, skew)| *skew < 0.1)
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(k, _)| k)
+}

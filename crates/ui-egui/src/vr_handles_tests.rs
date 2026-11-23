@@ -113,7 +113,21 @@ fn a_body_moves_by_solid_move_and_a_placed_part_by_occurrence_move() {
     let placed = Part { sel: Sel::Occurrence { path: vec![4, 9] }, name: "Post1:1".into(), bodies: vec!["Post1".into()] };
     let (c, p) = move_command(&placed, [0.0, 5.0, 0.0]).expect("occurrence");
     assert_eq!(c, "occurrence.move");
-    assert_eq!(p, json!({"occurrence": 9, "path": [4, 9], "space": "world", "translate": [0.0, 5.0, 0.0]}));
+    assert_eq!(p, json!({"occurrence": 9, "path": [4, 9], "space": "world", "translate": [0.0, 5.0, 0.0], "move_grounded": true}));
     let empty = Part { sel: Sel::Occurrence { path: vec![] }, name: String::new(), bodies: vec![] };
     assert!(move_command(&empty, [0.0; 3]).is_none());
+}
+
+#[test]
+fn a_part_let_go_over_anothers_top_lands_on_it_without_turning() {
+    use crate::vr_handles::landing;
+    // A 10 mm cube at the origin, let go over the top of a plate 100 x 60 x 10 at (50, 30, 10).
+    let (by, normal) = landing([[0.0; 3], [10.0; 3]], [[0.0, 0.0, 0.0], [100.0, 60.0, 10.0]], [50.0, 30.0, 10.0]).expect("lands");
+    assert_eq!(normal, [0.0, 0.0, 1.0]);
+    assert_eq!(by, [45.0, 25.0, 10.0], "the cube's bottom middle (5, 5, 0) goes to the point");
+    // Over the plate's +X side: the cube's -X side touches it.
+    let (by, normal) = landing([[0.0; 3], [10.0; 3]], [[0.0, 0.0, 0.0], [100.0, 60.0, 10.0]], [100.0, 30.0, 5.0]).expect("lands");
+    assert_eq!(normal, [1.0, 0.0, 0.0]);
+    assert_eq!(by, [100.0, 25.0, 0.0]);
+    assert!(landing([[0.0; 3], [1.0; 3]], [[0.0; 3], [1.0; 3]], [f64::NAN, 0.0, 0.0]).is_none());
 }

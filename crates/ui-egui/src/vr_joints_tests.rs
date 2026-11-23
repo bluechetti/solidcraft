@@ -51,3 +51,14 @@ fn clearances_overlaps_are_read_with_their_boxes() {
     assert_eq!((c[0].a.as_str(), c[0].b.as_str(), c[0].bbox, c[0].volume), ("Body1", "Body3", [[45.0, 25.0, 16.0], [55.0, 35.0, 20.0]], 314.16));
     assert!(clashes_of(&json!({})).is_empty());
 }
+
+#[test]
+fn a_pin_in_a_hole_is_round_and_a_corner_overlap_is_not() {
+    use crate::vr_joints::{Clash, round_axis};
+    let clash = |bbox, volume| Clash { a: "A".into(), b: "B".into(), bbox, volume };
+    // A 10 mm pin 4 mm deep: 314.16 mm³ in a 10 x 10 x 4 box, along Z.
+    assert_eq!(round_axis(&clash([[45.0, 25.0, 16.0], [55.0, 35.0, 20.0]], 314.159)), Some(2));
+    assert_eq!(round_axis(&clash([[0.0; 3], [10.0, 10.0, 4.0]], 400.0)), None, "a full box");
+    assert_eq!(round_axis(&clash([[0.0; 3], [10.0, 20.0, 4.0]], 628.3)), None, "not square across");
+    assert_eq!(round_axis(&clash([[0.0; 3], [0.0; 3]], 1.0)), None);
+}

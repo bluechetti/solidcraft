@@ -18,6 +18,10 @@ pub struct VrAssistant {
     hearing: Option<Receiver<Result<String, String>>>,
     /// What the line under Talk says: what was heard, or why nothing was.
     pub note: String,
+    /// The undo history's length when the last request was sent: once the agent is done, a design
+    /// changed since is offered to keep or undo (the change seen before it is kept).
+    base: Option<usize>,
+    review: bool,
 }
 
 /// The environment variable that names the voice program.
@@ -83,6 +87,8 @@ impl VrAssistant {
         match reply.map(|out| heard(&out)) {
             Ok(Some(text)) => {
                 self.note = format!("“{text}”");
+                self.base = Some(app.session.undo.len());
+                self.review = false;
                 crate::agent_chat::send_text(app, text);
             }
             Ok(None) => self.note = solidcraft_ui_text::tr("vr.talk_nothing").to_string(),
@@ -116,6 +122,42 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui, s: &mut VrAssistant) {
     let _ = talk;
     if !s.note.is_empty() {
         ui.label(egui::RichText::new(&s.note).color(t.text_dim));
+    }
+    // Once the agent is done with a request that changed the design: Keep it, or Undo it back to
+    // where the request found it.
+    let working = matches!(app.agent_chat.state(), crate::agent_chat::State::Busy | crate::agent_chat::State::Starting);
+    if let Some(base) = s.base
+        && !working
+        && !s.listening()
+    {
+        if app.session.undo.len() > base {
+            s.review = true;
+        } else {
+            s.base = None;
+        }
+    }
+    if s.review
+        && let Some(base) = s.base
+    {
+        ui.label(egui::RichText::new(solidcraft_ui_text::tr("vr.assistant_changed")).strong());
+        ui.horizontal(|ui| {
+            let half = egui::vec2((ui.available_width() - t.space_8) / 2.0, 36.0);
+            if ui.add_sized(half, egui::Button::new(solidcraft_ui_text::tr("vr.assistant_keep"))).clicked() {
+                s.review = false;
+                s.base = None;
+                s.note = solidcraft_ui_text::tr("vr.assistant_kept").to_string();
+            }
+            if ui.add_sized(half, egui::Button::new(solidcraft_ui_text::tr("vr.assistant_undo"))).clicked() {
+                while app.session.undo.len() > base {
+                    if app.run("edit.undo", serde_json::json!({})).is_err() {
+                        break;
+                    }
+                }
+                s.review = false;
+                s.base = None;
+                s.note = solidcraft_ui_text::tr("vr.assistant_undone").to_string();
+            }
+        });
     }
     ui.separator();
     crate::agent_chat::shared_content(app, ui, solidcraft_engine::panels::Flow::Tall);

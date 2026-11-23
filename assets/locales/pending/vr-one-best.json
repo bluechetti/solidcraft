@@ -1,6 +1,11 @@
 {
   "en": {
+    "vr.assistant_changed": "The Assistant changed the design:",
+    "vr.assistant_keep": "Keep",
+    "vr.assistant_kept": "Kept",
     "vr.assistant_off": "Turn on AI features in Preferences on the desktop to use the Assistant here.",
+    "vr.assistant_undo": "Undo",
+    "vr.assistant_undone": "Undone: the design is as the request found it",
     "vr.belt_assistant": "Assistant",
     "vr.belt_parameters": "Parameters",
     "vr.clashes_none": "No parts overlap",
@@ -20,6 +25,7 @@
     "vr.menu_measure": "Measure",
     "vr.menu_measure_off": "Measure off",
     "vr.menu_sweep": "Sweep joint",
+    "vr.move_onto": "onto",
     "vr.params_cancel": "Cancel",
     "vr.params_fine": "Fine steps",
     "vr.params_none": "This design has no parameters",

@@ -70,8 +70,8 @@ the model: a box's length, width and height, a cylinder's height and radius, a h
 sketch extruded into a body of its own. Point at an arrow's tip (it turns white) and hold Select:
 the size follows the hand along the arrow, a whole millimetre at a time, and the sign at the
 controller says it. Hold the grip of the same hand as well for precision: the hand then moves the
-size a tenth as far, in tenths, with no jump when the grip goes down or up. Letting go of Select
-sets it: one undo step. A size that is a user parameter, or a multiple of one (a radius written
+size a tenth as far, in tenths, with no jump when the grip goes down or up. The design follows the pull
+as it goes (a few times a second); letting go of Select sets it, the whole pull one undo step. A size that is a user parameter, or a multiple of one (a radius written
 `post_d / 2`), changes that parameter, so everything else using it follows.
 
 **Measure.** View ▸ Measure turns measuring on for the hand that chose it (and off again from the
@@ -81,7 +81,8 @@ between them, between centres for round faces, and the angle, with a line betwee
 points. A third Select starts again. The faces are measured exactly (`inspect.measure`), as the
 desktop's Measure does.
 
-**Clashes and sweeps.** View ▸ Clashes shows where parts overlap, as red boxes, and the sign
+**Clashes and sweeps.** View ▸ Clashes shows where parts overlap, as red boxes (a round
+overlap, a pin in a hole, as a cylinder), and the sign
 names each pair and how much overlaps (`inspect.clearance` on the solid bodies); while it is on, it
 is worked out again whenever the design changes and nothing is being dragged, and the sign says
 when the overlaps change. View ▸ Sweep joint runs the pointed (or selected) part's joint through its
@@ -93,21 +94,27 @@ shows where. Results stay at the controller for six seconds.
 hand: once it has gone a centimetre, the joint axis the hand's move follows best is taken, and the
 part slides along it with the hand or turns with the angle the hand sweeps about it (a tenth as far
 with the same hand's grip held). The joint is driven as the desktop's joint handles drive it, the
-whole drag one undo step; its limits hold it, and a limit or contact gives a firmer buzz and the
-sign says so. Letting go leaves it there; a short Select selects it as ever. A part without joints
+whole drag one undo step; its limits hold it, and a part that touched nothing when it was taken stops
+where it would go into another (`inspect.clearance` against the other bodies) and steps back to
+where it was clear; a limit or contact gives a firmer buzz and the sign says so. Letting go leaves it there; a short Select selects it as ever. A part without joints
 that can move it is moved freely instead (below), when it is selected.
 
 **Moving a part.** Hold Select on a part that is selected and move the hand: a box shows where it
 goes, and the sign at the controller says how far (millimetres along the model's axes, whole ones;
 tenths, a tenth as far, with the same hand's grip held). Letting go moves it there: one undo step
-(`solid.move` for a body, `occurrence.move` in world space for a placed part). A short Select on it,
+(`solid.move` for a body, `occurrence.move` in world space for a placed part; a grounded part moves
+and stays grounded). With the ray on another part, the box shows the part set on it instead: it
+moves, without turning, until the middle of its side facing that face touches the point (the face
+taken as the other part's side nearest the point), and the sign says onto what. A short Select on it,
 the hand hardly moved, selects or lets go of it as ever. Only with the ring menu on a button of its
 own; where holding Select opens the ring, a selected part is not moved this way.
 
 **The Assistant.** The Assistant bubble shows the desktop's Assistant (the agent chat, with
 AI features turned on in Preferences) in the window beside the belt: its conversation, Allow and
 Deny for what the agent asks to do, and Undo changes on each answer (every answer undoes as one
-step). Hold Talk at its top and speak; let go and what was heard is sent as the next message.
+step). Hold Talk at its top and speak; let go and what was heard is sent as the next message. When the
+agent is done and the request changed the design, Keep and Undo come up: Undo puts the design back
+as the request found it.
 SolidCraft does not record or transcribe itself: Talk runs the program `SOLIDCRAFT_VR_VOICE` names,
 which records until its input closes and prints what it heard (on Linux, `pw-record` and
 whisper.cpp do). Typing stays on the desktop's Assistant.

@@ -120,6 +120,9 @@ pub struct Vr {
     moving: Option<handles::PartMove>,
     /// Measuring with one hand ([`Measure`]), turned on and off from the ring.
     measure: Option<Measure>,
+    /// A size pull's undo history begins after this many steps: the pull stays one step, also for
+    /// changes computed off the window thread that land after it ended.
+    fold: Option<usize>,
     /// A placed part being moved as its joints allow ([`handles::JointDrag`]).
     joint_drag: Option<handles::JointDrag>,
     /// Where a script holds Select on the belt's window (`ui.vr_press` with hold).
@@ -479,6 +482,7 @@ impl Vr {
             handle_marks: Vec::new(),
             moving: None,
             measure: None,
+            fold: None,
             joint_drag: None,
             script_held: None,
             clashes: None,
@@ -809,6 +813,15 @@ impl Vr {
         // at the hand; let go, the item under the hand is taken. Without a menu button, holding
         // Select opens the ring (after `hold_time`) and a quick Select selects when let go.
         let menu_by_select = set.menu.is_empty();
+        // A size pull is one undo step, also once its last change has been computed.
+        if let Some(base) = self.fold {
+            if app.session.undo.len() > base + 1 {
+                app.session.undo.truncate(base + 1);
+            }
+            if self.drag.is_none() && app.computing_since().is_none() && app.deferred_queue.is_empty() {
+                self.fold = None;
+            }
+        }
         for hand in Hand::BOTH {
             let i = hand.index();
             let b = self.buttons[i];
@@ -821,23 +834,44 @@ impl Vr {
                 {
                     drag.follow(aim.position, t.scale, holds);
                 }
-                if b[SELECT].down {
-                    if let Some(drag) = &self.drag {
-                        let v = drag.value(holds);
-                        let fine = if holds { format!("  {}", solidcraft_ui_text::tr("vr.handle_fine")) } else { String::new() };
-                        self.pointer.say(i, format!("{} = {} {}{fine}", drag.handle.label, v, drag.handle.unit));
+                // The design follows the pull as it goes (a few times a second), the whole pull one
+                // undo step; letting go sets the last value.
+                let apply = |app: &mut SolveApp, drag: &mut handles::Drag, v: f64, now: f64| -> Result<(), String> {
+                    let Some(e) = drag.expression(v) else { return Ok(()) };
+                    app.run_heavy("parameters.change", serde_json::json!({"name": drag.handle.param, "expression": e}))?;
+                    if app.session.undo.len() > drag.base + 1 {
+                        app.session.undo.truncate(drag.base + 1);
                     }
-                } else if let Some(drag) = self.drag.take() {
+                    drag.sent = Some(v);
+                    drag.sent_at = now;
+                    Ok(())
+                };
+                if b[SELECT].down {
+                    if let Some(drag) = self.drag.as_mut() {
+                        let v = drag.value(holds);
+                        let mut said = String::new();
+                        if drag.due(v, now)
+                            && (drag.sent.is_some() || (v - drag.handle.value).abs() > 1e-9)
+                            && let Err(error) = apply(app, drag, v, now)
+                        {
+                            said = error;
+                        }
+                        let fine = if holds { format!("  {}", solidcraft_ui_text::tr("vr.handle_fine")) } else { String::new() };
+                        if said.is_empty() {
+                            said = format!("{} = {} {}{fine}", drag.handle.label, v, drag.handle.unit);
+                        }
+                        self.pointer.say(i, said);
+                    }
+                } else if let Some(mut drag) = self.drag.take() {
                     let v = drag.value(holds);
-                    let said = if (v - drag.handle.value).abs() < 1e-9 {
+                    let said = if drag.sent.is_none() && (v - drag.handle.value).abs() < 1e-9 {
                         String::new()
+                    } else if drag.sent == Some(v) {
+                        format!("{} = {v} {}", drag.handle.param, drag.handle.unit)
                     } else {
-                        match drag.expression(v) {
-                            Some(e) => match app.run_heavy("parameters.change", serde_json::json!({"name": drag.handle.param, "expression": e})) {
-                                Ok(_) => format!("{} = {e}", drag.handle.param),
-                                Err(error) => error,
-                            },
-                            None => String::new(),
+                        match apply(app, &mut drag, v, now) {
+                            Ok(()) => format!("{} = {v} {}", drag.handle.param, drag.handle.unit),
+                            Err(error) => error,
                         }
                     };
                     self.pointer.say(i, said);
@@ -859,12 +893,26 @@ impl Vr {
                     && let Some(axis) = j.chosen.clone()
                 {
                     let value = solidcraft_ui_egui::vr_joints::wanted(&axis, j.amount);
+                    if j.clear.1.is_nan() {
+                        j.clear = (0.0, axis.value);
+                    }
                     match solidcraft_ui_egui::vr_joints::drive(app, &axis, value, j.base) {
                         Ok(Some(mut d)) => {
                             // The drag asks past a limit: held there before the drive, which then
                             // cannot say so itself.
                             if d.held.is_none() && solidcraft_ui_egui::vr_joints::past_limit(&axis, j.amount) {
                                 d.held = Some("limit".into());
+                            }
+                            // Into another part: back to the last place it touched nothing.
+                            if j.stops_at_contact && solidcraft_ui_egui::vr_joints::touching(app, &j.part.bodies) == Ok(true) {
+                                let (amount, clear) = j.clear;
+                                if let Ok(Some(back)) = solidcraft_ui_egui::vr_joints::drive(app, &axis, clear, j.base) {
+                                    d.value = back.value;
+                                }
+                                j.amount = amount;
+                                d.held = Some("contact".into());
+                            } else {
+                                j.clear = (j.amount, value);
                             }
                             if d.held.is_some() && d.held != j.held {
                                 buzz(session, hand, HELD);
@@ -904,10 +952,28 @@ impl Vr {
                 {
                     m.follow(aim.position, t, holds);
                 }
+                // The ray on another part: let go there, the part lands on it.
+                if let Some(m) = self.moving.as_mut() {
+                    m.onto = None;
+                    if m.moving()
+                        && let Some(p) = self.pointer.pointed[i].as_ref()
+                        && p.part.sel != m.part.sel
+                        && let (Some(from), Some(target)) = (m.from, solidcraft_ui_egui::vr_handles::part_box(app, &p.part.bodies))
+                        && let Some((by, _)) = solidcraft_ui_egui::vr_handles::landing(from, target, p.point)
+                    {
+                        m.onto = Some((p.part.name.clone(), by));
+                    }
+                }
                 if b[SELECT].down {
                     if let Some(m) = self.moving.as_ref().filter(|m| m.moving()) {
-                        let [x, y, z] = m.by(holds);
-                        self.pointer.say(i, format!("{}  {x}, {y}, {z} mm", m.part.name));
+                        let said = match &m.onto {
+                            Some((target, _)) => format!("{} {} {target}", m.part.name, solidcraft_ui_text::tr("vr.move_onto")),
+                            None => {
+                                let [x, y, z] = m.by(holds);
+                                format!("{}  {x}, {y}, {z} mm", m.part.name)
+                            }
+                        };
+                        self.pointer.say(i, said);
                     }
                 } else if let Some(m) = self.moving.take() {
                     let said = if !m.moving() {
@@ -918,13 +984,16 @@ impl Vr {
                         match solidcraft_ui_egui::vr_handles::move_command(&m.part, by) {
                             Some(_) if by == [0.0; 3] => String::new(),
                             Some((command, params)) => match app.run_heavy(command, params) {
-                                Ok(_) => format!("{}  {}, {}, {} mm", m.part.name, by[0], by[1], by[2]),
+                                Ok(_) => match &m.onto {
+                                    Some((target, _)) => format!("{} {} {target}", m.part.name, solidcraft_ui_text::tr("vr.move_onto")),
+                                    None => format!("{}  {}, {}, {} mm", m.part.name, by[0], by[1], by[2]),
+                                },
                                 Err(error) => error,
                             },
                             None => String::new(),
                         }
                     };
-                    self.pointer.say(i, said);
+                    self.pointer.tell(i, said);
                     buzz(session, hand, Pulse::TICK);
                     self.presses[i].next_after(false, now, f64::from(set.hold_time));
                 }
@@ -939,6 +1008,10 @@ impl Vr {
                 && let (Some(aim), Some(t)) = (hands[i].aim.as_ref(), self.transform.as_ref())
             {
                 self.drag = handles::Drag::new(i, handle, t, aim.position);
+                if let Some(drag) = self.drag.as_mut() {
+                    drag.base = app.session.undo.len();
+                    self.fold = Some(drag.base);
+                }
                 buzz(session, hand, Pulse::GRAB);
                 continue;
             }
@@ -960,7 +1033,10 @@ impl Vr {
                 let axes = solidcraft_ui_egui::vr_joints::axes(app, occurrence);
                 if !axes.is_empty() {
                     let base = app.session.undo.len();
-                    self.joint_drag = Some(handles::JointDrag::new(i, pointed.part.clone(), axes, aim.position, t, base));
+                    let mut drag = handles::JointDrag::new(i, pointed.part.clone(), axes, aim.position, t, base);
+                    // Contact stops it only when the part touched nothing to begin with.
+                    drag.stops_at_contact = solidcraft_ui_egui::vr_joints::touching(app, &pointed.part.bodies) == Ok(false);
+                    self.joint_drag = Some(drag);
                     continue;
                 }
             }
@@ -1348,7 +1424,10 @@ impl Vr {
                     *list = found;
                 }
                 for c in self.clashes.iter().flat_map(|(_, _, list)| list.iter()).take(handles::MAX_BOXES) {
-                    handles::draw_box(&mut self.handle_marks, t, head, c.bbox, linear(tk.error));
+                    match solidcraft_ui_egui::vr_joints::round_axis(c) {
+                        Some(k) => handles::draw_cylinder(&mut self.handle_marks, t, head, c.bbox, k, linear(tk.error)),
+                        None => handles::draw_box(&mut self.handle_marks, t, head, c.bbox, linear(tk.error)),
+                    }
                 }
                 if self.swept.is_some_and(|(at, _)| at != key) {
                     self.swept = None;

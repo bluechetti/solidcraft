@@ -9,6 +9,9 @@ use solidcraft_ui_egui::vr_handles::Handle;
 use solidcraft_vr::marks::{self, Vertex};
 use solidcraft_vr::room::Transform;
 
+/// How often (seconds) the design follows a pull while it goes on.
+pub const LIVE_EVERY: f64 = 0.15;
+
 /// How long an arrow is in the room (metres), whatever the model's scale.
 pub const ARROW: f64 = 0.05;
 
@@ -18,7 +21,11 @@ pub const REACH: f64 = 0.03;
 /// The most handles drawn, and the vertices they take (a shaft and the bar at its tip each), with a
 /// moving part's box (twelve edges).
 pub const MAX_HANDLES: usize = 24;
-pub const VERTICES: usize = MAX_HANDLES * 2 * LINE + 12 * LINE + 3 * LINE + (MAX_BOXES + 1) * 12 * LINE;
+pub const VERTICES: usize = MAX_HANDLES * 2 * LINE + 12 * LINE + 3 * LINE + (MAX_BOXES + 1) * CYLINDER_LINES * LINE;
+
+/// The lines a round overlap is drawn with: two rings and four lines along it (more than a box's 12).
+const CYLINDER_LINES: usize = 2 * RING + 4;
+const RING: usize = 16;
 
 /// The vertices one line takes ([`marks::line`]: two sides of a quad).
 const LINE: usize = 12;
@@ -34,12 +41,23 @@ pub struct Drag {
     last: [f64; 3],
     /// How far the size has been pulled (model millimetres), precision already applied.
     pulled: f64,
+    /// The undo history's length when the pull began (the pull is one step after it), the value
+    /// last applied while pulling and when (the frame's clock): the design follows the pull.
+    pub base: usize,
+    pub sent: Option<f64>,
+    pub sent_at: f64,
 }
 
 impl Drag {
     pub fn new(hand: usize, handle: Handle, transform: &Transform, at: [f64; 3]) -> Option<Drag> {
         let dir_room = dir_room(transform, &handle)?;
-        Some(Drag { hand, handle, dir_room, last: at, pulled: 0.0 })
+        Some(Drag { hand, handle, dir_room, last: at, pulled: 0.0, base: 0, sent: None, sent_at: f64::NEG_INFINITY })
+    }
+
+    /// Whether the design should follow the pull to `value` now (`now`, the frame's clock): a new
+    /// value, at most [`LIVE_EVERY`] seconds after the last one applied.
+    pub fn due(&self, value: f64, now: f64) -> bool {
+        self.sent != Some(value) && (now - self.sent_at >= LIVE_EVERY || now < self.sent_at)
     }
 
     /// The hand is at `at` now; `fine` while its grip is held. Only this frame's move counts at
@@ -141,11 +159,13 @@ pub struct PartMove {
     travel: f64,
     /// How far the part has gone (model millimetres, world axes), precision applied.
     moved: [f64; 3],
+    /// Let go now, it lands on this other part (named) with this move: the ray is on it.
+    pub onto: Option<(String, [f64; 3])>,
 }
 
 impl PartMove {
     pub fn new(hand: usize, part: std::sync::Arc<solidcraft_ui_egui::vr_pick::Part>, from: Option<[[f64; 3]; 2]>, at: [f64; 3]) -> PartMove {
-        PartMove { hand, part, from, last: at, travel: 0.0, moved: [0.0; 3] }
+        PartMove { hand, part, from, last: at, travel: 0.0, moved: [0.0; 3], onto: None }
     }
 
     /// The hand is at `at`; `fine` while its grip is held (a tenth as far, no jump).
@@ -165,9 +185,12 @@ impl PartMove {
         self.travel > MOVE_START
     }
 
-    /// The move so far, snapped (a tenth with `fine`).
+    /// The move so far, snapped (a tenth with `fine`); onto another part, the landing move.
     pub fn by(&self, fine: bool) -> [f64; 3] {
-        solidcraft_ui_egui::vr_handles::snapped(self.moved, fine)
+        match &self.onto {
+            Some((_, by)) => *by,
+            None => solidcraft_ui_egui::vr_handles::snapped(self.moved, fine),
+        }
     }
 
     /// The part's box moved by `by`, as twelve edges in the room.
@@ -220,6 +243,10 @@ pub struct JointDrag {
     pub base: usize,
     /// What held the joint last frame (a limit, contact), to buzz once when it starts holding.
     pub held: Option<String>,
+    /// The part touched nothing when the drag began: then contact stops it.
+    pub stops_at_contact: bool,
+    /// The last motion and joint value that touched nothing, to go back to.
+    pub clear: (f64, f64),
 }
 
 fn sub3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
@@ -255,7 +282,21 @@ impl JointDrag {
         base: usize,
     ) -> JointDrag {
         let at = t.to_model(at_room);
-        JointDrag { hand, part, axes, chosen: None, start: at, last: at, last_room: at_room, travel: 0.0, amount: 0.0, base, held: None }
+        JointDrag {
+            hand,
+            part,
+            axes,
+            chosen: None,
+            start: at,
+            last: at,
+            last_room: at_room,
+            travel: 0.0,
+            amount: 0.0,
+            base,
+            held: None,
+            stops_at_contact: false,
+            clear: (0.0, f64::NAN),
+        }
     }
 
     /// How well a move `by` (model units) from `from` follows `axis`: along it for a slide, across
@@ -322,6 +363,35 @@ pub fn draw_box(out: &mut Vec<Vertex>, t: &Transform, head: [f64; 3], [lo, hi]: 
 
 /// The most clash boxes drawn (and the sweep's mark).
 pub const MAX_BOXES: usize = 8;
+
+/// A round overlap (a pin in a hole) as a cylinder in its box `[lo, hi]` (model units) along model
+/// axis `k`: a ring at each end and four lines between.
+pub fn draw_cylinder(out: &mut Vec<Vertex>, t: &Transform, head: [f64; 3], [lo, hi]: [[f64; 3]; 2], k: usize, colour: [f32; 3]) {
+    let (a, b) = ((k + 1) % 3, (k + 2) % 3);
+    let centre = [(lo[a] + hi[a]) / 2.0, (lo[b] + hi[b]) / 2.0];
+    let radius = [(hi[a] - lo[a]) / 2.0, (hi[b] - lo[b]) / 2.0];
+    let at = |angle: f64, end: f64| {
+        let mut p = [0.0; 3];
+        p[k] = end;
+        p[a] = centre[0] + radius[0] * angle.cos();
+        p[b] = centre[1] + radius[1] * angle.sin();
+        t.apply(p)
+    };
+    let line = |out: &mut Vec<Vertex>, p: [f64; 3], q: [f64; 3]| {
+        let normal = [0, 1, 2].map(|j| head[j] - (p[j] + q[j]) / 2.0);
+        marks::line(out, p, q, normal, 0.0012, colour);
+    };
+    let step = std::f64::consts::TAU / RING as f64;
+    for end in [lo[k], hi[k]] {
+        for i in 0..RING {
+            line(out, at(step * i as f64, end), at(step * (i + 1) as f64, end));
+        }
+    }
+    for i in 0..4 {
+        let angle = std::f64::consts::FRAC_PI_2 * i as f64;
+        line(out, at(angle, lo[k]), at(angle, hi[k]));
+    }
+}
 
 #[cfg(test)]
 mod tests {
