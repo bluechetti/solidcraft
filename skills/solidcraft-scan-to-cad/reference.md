@@ -59,7 +59,7 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 | Command | Use | Reply worth reading |
 |---|---|---|
 | `scan.survey {}` | first look, changes nothing | `own_size`, `noise`, `smoothing`, `holes`, `floating`, `tangled_edges`, `crossing_faces`, `sheet_like`, `shapes`, `next[{command, why, params}]` |
-| `scan.find_all {}` | regions of the scan read as planes, cylinders, spheres, cones, tori or freeform (a view, no undo step) | `shapes[{index, kind, area, point, direction?, radius?, hole?}]`, `in_shapes`, `noise` |
+| `scan.find_all {}` | regions of the scan read as planes, cylinders, spheres, cones, tori or freeform (a view, no undo step); `"limit": 20` lists only the 20 largest (a busy scan has hundreds, tens of KB), their numbers kept, `more_shapes` counting the rest | `shapes[{index, kind, area, point, direction?, radius?, hole?}]`, `in_shapes`, `noise` |
 | `scan.reconstruct {}` | what the shapes make: prisms, a turned part, holes, repeats, fillets (reads only) | `prisms`, `turned`, `holes`, `repeats`, `proposals[{command, params}]`, `note` |
 | `scan.symmetry {}` (`"saved"` or `"triangles"`: the mirror plane of that region alone) | the mirror plane, kept as a construction plane | `mirror {point, normal, rms, coverage, symmetric, partly?}`: `partly` says how much of a mirror image has no match (one-sided parts, not noise); `region` |
 | `scan.bases {}` | the ways the scan could stand, for `scan.stand_on_base {"base": n}`; a turned part's bases of kind `end` stand it on an end of its axis, the axis then along Z (no rotation worked out by hand) | `bases[{kind, normal, area, share}]` |

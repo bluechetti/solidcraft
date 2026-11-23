@@ -7,7 +7,7 @@ use crate::schema::tests::assert_keys;
 
 #[test]
 fn schemas_and_the_key_check_agree() {
-    assert_keys(input_schema_for::<ScanFindAllParams>(), &["body", "show", "tolerance"]);
+    assert_keys(input_schema_for::<ScanFindAllParams>(), &["body", "limit", "show", "tolerance"]);
     assert_keys(input_schema_for::<ScanReconstructParams>(), &["body", "selected", "tolerance"]);
     assert_keys(input_schema_for::<ScanReconstructSelectionParams>(), &["body"]);
     assert_keys(input_schema_for::<ScanExtrudeItParams>(), &["body", "into", "pattern", "prism", "selected"]);

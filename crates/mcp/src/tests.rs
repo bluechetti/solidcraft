@@ -732,6 +732,47 @@ fn skill_reference_refuses_unknown_names_and_paths_with_available_choices() {
     }
 }
 
+/// `section`: a document's contents with sizes, then one section by its heading, so an agent
+/// reads the part it needs (the scan reference is 28 KB, kept in its context all session).
+#[test]
+fn skill_reference_reads_one_section_or_the_contents() {
+    let mut s = server();
+    let text = |s: &mut Server, args: Value| {
+        let r = raw_tool(s, "skill_reference", args);
+        (r["result"]["isError"] == true, r["result"]["content"][0]["text"].as_str().unwrap_or_default().to_string())
+    };
+    let (_, whole) = text(&mut s, json!({"skill": "solidcraft-scan-to-cad"}));
+    let (err, contents) = text(&mut s, json!({"skill": "solidcraft-scan-to-cad", "section": "contents"}));
+    assert!(
+        !err && contents.starts_with("# Scan to CAD reference") && contents.contains("- Known problems (") && contents.len() < 1500,
+        "{contents}"
+    );
+    let (err, known) = text(&mut s, json!({"skill": "solidcraft-scan-to-cad", "section": "known problems"}));
+    assert!(!err && known.starts_with("## Known problems") && whole.contains(&known) && !known.contains("## Verify"), "{known}");
+    // A word of one heading is enough; one of several is refused with those headings.
+    let (err, routes) = text(&mut s, json!({"skill": "solidcraft-scan-to-cad", "section": "routes"}));
+    assert!(!err && routes.starts_with("## Routes in detail"), "{routes}");
+    let (err, e) = text(&mut s, json!({"skill": "solidcraft-scan-to-cad", "section": "nope"}));
+    assert!(err && e.contains("no section `nope`") && e.contains("Known problems"), "{e}");
+    let (err, e) = text(&mut s, json!({"skill": "solidcraft-modeling", "section": "e"}));
+    assert!(err && e.contains("matches several sections"), "{e}");
+    // A section that is not a string is refused by the tool's schema before it runs.
+    let r = raw_tool(&mut s, "skill_reference", json!({"skill": "solidcraft-modeling", "file": "SKILL.md", "section": 3}));
+    assert_eq!(r["error"]["code"], -32602, "{r}");
+    // Every section of every bundled document, put back together, is the document after its title.
+    for skill in ["solidcraft-modeling", "solidcraft-scan-to-cad", "solidcraft-sheetmetal"] {
+        let (_, whole) = text(&mut s, json!({"skill": skill}));
+        let first = whole.find("\n## ").map_or(0, |at| at + 1);
+        let (_, contents) = text(&mut s, json!({"skill": skill, "section": "contents"}));
+        let joined: String = contents
+            .lines()
+            .filter_map(|l| l.strip_prefix("- ").and_then(|l| l.rsplit_once(" (")).map(|(h, _)| h.to_string()))
+            .map(|h| text(&mut s, json!({"skill": skill, "section": h})).1)
+            .collect();
+        assert_eq!(joined, whole[first..], "{skill}");
+    }
+}
+
 #[test]
 fn skill_reference_is_advertised_as_read_only() {
     let mut s = server();
@@ -4860,6 +4901,71 @@ fn unknown_names_list_what_the_design_has() {
     // An error about something else is left as it was.
     let e = error(&mut s, "execute", json!({"command": "solid.fillet", "params": {"edges": [[0, 0, 0]], "radius": 1}}));
     assert!(!e.contains("the design has"), "{e}");
+}
+
+/// A design whose `solid.combine` the kernel refuses, as SMLib words it.
+struct RefusedJoin(Headless);
+impl crate::Backend for RefusedJoin {
+    fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        if params.get("command").and_then(Value::as_str) == Some("solid.combine") {
+            return Err("SMLib boolean: operation: solidcore: smlib_boolean_union_all: boolean::merge::p2::make_faceuse: no radial edge use classifies the face's edge use".into());
+        }
+        crate::Backend::call(&mut self.0, method, params)
+    }
+    fn has_ui(&self) -> bool {
+        false
+    }
+    fn in_process(&self) -> bool {
+        true
+    }
+    fn describe(&self) -> String {
+        "headless whose joins are refused".into()
+    }
+}
+
+/// A kernel refusal keeps its own text and is said in words after it, with what to try, for
+/// `execute` and for a `batch`'s failing step; other errors get no such line.
+#[test]
+fn kernel_refusals_are_said_in_words() {
+    let mut s = Server::new(Box::new(RefusedJoin(Headless::default())));
+    let r = raw_tool(&mut s, "execute", json!({"command": "solid.combine", "params": {"target": "Body1", "tools": ["Body2"]}}));
+    let text = r["result"]["content"][0]["text"].as_str().unwrap_or_default();
+    assert!(text.contains("make_faceuse") && text.contains("\nin words: the bodies could not be combined") && text.contains("overlap"), "{text}");
+    let r = raw_tool(&mut s, "batch", json!({"commands": [{"command": "solid.combine", "params": {"target": "Body1", "tools": ["Body2"]}}]}));
+    let reply: Value = serde_json::from_str(r["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert!(reply["failed"]["error"].as_str().is_some_and(|e| e.contains("in words: the bodies could not be combined")), "{reply}");
+    let r = raw_tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length": -1}}));
+    assert!(!r["result"]["content"][0]["text"].as_str().unwrap_or_default().contains("in words:"), "{r}");
+}
+
+/// What an agent reads before it builds anything stays small: the tool list (every session
+/// loads it), the instructions, and `describe_command`'s docs. The 2026-11-22 replay of 845
+/// agent calls found pretty-printing, full schemas and whole skill documents were half of what
+/// agents read; a ceiling here keeps that from creeping back. Raise one only on purpose.
+#[test]
+fn what_agents_read_first_stays_small() {
+    let mut s = server();
+    let init =
+        call(&mut s, 1, "initialize", json!({"protocolVersion": PROTOCOL_VERSION, "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}));
+    let instructions = init["result"]["instructions"].as_str().unwrap_or_default().len();
+    let tools = call(&mut s, 2, "tools/list", json!({}))["result"]["tools"].to_string().len();
+    let describe = |s: &mut Server, id: &str| {
+        raw_tool(s, "describe_command", json!({"id": id}))["result"]["content"][0]["text"].as_str().unwrap_or_default().len()
+    };
+    let (reconstruct, fillet) = (describe(&mut s, "scan.reconstruct"), describe(&mut s, "solid.fillet"));
+    let contents =
+        raw_tool(&mut s, "skill_reference", json!({"skill": "solidcraft-scan-to-cad", "section": "contents"}))["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .len();
+    let sizes = format!(
+        "instructions {instructions}, tools/list {tools}, describe scan.reconstruct {reconstruct}, solid.fillet {fillet}, scan contents {contents}"
+    );
+    // About a tenth over each size on 2026-11-22 (3341, 37897, 1239, 3760, 756).
+    assert!(instructions <= 3_700, "{sizes}");
+    assert!(tools <= 42_000, "{sizes}");
+    assert!(reconstruct <= 6_000 && fillet <= 6_000, "docs only, no schemas: {sizes}");
+    assert!(contents <= 1_500, "{sizes}");
 }
 
 /// With compact output (#15): sketch summaries, compact JSON; full sketch contents only for the

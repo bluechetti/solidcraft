@@ -348,6 +348,15 @@ fn a_rounded_block_is_extruded_back_from_its_scan() {
     assert_eq!(kinds.iter().filter(|k| **k == "cylinder").count(), 4, "{found}");
     assert!(found["in_shapes"].as_f64().unwrap() > 0.99, "{found}");
     assert!(s.scan_shapes.as_ref().is_some_and(|k| k.shown && k.current(&s)));
+    // `limit`: the largest shapes only, with their own numbers, and how many were left out.
+    let few = run(&mut s, "scan.find_all", json!({"limit": 3}));
+    let all = found["shapes"].as_array().unwrap();
+    let mut largest: Vec<&Value> = all.iter().collect();
+    largest.sort_by(|a, b| b["area"].as_f64().unwrap().total_cmp(&a["area"].as_f64().unwrap()));
+    assert_eq!(few["shapes"].as_array().unwrap().iter().collect::<Vec<_>>(), largest[..3].to_vec(), "{few}");
+    assert_eq!(few["more_shapes"].as_u64(), Some(all.len() as u64 - 3), "{few}");
+    assert!(found.get("more_shapes").is_none(), "nothing left out without a limit: {found}");
+    assert!(s.execute("scan.find_all", &json!({"limit": 0})).is_err_and(|e| e.to_string().contains("`limit`")));
 
     let read = run(&mut s, "scan.reconstruct", json!({}));
     assert_eq!(read["prisms"].as_array().unwrap().len(), 1, "{read}");

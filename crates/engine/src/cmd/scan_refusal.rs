@@ -33,15 +33,21 @@ const FIXES: [(&str, &str); 6] = [
     ("Tolerance", "bring the edges together (Merge with a larger gap) before sewing"),
 ];
 
-/// What the kernel's check refused, in words: each kind of failure it names, once. Text that
-/// names no known kind says only that the check refused.
-pub(super) fn kernel_words(kernel: &str) -> String {
+/// Each kind of failure the kernel's text names, in words, once.
+fn named_kinds(kernel: &str) -> Vec<&'static str> {
     let mut said: Vec<&str> = Vec::new();
     for (name, words) in KINDS {
         if kernel.contains(name) && !said.contains(words) {
             said.push(words);
         }
     }
+    said
+}
+
+/// What the kernel's check refused, in words: each kind of failure it names, once. Text that
+/// names no known kind says only that the check refused.
+pub(super) fn kernel_words(kernel: &str) -> String {
+    let said = named_kinds(kernel);
     if said.is_empty() { "the kernel's check refused the joined surface".to_string() } else { said.join("; ") }
 }
 
@@ -64,10 +70,59 @@ pub(super) fn reconstruct_refusal(cmd: &str, e: EngineError) -> EngineError {
     bad(cmd, format!("the kernel refused the feature this step builds: {}; {RECONSTRUCT_FIX}", kernel_words(&text)))
 }
 
+/// A refusal of `what` by a command that knows its own fix (Shell It: not the surface-fit advice
+/// [`refused`] gives when the kernel's text names no known kind): the kinds named, if any, then
+/// `fix`. `kernel` is read here and never shown.
+pub(super) fn refused_trying(cmd: &str, what: &str, kernel: &str, fix: &str) -> EngineError {
+    let said = named_kinds(kernel);
+    if said.is_empty() { bad(cmd, format!("{what}; {fix}")) } else { bad(cmd, format!("{what}: {}; {fix}", said.join("; "))) }
+}
+
 /// A refusal of `what` (such as "the faces could not be sewn"): the reason in words, then what
 /// to try. `kernel` is the kernel's own text, which is read here and never shown.
 pub(super) fn refused(cmd: &str, what: &str, kernel: &str) -> EngineError {
     bad(cmd, format!("{what}: {}; {}", kernel_words(kernel), kernel_fix(kernel)))
+}
+
+/// A feature's kernel refusal said in words, with what to try, by the operation its text names:
+/// `None` when the text is not the kernel's (no "SMLib" or "solidcore") or names none of them.
+/// The kernel's text stays where it is; this is said after it. Kernel text like "make_faceuse:
+/// no radial edge use classifies the face's edge use" left agents retrying the same join five
+/// times (a replay of recorded agent calls, 2026-11-22).
+pub fn feature_in_words(text: &str) -> Option<String> {
+    if !(text.contains("SMLib") || text.contains("solidcore")) {
+        return None;
+    }
+    let lower = text.to_lowercase();
+    let has = |words: &[&str]| words.iter().any(|w| lower.contains(w));
+    let (what, fix) = if has(&["fillet", "blend", "rolling ball"]) {
+        (
+            "the round could not be built along these edges",
+            "a smaller radius (the error names the largest that fits when it knows it), `tangent_chain: false`, the edges in smaller groups, or the round earlier in the timeline, before the feature that tightened its faces (timeline.roll_to, then the fillet, then roll forward)",
+        )
+    } else if has(&["draft"]) {
+        (
+            "the drafted faces' neighbours could not be extended to meet them",
+            "a smaller angle, fewer faces drafted at once, or the draft before the rounds next to them",
+        )
+    } else if has(&["shell", "hollow", "thicken"]) {
+        (
+            "the walls could not be offset to that thickness",
+            "a thinner wall, the shell before the rounds (fillet after shelling), or fewer faces removed",
+        )
+    } else if has(&["boolean", "union", "subtract", "intersect", "make_faceuse", "radial edge"]) {
+        (
+            "the bodies could not be combined where their faces meet (faces touching on a shared plane or along an edge, or a sliver between them, are the usual cause)",
+            "let the tool overlap the body by a little (0.01 to 0.1 mm) instead of touching it on a face, run this step on its own, or change the order of the features",
+        )
+    } else if has(&["offset"]) {
+        ("the faces could not be offset", "a smaller distance, or fewer faces at once")
+    } else if has(&["sew", "stitch"]) {
+        ("the faces could not be sewn into one body", "close the gaps between them first, or sew fewer faces at once")
+    } else {
+        return None;
+    };
+    Some(format!("in words: {what}; try {fix}"))
 }
 
 #[cfg(test)]
@@ -113,5 +168,32 @@ mod tests {
         }
         let unknown = refused("scan.fit_patches", "the blocks could not be sewn", "odd").to_string();
         assert!(unknown.contains("try a smaller region"), "{unknown}");
+    }
+
+    /// A command with its own fix (Shell It) never gets the surface-fit advice, whatever the
+    /// kernel's text names; a kind it does name is still said.
+    #[test]
+    fn a_refusal_with_its_own_fix_gives_that_fix() {
+        let text = refused_trying("scan.shell_it", "the body could not be hollowed", "odd", "shell before the rounds").to_string();
+        assert!(text.ends_with("the body could not be hollowed; shell before the rounds"), "{text}");
+        assert!(!text.contains("control points") && !text.contains("check refused the joined surface"), "{text}");
+        let text = refused_trying("scan.shell_it", "the body could not be hollowed", "Sliver face", "shell before the rounds").to_string();
+        assert!(text.contains("a face is too thin to hold; shell before the rounds"), "{text}");
+    }
+
+    /// A feature's kernel refusal in words, by the operation its text names; text that is not
+    /// the kernel's, or names no operation, gets nothing.
+    #[test]
+    fn a_feature_refusal_is_said_in_words_by_its_operation() {
+        let boolean = "SMLib boolean: operation: solidcore: smlib_boolean_union_all: boolean::merge::p2::make_faceuse: no radial edge use classifies the face's edge use";
+        let words = feature_in_words(boolean).unwrap_or_default();
+        assert!(words.contains("could not be combined where their faces meet") && words.contains("overlap"), "{words}");
+        let fillet = "SMLib fillet: operation: the blend failed (status 1001): the fillet body is not built: Fillet Solver Error";
+        let words = feature_in_words(fillet).unwrap_or_default();
+        assert!(words.contains("round could not be built") && words.contains("tangent_chain: false"), "{words}");
+        let draft = "SMLib draft: operation: the offset is refused: how far its neighbours extend to meet it has no certified bound";
+        assert!(feature_in_words(draft).is_some_and(|w| w.contains("drafted faces")), "draft before offset");
+        assert_eq!(feature_in_words("no body `Housing`"), None);
+        assert_eq!(feature_in_words("SMLib something else entirely"), None);
     }
 }

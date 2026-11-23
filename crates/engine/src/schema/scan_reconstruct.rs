@@ -21,6 +21,10 @@ pub struct ScanFindAllParams {
     /// scan that is smooth but off by more than its noise (a fused depth-camera scan).
     #[serde(default)]
     pub tolerance: Option<f64>,
+    /// At most this many shapes in the reply, the largest (the shapes are read all the same, and
+    /// keep their numbers). Default: every shape.
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 /// A shape Find All found.
@@ -67,6 +71,9 @@ pub struct ScanFindAllResult {
     pub body: Option<String>,
     /// The shapes, largest first.
     pub shapes: Vec<ScanShapeFound>,
+    /// With `limit`: how many smaller shapes were left out of `shapes`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub more_shapes: usize,
     /// The freeform regions (no shape), and their area in mm².
     pub freeform: usize,
     pub freeform_area: f64,
@@ -78,6 +85,10 @@ pub struct ScanFindAllResult {
     /// In the warn parameter-check mode: what the call's parameters got wrong.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 /// Read what the scan's shapes make: its prisms, a turned part, repeats and round holes, and

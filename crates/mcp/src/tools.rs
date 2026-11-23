@@ -464,11 +464,13 @@ pub fn tool_definitions_with(opts: Options) -> Vec<Value> {
             "Skill reference",
             "Read a document of SolidCraft's bundled agent skills (solidcraft-modeling, solidcraft-mechanisms, \
              solidcraft-editing, solidcraft-checking, solidcraft-scan-to-cad) from the copy built into SolidCraft. `file` defaults to reference.md; \
-             each skill also has SKILL.md. Unknown skills or files are refused with the available ones.",
+             each skill also has SKILL.md. `section: \"contents\"` lists a document's sections with their sizes, and `section` with a \
+             heading returns that section alone. Unknown skills, files or sections are refused with the available ones.",
             object(
                 json!({
                     "skill": string("Skill name, such as solidcraft-modeling"),
                     "file": {"type": "string", "description": "Document of that skill", "default": "reference.md"},
+                    "section": string("\"contents\" (the sections and their sizes), or one section's heading, such as \"Known problems\" (default: the whole document)"),
                 }),
                 &["skill"],
             ),
@@ -627,7 +629,7 @@ pub fn call_tool_with(b: &mut dyn Backend, name: &str, args: &Value, opts: Optio
     };
     match r {
         Ok(v) => text_result(&v, false),
-        Err(e) => text_result(&Value::String(with_names(b, e, false)), true),
+        Err(e) => text_result(&Value::String(explained(b, e, false)), true),
     }
 }
 
@@ -639,7 +641,7 @@ fn execute(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
     };
     match dispatch(b, "execute", a) {
         Ok(v) => with_expectation(b, v, expect),
-        Err(e) => text_result(&Value::String(with_names(b, e, false)), true),
+        Err(e) => text_result(&Value::String(explained(b, e, false)), true),
     }
 }
 
@@ -1316,6 +1318,17 @@ fn docs_only(v: &mut Value, id: &str) {
     }
 }
 
+/// A tool error made easier to act on: the names the design has when it names one it does not
+/// ([`with_names`]), and a kernel refusal said in words with what to try after its own text
+/// (`feature_in_words`: "make_faceuse: no radial edge use …" alone tells an agent nothing).
+fn explained(b: &mut dyn Backend, error: String, rolled_back: bool) -> String {
+    let error = with_names(b, error, rolled_back);
+    match solidcraft_engine::cmd::scan::refusal::feature_in_words(&error) {
+        Some(words) if !error.contains("in words:") => format!("{error}\n{words}"),
+        _ => error,
+    }
+}
+
 /// An error that names a body, sketch or feature the design does not have, with the ones it
 /// has and the nearest as "did you mean": "no body `Model`" alone sends an agent to list the design, and the
 /// replay of 845 agent calls (2026-11-22) found these the commonest error. A body name that is
@@ -1658,7 +1671,7 @@ fn batch(b: &mut dyn Backend, a: &Map<String, Value>) -> Value {
         (mut reply, true) => {
             let rolled_back = reply["rolled_back"] == true;
             if let Some(e) = reply.pointer("/failed/error").and_then(Value::as_str).map(str::to_owned) {
-                reply["failed"]["error"] = json!(with_names(b, e, rolled_back));
+                reply["failed"]["error"] = json!(explained(b, e, rolled_back));
             }
             text_result(&reply, true)
         }

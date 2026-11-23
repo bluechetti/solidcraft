@@ -348,7 +348,10 @@ A tool error that names a body, sketch or feature the design does not have ("no 
 (`the design has bodies: Body1, Body2`), a `did you mean` when one is close, and, for a body
 name that is a feature's, that it is a feature's name (a box feature `Blk` makes the body
 `Body1`). In a `batch` that was rolled back the names are the design's after the rollback.
-Tool results that are JSON are never pretty-printed.
+A kernel refusal (its text names SMLib or solidcore) keeps its text and gets a line after it,
+`in words: …; try …`: what could not be built (a round, a join where faces touch, a draft, a
+shell, an offset, a sewing) and what usually gets past it. Tool results that are JSON are never
+pretty-printed.
 
 | Tool | Arguments | What it does |
 |---|---|---|
@@ -402,7 +405,7 @@ builds it.
 | `undo`, `redo` | — | Undo / redo one change. |
 | `pending` | — | Bridged: the result of a request that was still running when its call returned (an error starting `still running:`), waiting up to 60 s for it; `done: false` while it runs (call again), `pending: null` when nothing runs. See [Long-running requests](#long-running-requests). |
 | `crash_reports` | `id?`, `limit?` | The crash reports on this computer, newest first; with `id`, the whole report (backtrace, command, recent commands, `design_path`/`replay_path`). See [crash-reports.md](crash-reports.md). |
-| `skill_reference` | `skill`, `file?` (default `reference.md`) | Read a bundled skill document. Skills: `solidcraft-modeling`, `solidcraft-mechanisms`, `solidcraft-editing`, `solidcraft-checking`, `solidcraft-scan-to-cad`. |
+| `skill_reference` | `skill`, `file?` (default `reference.md`), `section?` | Read a bundled skill document. Skills: `solidcraft-modeling`, `solidcraft-mechanisms`, `solidcraft-editing`, `solidcraft-checking`, `solidcraft-scan-to-cad`. `section: "contents"` lists the document's `##` sections with their sizes; `section` with a heading (any case; a word of it when only one heading has it) returns that section alone. |
 | `running` | - | What the app is running or has queued, for every client (`control.running`, see [control-protocol.md](control-protocol.md#limits)): each request's connection and id, method, command id or a batch's step count, `running_s`, `queued` and, when its work reports it, `progress` (how far it is, in words), never its parameters. Answers at once while the app is busy, also while another call from this client, such as a long `batch`, is still waiting for its reply: bridged, it is then asked on a connection of its own (its `self` marks no request) and its reply comes before that call's. Ask it when a call timed out before sending a change again. Headless: always `{"running": []}`. |
 | `new_design` | `name?` | Start an empty design. |
 | `cancel` | — | Bridged: cancel this server's request that was still running in the app when its call returned (`control.cancel`, see [Cancelling a request](#cancelling-a-request)). Headless: an error, as nothing is ever left running. Not a `batch` step. |

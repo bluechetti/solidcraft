@@ -50,6 +50,8 @@ const CHAMFER_IT_CONTRACT: TypedContract<ScanChamferItParams> = TypedContract::n
 const NEST_ASTRAY: f64 = 0.01;
 const NEST_CONTRACT: TypedContract<ScanNestParams> = TypedContract::new();
 const SHELL_IT_CONTRACT: TypedContract<ScanShellItParams> = TypedContract::new();
+/// What to try when the kernel refuses Shell It's shell.
+const SHELL_IT_FIX: &str = "run Shell It before Fillet It (a round on the rim stops the kernel shelling a drafted body), stand the scan on its base first (scan.stand_on_base) so drafted walls lie square to the grid, or shell by hand with a thinner wall (solid.shell)";
 
 pub static COMMANDS: &[CommandSpec] = &[
     CommandSpec::new("scan.find_all", "Find All", crate::checked!("scan.find_all", find_all))
@@ -58,7 +60,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .noundo()
         .contract(&FIND_ALL_CONTRACT)
         .output(output_schema_for::<ScanFindAllResult>)
-        .params("body?: mesh body (default: the selected or only one); tolerance?: mm (the least distance a shape may lie from the scan and still take it; default: the scan's tolerance when one is set, else three times its noise, and on a coarse scan (triangles over a hundredth of its size long: a fused depth-camera scan) at least 0.4 of a triangle's edge; raise it for a scan smooth but off by more than its noise, as a fused depth-camera scan is); show?: bool (false takes the colouring away): the whole scan cut into regions, each a plane, cylinder, sphere, cone or torus or freeform (the scan's noise sets how close a shape must lie), coloured in the viewport; a view and not an undo step → shapes [{index, kind, area, triangles, rms, point, on_scan, direction?, radius?, minor?, half_angle?, hole?}], freeform, freeform_area, in_shapes, noise, tolerance"),
+        .params("body?: mesh body (default: the selected or only one); tolerance?: mm (the least distance a shape may lie from the scan and still take it; default: the scan's tolerance when one is set, else three times its noise, and on a coarse scan (triangles over a hundredth of its size long: a fused depth-camera scan) at least 0.4 of a triangle's edge; raise it for a scan smooth but off by more than its noise, as a fused depth-camera scan is); show?: bool (false takes the colouring away); limit?: n (only the n largest shapes in the reply, their numbers kept; `more_shapes` counts the rest): the whole scan cut into regions, each a plane, cylinder, sphere, cone or torus or freeform (the scan's noise sets how close a shape must lie), coloured in the viewport; a view and not an undo step → shapes [{index, kind, area, triangles, rms, point, on_scan, direction?, radius?, minor?, half_angle?, hole?}], more_shapes?, freeform, freeform_area, in_shapes, noise, tolerance"),
     CommandSpec::new("scan.reconstruct", "Reconstruct", crate::checked!("scan.reconstruct", read_scan))
         .at("SCAN", "RECONSTRUCT")
         .icon("auto_constrain")
@@ -431,6 +433,7 @@ pub(super) fn find_all(s: &mut Session, p: &Value) -> Result<Value> {
             shown: false,
             body: None,
             shapes: Vec::new(),
+            more_shapes: 0,
             freeform: 0,
             freeform_area: 0.0,
             in_shapes: 0.0,
@@ -442,10 +445,25 @@ pub(super) fn find_all(s: &mut Session, p: &Value) -> Result<Value> {
     let found = shapes(s, p, cmd, true)?;
     let count = found.reading.faces.len();
     let freeform: Vec<&segment::Segment> = found.outcome.segments.iter().filter(|g| g.shape.is_none()).collect();
+    let mut listed: Vec<ScanShapeFound> = (0..count).filter_map(|k| shape_found(s, &found, k)).collect();
+    // `limit`: the largest shapes only (an agent reads 20 of a scan's hundreds), numbers kept.
+    let limit = match p.get("limit") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.as_u64().filter(|n| *n > 0).ok_or_else(|| bad(cmd, "`limit` must be a whole number of shapes, 1 or more"))?),
+    };
+    let mut more_shapes = 0;
+    if let Some(limit) = limit.and_then(|n| usize::try_from(n).ok())
+        && listed.len() > limit
+    {
+        listed.sort_by(|a, b| b.area.total_cmp(&a.area));
+        more_shapes = listed.len() - limit;
+        listed.truncate(limit);
+    }
     reply(ScanFindAllResult {
         shown: true,
         body: Some(found.scan.clone()),
-        shapes: (0..count).filter_map(|k| shape_found(s, &found, k)).collect(),
+        shapes: listed,
+        more_shapes,
         freeform: freeform.len(),
         freeform_area: freeform.iter().map(|g| g.area).sum(),
         in_shapes: found.outcome.in_shapes,
@@ -2075,7 +2093,7 @@ pub(super) fn shell_it(s: &mut Session, p: &Value) -> Result<Value> {
     // Read as designed, as Extrude It reads its depth: 2 mm, not the 2.000021 the scan measures.
     let thickness = solidcraft_scan::hole_form::snapped(shell.thickness, solidcraft_scan::hole_form::SNAP_SHARE * view.outcome().tolerance);
     let made = run(s, "solid.shell", json!({"faces": faces, "thickness": format!("{thickness} mm"), "body": solid, "name": "Shell It"}))
-        .map_err(|e| super::refusal::refused(cmd, "the kernel could not hollow the body to the scan's walls", &e.to_string()))?;
+        .map_err(|e| super::refusal::refused_trying(cmd, "the kernel could not hollow the body to the scan's walls", &e.to_string(), SHELL_IT_FIX))?;
     reply(ScanBuildResult {
         body: found.scan.clone(),
         sketch: None,

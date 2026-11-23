@@ -9,7 +9,7 @@ description: Use when turning a scan (an STL, PLY or OBJ mesh measured off a rea
 A scan is a mesh body. Read it with `scan.survey {}`, clean and place it, choose a route by the kind of part, and check the result against the scan. `scan.survey {}` changes nothing and replies with `next`: the commands to run in order, each with `why` and `params`. Command shapes, routes and known problems are in `reference.md`.
 
 ## Before the first call
-1. Call `skill_reference {"skill":"solidcraft-scan-to-cad"}` (or read `reference.md`). Modeling after the scan is read follows `solidcraft-modeling`.
+1. Call `skill_reference {"skill":"solidcraft-scan-to-cad"}` (or read `reference.md`). Later, one part of it again: `{"skill":"solidcraft-scan-to-cad","section":"Known problems"}` (`"section":"contents"` lists them). Modeling after the scan is read follows `solidcraft-modeling`.
 2. `inspect_design {"measure":false,"sketches":false}`: the scans are the mesh bodies. Ask before `new_design` or `open`.
 3. No scan yet: `file.insert_mesh {"path": "…", "units": "m"}`. Give `units` when the file is not in millimetres.
 
