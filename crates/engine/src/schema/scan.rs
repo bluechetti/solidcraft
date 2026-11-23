@@ -885,8 +885,8 @@ pub struct ScanEditSurfaceParams {
     /// surface, which keeps its shape as far as its points allow. Not with `moves` or `points`.
     #[serde(default)]
     pub slide: Option<ScanSlide>,
-    /// Points on the surface moved (the surface runs through where each goes), as QuickSurface's
-    /// points are dragged; on a Free Form of several faces, the way to edit it besides `faces`.
+    /// Points on the surface moved (the surface runs through where each goes), as points on a
+    /// surface are dragged; on a Free Form of several faces, the way to edit it besides `faces`.
     #[serde(default)]
     pub dots: Option<Vec<ScanDotMove>>,
     /// With `dots`: `hold` (the default: the surface still runs through every other point on it)

@@ -1,5 +1,5 @@
 //! Wrap Scan: one patch network over a whole scan, for parts no exact face describes (cast and
-//! organic parts). Design: `~/Projects/solidcraft-handoff/designs/A1-wrap-and-hybrid.md`.
+//! organic parts).
 //!
 //! The layout and the rounds are adapted from d0pawlus/SurfaceCraft's `surface.wrap` (MIT OR
 //! Apache-2.0, `geom/src/reduce.rs`, `fit/src/patch.rs`, `engine/src/cmd/wrap_rounds.rs`); the fit

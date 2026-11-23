@@ -1,5 +1,5 @@
-//! A run of a scan's section as lines and arcs (SurfaceCraft's chain fitter, after QuickSurface's
-//! Auto Sketcher): the run is cut where its curvature changes, each piece fitted by least squares
+//! A run of a scan's section as lines and arcs (SurfaceCraft's chain fitter, a sketch read off a
+//! section): the run is cut where its curvature changes, each piece fitted by least squares
 //! as a line or a circle, neighbours one line or circle fits joined, and each end put where its fit
 //! meets the next one's. A piece averages its points, so the scan's noise does not stay in what it
 //! makes, and a corner is where its two sides meet.

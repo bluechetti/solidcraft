@@ -7,7 +7,7 @@
 //! opens on that when part of a scan is selected first). OK keeps it, trimmed to the area's
 //! outline unless Trim to the area is unticked.
 //!
-//! Edit Surface (`scan.edit_surface`, after QuickSurface's): a surface Fit Surface or New Free Form
+//! Edit Surface (`scan.edit_surface`): a surface Fit Surface or New Free Form
 //! made, one face or a Free Form's network of faces sharing whole sides, edited in the view.
 //!
 //! - Points on the surface (the default): a dot on the surface for each control point, spread
@@ -25,7 +25,7 @@
 //!   on a row or column of one face.
 //! - Add Face: click an open edge, then the new face's two far corners (a click near a point of
 //!   the Free Form is that point): the face shares the edge, meets the face it grows from
-//!   tangentially and is fitted to the scan. Corners other than a grid's (QuickSurface's red
+//!   tangentially and is fitted to the scan. Corners other than a grid's (red
 //!   points) are marked.
 //!
 //! The scan under the surface is coloured by how far it is from it as it is edited, against a
@@ -1975,7 +1975,7 @@ fn group_rows(ui: &mut egui::Ui, k: &mut EditSurface, group: &[usize], units: &s
     }
 }
 
-/// The net tools (SurfaceCraft's, after QuickSurface's), on the line chosen: choose the row or
+/// The net tools (SurfaceCraft's), on the line chosen: choose the row or
 /// column of the point chosen; split it, copy it beside itself, take it away, crease it or make it
 /// smooth. Each changes the dialog's net; OK keeps it. One face only.
 fn net_tools(ui: &mut egui::Ui, k: &mut EditSurface, count: [usize; 2]) {
@@ -2439,7 +2439,7 @@ pub(crate) fn choose(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui:
 
 /// A double-click at `at`: with Crease Edge or Remove Crease on, the shared edge under it and the
 /// edges it runs on into through the grid's corners, at once; else the line of the grid under it
-/// and the whole line it is part of (QuickSurface's); else the face under it, all its points
+/// and the whole line it is part of; else the face under it, all its points
 /// chosen.
 pub(crate) fn double_click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2, mods: egui::Modifiers) {
     if let Some(k) = dialog(app).filter(|k| k.creasing.is_some()) {
@@ -2557,7 +2557,7 @@ fn rows_for(k: &EditSurface, face: usize, side: Side) -> usize {
 
 /// A primary press at `at`: takes the handle under it, if any. With `copy` (Alt held) a point on
 /// an edge of the net has its edge copied beside itself first and the copy taken, to drag the
-/// surface out (QuickSurface's Alt-drag; the control net of one face).
+/// surface out (Alt-drag; the control net of one face).
 pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2, mods: egui::Modifiers, brush_keys: bool) -> bool {
     let copy = mods.alt;
     let Some(k) = dialog(app) else { return false };
@@ -2612,7 +2612,7 @@ pub(crate) fn grab(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::P
         let group = select::dragged_with(k, index);
         let with: Vec<(usize, Vec3)> = group.iter().filter_map(|&i| k.shown_dots.get(i).map(|d| (i, d.at))).collect();
         let start = Arc::new(k.shown_dots.iter().map(|d| d.at).collect::<Vec<_>>());
-        // Alt on a dot of an open edge drags a new face out of that edge (QuickSurface's Alt-drag).
+        // Alt on a dot of an open edge drags a new face out of that edge (Alt-drag).
         let grow: Vec<(usize, Side)> = if copy {
             k.joins.open.iter().copied().filter(|&(f, side)| k.joins.side(&k.faces, f, side).contains(&index)).collect()
         } else {
@@ -3723,7 +3723,7 @@ mod tests {
         assert_eq!(kind(&h).shown.len(), 2, "opens again as a network");
     }
 
-    /// Alt-drag a point on an open edge (QuickSurface's Alt-drag): a face is drawn out of that edge
+    /// Alt-drag a point on an open edge: a face is drawn out of that edge
     /// as far as the point was taken, added when it is let go, sharing the edge and tangent to the
     /// face it grows from.
     #[test]

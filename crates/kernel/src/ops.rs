@@ -68,6 +68,11 @@ pub(crate) fn volumes_possible(a: &Body, b: &Body, op: BoolOp, r: Option<&Body>)
         },
         None => 0.0,
     };
+    // The measurement made the result's kernel forms; its volume is kept with the record, so the
+    // forms are let go again and the result holds its record alone until a use asks (#19629).
+    if let Some(body) = r {
+        body.release_kernel_form();
+    }
     // Mass properties are accurate to far better than this; the wrong results it is for are off
     // by a large part of an operand.
     let slack = 1e-3 * (va + vb);

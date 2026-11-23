@@ -1,4 +1,4 @@
-//! Symmetry for a Free Form (QuickSurface's, by way of SurfaceCraft's): a network kept a mirror
+//! Symmetry for a Free Form (SurfaceCraft's): a network kept a mirror
 //! image of itself in a plane. A half modelled on one side is mirrored and joined to its image on
 //! the plane ([`mirrored`]); from then on its points come in pairs ([`Pairs`]): every edit is made
 //! on both ([`Pairs::moves`]), the network is made an exact mirror image again after each solve

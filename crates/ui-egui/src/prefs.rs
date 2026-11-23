@@ -1798,7 +1798,7 @@ preference_settings! {
     /// they start at 0.1 mm, as before.
     section_tolerance_from_scan: bool = true, PAGE_TOOLS => check_id("prefs.section_tolerance_from_scan");
     /// Edit Surface opens with its points on the surface (the surface runs through each) and Snap
-    /// set to Under the pointer, as QuickSurface's Free Forms are edited. Off: it opens on the
+    /// set to Under the pointer, as freeform surfaces are commonly edited. Off: it opens on the
     /// control net with snapping off, as before.
     edit_surface_on_surface: bool = true, PAGE_TOOLS => check_id("prefs.edit_surface_on_surface");
     /// Edit Surface with points on the surface: a dragged point lifts off the scan, moved in the
@@ -1816,7 +1816,7 @@ preference_settings! {
     flat_template_short: bool = true, PAGE_TOOLS => check_id("prefs.flat_template_short");
     /// In Edit Surface, Ctrl+Shift and a drag smooths the surface under the Smoothing Brush's
     /// circle (no need to turn the brush on), and Ctrl+Shift with the wheel sizes the circle, as
-    /// QuickSurface's brush is used. Off: Ctrl+Shift drags and the wheel with Ctrl+Shift do what
+    /// a smoothing brush is commonly used. Off: Ctrl+Shift drags and the wheel with Ctrl+Shift do what
     /// they do elsewhere (the wheel zooms), as before.
     edit_surface_brush_keys: bool = true, PAGE_TOOLS => check_id("prefs.edit_surface_brush_keys");
     /// A click on a scan in a Scan-tab tool (New Free Form, Curve on Scan, Flat Template, Fit

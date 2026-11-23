@@ -396,14 +396,6 @@ pub static FORMATS: &[FormatSpec] = &[
         export: None,
     },
     FormatSpec {
-        id: "e57",
-        label: "E57 point cloud",
-        extensions: &["e57"],
-        role: Role::Artifact,
-        import: Some(ImportSpec { target: ImportTarget::PointCloud, options: &[], native_only: false }),
-        export: None,
-    },
-    FormatSpec {
         id: "las",
         label: "LAS/LAZ point cloud",
         extensions: &["las", "laz"],
@@ -548,7 +540,7 @@ pub fn import_filters(native: bool) -> Vec<(&'static str, Vec<&'static str>)> {
             // An OpenUSD scene is read as meshes, but it is its own kind of file to most people.
             ImportTarget::Mesh if f.id == "usd" => add(f.label, f.extensions),
             ImportTarget::Mesh => add("Mesh (3MF, STL, OBJ, glTF)", f.extensions),
-            ImportTarget::PointCloud => add("Point cloud (PLY, PCD, XYZ, PTS, ASC, PTX, E57, LAS)", f.extensions),
+            ImportTarget::PointCloud => add("Point cloud (PLY, PCD, E57, XYZ, PTS, ASC, PTX, LAS)", f.extensions),
             ImportTarget::Sketch => add("Sketch drawings (DXF, SVG)", f.extensions),
         }
     }
@@ -688,7 +680,7 @@ mod tests {
         assert_eq!(find("FreeCAD and Rhino"), vec!["fcstd", "3dm"]);
         assert_eq!(find("Mesh (3MF, STL, OBJ, glTF)"), vec!["stl", "3mf", "obj", "glb", "gltf"]);
         assert_eq!(find("OpenUSD"), vec!["usd", "usda", "usdc", "usdz"]);
-        assert_eq!(find("Point cloud (PLY, PCD, XYZ, PTS, ASC, PTX, E57, LAS)"), vec!["ply", "pcd", "xyz", "pts", "asc", "ptx", "e57", "las", "laz"]);
+        assert_eq!(find("Point cloud (PLY, PCD, E57, XYZ, PTS, ASC, PTX, LAS)"), vec!["ply", "pcd", "e57", "xyz", "pts", "asc", "ptx", "las", "laz"]);
         assert_eq!(find("Sketch drawings (DXF, SVG)"), vec!["dxf", "svg"]);
         assert!(import_filters(false).iter().all(|(l, _)| *l != "FreeCAD and Rhino"));
     }

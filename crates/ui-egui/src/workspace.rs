@@ -909,6 +909,8 @@ pub const SECTIONS: &[Section] = &[
             "scan.close_surface",
             "scan.make_flat",
             "scan.refit",
+            // A whole scan wrapped in one network of patches, for cast and organic parts.
+            "scan.wrap_scan",
             // The fitted surfaces trimmed, joined, patched and thickened without leaving the Scan tab.
             "surface.trim",
             "surface.stitch",

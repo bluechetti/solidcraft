@@ -3649,7 +3649,12 @@ fn report_writes_one_html_file_of_the_scan_and_what_was_done_to_it() {
     for part in ["The scan", "What was done to it", "Remove and Fill", "Surface the scanner never saw", "Pictures"] {
         assert!(html.contains(part), "{part}");
     }
-    assert!(done["no_pictures"].as_str().is_some() && html.contains("No pictures"), "{done}");
+    // A test run may or may not have a renderer: without one the report says so, with one it
+    // holds the pictures.
+    match done["no_pictures"].as_str() {
+        Some(_) => assert!(html.contains("No pictures"), "{done}"),
+        None => assert!(done["pictures"].as_u64().unwrap_or(0) > 0 && html.contains("<img"), "{done}"),
+    }
     assert_eq!((s.revision, s.doc.features.len()), (revision, features), "nothing changes");
     let err = s.execute("scan.report", &json!({"body": scan, "path": dir.join("report.txt")})).unwrap_err();
     assert!(err.to_string().contains(".html"), "{err}");

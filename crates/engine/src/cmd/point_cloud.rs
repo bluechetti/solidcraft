@@ -861,7 +861,7 @@ mod tests {
             assert_eq!(opened.doc.point_clouds.len(), 1, "{}", path.display());
         }
         // A file of a kind that is not read is refused by its name, and the message names the files
-        // that are read. (Upstream refuses an E57 file here; the Scan workspace fork reads those.)
+        // that are read.
         let refused = s.execute("pointcloud.insert", &json!({"path": d.join("scan.rcp")})).unwrap_err().to_string();
         assert!(refused.contains(".pcd") && refused.contains(".asc"), "{refused}");
         let _ = std::fs::remove_dir_all(d);

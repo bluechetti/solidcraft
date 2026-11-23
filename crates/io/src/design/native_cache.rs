@@ -18,11 +18,17 @@ const MAX_UNIQUE: usize = 100_000;
 /// The smallest cap on `cache/model.json`: what it has always been at the default design file limit.
 const MIN_MANIFEST: usize = 32 << 20;
 
-/// The cap on `cache/model.json`, saving and reading: an eighth of the design file limit in force
+/// The cap on `cache/model.json`, saving and reading: an eighth of the design file limit set
 /// (the default 256 MiB gives the 32 MiB it always was), so a design the user allows to be that
-/// large keeps its model cache (#20724). Still bounded by that limit, never unbounded.
+/// large keeps its model cache (#20724). Still bounded by that limit, never unbounded: the desktop
+/// reads a design of any size (the Scan workspace fork), so the cap follows the limit set in
+/// Preferences, not the one in force.
 pub(super) fn max_manifest() -> usize {
-    MIN_MANIFEST.max(max_design() / 8)
+    #[cfg(test)]
+    if let Some(cap) = crate::limits::test_cap::get() {
+        return MIN_MANIFEST.max(cap / 8);
+    }
+    MIN_MANIFEST.max(crate::limits::configured_design_bytes() / 8)
 }
 
 /// The build that wrote a cache (recorded; earlier builds read only their own caches).

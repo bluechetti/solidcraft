@@ -204,6 +204,8 @@ mod tests {
             "scan.furring_proposals",
             "scan.furring",
             "scan.tubes_it",
+            "scan.section",
+            "scan.wrap_scan",
         ];
         for c in specs.iter().filter(|c| c.id.starts_with("scan.")) {
             if built.contains(&c.id) {

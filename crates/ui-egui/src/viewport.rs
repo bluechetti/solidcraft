@@ -6476,6 +6476,13 @@ struct WholeBody {
     colour: [u8; 4],
 }
 
+/// A mesh body too large to copy for its highlight (a scan): the Scan workspace fork lights it on
+/// the GPU instead, where a copied fill would be gigabytes. A smaller one takes upstream's way,
+/// its triangles reused or copied ([`INSTANCE_ALONE`], what a large imported mesh is).
+fn large_mesh(b: &solidcraft_engine::doc::ModelBody) -> bool {
+    b.body.triangle_mesh().is_some_and(|(_, triangles)| triangles.len() >= INSTANCE_ALONE)
+}
+
 /// Light the whole of `b` from what the model already has on the GPU, copying no triangle: its
 /// plan or its opaque runs (tinted over the model's own colours), its block's vertices recoloured
 /// in the highlight's palette (faded and see-through bodies), or its placements; in Wireframe,
@@ -6925,6 +6932,7 @@ fn build_highlight_with_projection(app: &SolveApp, projection: impl FnOnce() -> 
                         }
                     } else if !(b.body.is_mesh()
                         && b.body.face_count() <= 1
+                        && large_mesh(b)
                         && gpu_lit(b)
                         && light_whole_body(
                             app,
@@ -16314,7 +16322,9 @@ mod tests {
         app.viewport.hover = None;
         app.session.selection = vec![Sel::Face { body: body.name.clone(), index: 0, point }];
         let picked = build_highlight(app);
-        assert_eq!(picked.selected_instanced.len(), 1);
+        // Lit whole on the GPU, or its own placement's triangles reused (upstream's way for a
+        // selected mesh face): either way, not copied.
+        assert_eq!(picked.selected_instanced.len() + picked.selected_face_instanced.len(), 1);
         assert_eq!(picked.tris.len(), 0);
         // The feature that made the face is the scan's own, found without naming its faces.
         assert_eq!(crate::context_menu::face_feature(app, &body, 0), Some(body.feature));
