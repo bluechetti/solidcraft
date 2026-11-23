@@ -128,7 +128,7 @@ impl Renderer {
         // Bodies drawn moved (a joint drag) are drawn and culled where the frame moves them, as in
         // the window; the table is written only when the motions changed since the window's.
         self.motions.set(queue, &frame.motions);
-        self.pic.model.cull(device, queue, &frame.view_proj, [w, h], &frame.motions);
+        self.pic.model.cull(device, queue, &frame.view_proj, [w, h], &frame.motions, frame.edge_px);
         queue.write_buffer(&self.uniform, 0, &uniform_bytes(frame, w, h, self.linear_out, reversed));
 
         let [sx, sy] = [scissor[0].min(size[0]), scissor[1].min(size[1])];
