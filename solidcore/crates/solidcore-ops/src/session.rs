@@ -51,6 +51,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use solidcore::blend::fillet_section::definition::StationMemo;
 use solidcore::kernel::{CancelToken, Kernel, KernelOptions, Rng, UpstreamFixes};
+use solidcore::surface::procedural_blend::convert::SharedRecertifyMemo;
 use solidcore::topology::brep::p3::brep_copy;
 use solidcore::{Brep, SolidError};
 
@@ -204,13 +205,25 @@ pub(crate) fn counted<T>(counter: Counter, f: impl FnOnce() -> T) -> (T, u64) {
 }
 
 /// A kernel of the session's configuration: the kernel's default options, the fixes the
-/// application named and the process's fillet step ([`STEP`]). Every kernel the pool makes is
-/// made here, so they are configured alike.
+/// application named, the process's fillet step ([`STEP`]) and the process's recertify memo
+/// ([`recertify_memo`]). Every kernel the pool makes is made here, so they are configured alike.
 fn fresh() -> Kernel {
     let mut k = Kernel::new(&KernelOptions::default());
     k.fixes = current_fixes();
     k.process_fillet_point_step = Some(&STEP);
+    k.recertify_memo = recertify_memo();
     k
+}
+
+/// The process's memo of the procedural blends certified as records were read
+/// ([`solidcore::kernel::Kernel::recertify_memo`]): every kernel of the pool holds it, and so
+/// may the kernels a caller keeps beside the pool (SolidCraft's SMLib layer). A body read on one
+/// kernel and then on another (one view of a body for its measure, another for its faces' areas)
+/// certifies its blends once, not once per kernel. A hit is what certifying again gives: the
+/// memo's key holds every input of the certificate, the kernel's tolerances and fixes among them.
+pub fn recertify_memo() -> SharedRecertifyMemo {
+    static MEMO: OnceLock<SharedRecertifyMemo> = OnceLock::new();
+    Arc::clone(MEMO.get_or_init(SharedRecertifyMemo::default))
 }
 
 /// The most kernels kept idle between calls: as many as calls the machine runs at once. More

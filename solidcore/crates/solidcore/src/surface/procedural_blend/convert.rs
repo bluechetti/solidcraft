@@ -759,6 +759,19 @@ pub struct RecertifyMemo {
     bytes: usize,
 }
 
+/// A [`RecertifyMemo`] that several kernels can hold ([`Kernel::recertify_memo`]): a clone is
+/// a handle on the same memo.
+pub type SharedRecertifyMemo = std::sync::Arc<std::sync::Mutex<RecertifyMemo>>;
+
+/// The kernel's recertify memo, locked; a lock a panic left poisoned is taken as it is (the memo
+/// is changed only by [`RecertifyMemo::remember`], which leaves it whole at every step a panic
+/// could stop it).
+fn recertify_memo(k: &Kernel) -> std::sync::MutexGuard<'_, RecertifyMemo> {
+    k.recertify_memo
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 impl RecertifyMemo {
     /// The blends the memo keeps.
     #[must_use]
@@ -808,14 +821,14 @@ fn recertify_remembered(
     }
     // (writing to a `String` never fails)
     let _ = write!(key, "\n{record:?}");
-    if let Some(&hit) = k.recertify_memo.borrow().bounds.get(key.as_str()) {
+    let hit = recertify_memo(k).bounds.get(key.as_str()).copied();
+    if let Some(hit) = hit {
         return Ok(hit);
     }
     k.work_counters.add_blend_recertified();
+    // (no lock held while it certifies: a kernel beside this one may certify meanwhile)
     let bound = pb.recertify(k)?;
-    k.recertify_memo
-        .borrow_mut()
-        .remember(key, bound, RECERTIFY_MEMO_BYTES);
+    recertify_memo(k).remember(key, bound, RECERTIFY_MEMO_BYTES);
     Ok(bound)
 }
 
