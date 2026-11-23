@@ -396,6 +396,35 @@ fn a_rounded_block_is_extruded_back_from_its_scan() {
     assert!(s.scan_shapes.as_ref().is_some_and(|k| !k.shown));
 }
 
+/// Scan to CAD runs the whole route in one command: the block with rounded corners comes out
+/// built, its steps listed with their fit verdicts, the verdict read, and one undo takes it all
+/// back. A scan it cannot build says so in `next` instead of failing.
+#[test]
+fn scan_to_cad_builds_the_part_in_one_command_and_says_whether_it_is_done() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 40, "width": 30, "height": 10}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.fillet", json!({"edges": [[0, 0, 5], [40, 0, 5], [40, 30, 5], [0, 30, 5]], "radius": 5}));
+    let expected = (1200.0 - (4.0 - std::f64::consts::PI) * 25.0) * 10.0;
+    let (mut s, scan) = scanned(&part, &body, 3, "block");
+
+    let done = run(&mut s, "scan.to_cad", json!({}));
+    let solid = format!("{scan} Reconstructed");
+    assert_eq!(done["solid"], json!(solid), "{done}");
+    assert!(done["kept"].as_u64().is_some_and(|k| k >= 1), "{done}");
+    let steps = done["steps"].as_array().unwrap();
+    assert!(steps.iter().any(|st| st["command"] == "scan.extrude_it" && st["kept"] == true && st["verdict"].is_string()), "{done}");
+    assert!(done["verdict"]["verdict"].is_string(), "{done}");
+    assert!(done["next"].as_str().is_some_and(|n| n.contains(&solid)), "{done}");
+    let v = volume(&s, &solid);
+    assert!((v - expected).abs() < 0.01 * expected, "{v} against {expected}");
+    run(&mut s, "edit.undo", json!({}));
+    assert!(s.model.state().body(&solid).is_none(), "one undo step");
+
+    assert!(s.execute("scan.to_cad", &json!({"rest": 21})).is_err_and(|e| e.to_string().contains("`rest`")));
+    assert!(s.execute("scan.to_cad", &json!({"tolerance": -1})).is_err_and(|e| e.to_string().contains("`tolerance`")));
+}
+
 /// A block 40 × 30 × 10 with two holes Ø 8 through it: the prism's profile holds the holes as
 /// circles inside its outline, and Extrude It extrudes the outline with the holes open, not the
 /// discs inside them as well.

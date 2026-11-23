@@ -557,6 +557,68 @@ pub struct ScanRestResult {
     pub param_warnings: Vec<String>,
 }
 
+/// Scan to CAD: the whole automatic route in one command, as the scripted benchmark runs it:
+/// Survey's clean steps, Find All, Reconstruct and each step it proposes (a step that leaves the
+/// body further from the scan, or is refused, taken back), optionally Reconstruct the Rest, then
+/// the verdict. One undo step. An agent or a person starts from its result and its verdict.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanToCadParams {
+    /// The mesh body. Default: the selected mesh body, else the design's only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The same as `body`.
+    #[serde(default)]
+    pub scan: Option<String>,
+    /// Run the clean steps Survey names first (Repair, Remove Floating, the tolerance it
+    /// suggests, and Denoise or Fill Holes when it names them). Default: true.
+    #[serde(default)]
+    pub clean: Option<bool>,
+    /// The scan's tolerance in mm, set before Find All (instead of the one Survey suggests).
+    #[serde(default)]
+    pub tolerance: Option<f64>,
+    /// Rounds of Reconstruct the Rest after the proposed steps, 0 to 20. Default: 0.
+    #[serde(default)]
+    pub rest: Option<u64>,
+}
+
+/// One step Scan to CAD ran: the command, whether it is in the design, and for a build step its
+/// fit verdict and the share of the scan the body explains after it.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanToCadStep {
+    pub command: String,
+    pub kept: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub explained: Option<f64>,
+    /// Why it was not kept: the step's error, or "worse" (taken back).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub why: Option<String>,
+}
+
+/// What Scan to CAD did.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanToCadResult {
+    /// The scan, and the body built on it (absent when nothing could be built).
+    pub body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub solid: Option<String>,
+    pub steps: Vec<ScanToCadStep>,
+    /// How many build steps are in the design.
+    pub kept: usize,
+    /// Reconstruct the Rest's reply, when `rest` asked for rounds and there was a body.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rest: Option<serde_json::Value>,
+    /// Whether the body is done, as `scan.verdict` says it (absent when there is no body).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verdict: Option<serde_json::Value>,
+    /// What to do next, in words: why nothing was built, or that the verdict lists what is open.
+    pub next: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}
+
 /// Hole It: a hole Reconstruct reads as a Hole feature makes it (a counterbore, a countersink, a
 /// blind hole's drill point or flat bottom, a tap drill), drilled into the body it builds with
 /// Hole at its mouth, along its axis, with the sizes read as designed. One undo step.

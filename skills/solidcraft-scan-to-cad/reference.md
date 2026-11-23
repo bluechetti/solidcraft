@@ -87,6 +87,7 @@ At more than 5 million triangles, `scan.survey {}` takes seconds, while `scan.fi
 | `scan.cut_it {"hole": 0}` | a round hole cut as deep as the scan has it |
 | `scan.hole_it {"hole": 0}` | a hole with a `form` (counterbore, countersink, drill point, tap drill) drilled with Hole, sizes read as designed |
 | `scan.pattern_it {"hole": 0}` | that cut or hole repeated as the holes repeat |
+| `scan.to_cad {}` | the whole automatic route in one call: Survey's clean steps, Find All, Reconstruct, each proposed step (a worse or refused one taken back), optionally `"rest": 6` rounds of Reconstruct the Rest, then the verdict; one undo step → `solid`, `steps [{command, kept, verdict?, explained?, why?}]`, `kept`, `verdict`, `next`. Stops before building on a scan in the wrong unit or a wall |
 | `scan.reconstruct_rest {}` | what the built body leaves of the scan unexplained, read and built piece by piece |
 | `scan.pipe_it {}` | a bar bent along a flat path (`pipe`): the path's lines and arcs swept |
 | `scan.tubes_it {}` | round tubes bent through space (`tubes`: a manifold's runners, tori and cylinders of one tube radius chained in any direction): each swept along a 3D spline through its axis, joined into one body; tubes the kernel cannot sweep are named in `note` |

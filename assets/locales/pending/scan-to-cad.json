@@ -1,0 +1,26 @@
+{
+  "ar": {
+    "cmd.scan_to_cad": "من المسح إلى CAD"
+  },
+  "de": {
+    "cmd.scan_to_cad": "Scan zu CAD"
+  },
+  "en": {
+    "cmd.scan_to_cad": "Scan to CAD"
+  },
+  "he": {
+    "cmd.scan_to_cad": "מסריקה ל-CAD"
+  },
+  "ja": {
+    "cmd.scan_to_cad": "スキャンからCAD"
+  },
+  "ko": {
+    "cmd.scan_to_cad": "스캔을 CAD로"
+  },
+  "vi": {
+    "cmd.scan_to_cad": "Từ bản quét sang CAD"
+  },
+  "zh": {
+    "cmd.scan_to_cad": "扫描转 CAD"
+  }
+}

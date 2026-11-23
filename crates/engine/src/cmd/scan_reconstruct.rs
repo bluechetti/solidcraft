@@ -28,7 +28,7 @@ use crate::schema::scan_reconstruct::{
     ScanFilletItParams, ScanFilletItResult, ScanFilleted, ScanFindAllParams, ScanFindAllResult, ScanHole, ScanHoleForm, ScanHoleItParams,
     ScanNestParams, ScanPatternItParams, ScanPrism, ScanReconstructParams, ScanReconstructResult, ScanReconstructSelectionParams, ScanRepeat,
     ScanRestParams, ScanRestResult, ScanRevolveItParams, ScanRotational, ScanShapeFound, ScanShapeItParams, ScanShell, ScanShellItParams, ScanSpokes,
-    ScanTurned,
+    ScanToCadParams, ScanToCadResult, ScanTurned,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Session};
@@ -42,6 +42,7 @@ const CUT_IT_CONTRACT: TypedContract<ScanCutItParams> = TypedContract::new();
 const HOLE_IT_CONTRACT: TypedContract<ScanHoleItParams> = TypedContract::new();
 const SHAPE_IT_CONTRACT: TypedContract<ScanShapeItParams> = TypedContract::new();
 const REST_CONTRACT: TypedContract<ScanRestParams> = TypedContract::new();
+const TO_CAD_CONTRACT: TypedContract<ScanToCadParams> = TypedContract::new();
 const PATTERN_IT_CONTRACT: TypedContract<ScanPatternItParams> = TypedContract::new();
 const FILLET_IT_CONTRACT: TypedContract<ScanFilletItParams> = TypedContract::new();
 const CHAMFER_IT_CONTRACT: TypedContract<ScanChamferItParams> = TypedContract::new();
@@ -81,6 +82,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&REST_CONTRACT)
         .output(output_schema_for::<ScanRestResult>)
         .params("body?: mesh body (default: the selected or only one); rounds?: 1 to 20 (default 6): after the steps Reconstruct proposes have built `<scan> Reconstructed`, what it leaves of the scan unexplained, piece by piece: each round selects the largest piece the body does not explain yet (scan.select unexplained), reads it as a part of its own (scan.reconstruct_selection) and runs the steps proposed for it, taking back each that is refused or leaves the body no closer to the scan (its fit verdict); a piece that adds nothing is passed over for the next, three in a row end it; the selection is cleared after; one undo step → body, solid, rounds [{piece, area, proposed, kept}], kept, stop"),
+    CommandSpec::new("scan.to_cad", "Scan to CAD", crate::checked!("scan.to_cad", rest::to_cad))
+        .icon("auto_constrain")
+        .contract(&TO_CAD_CONTRACT)
+        .output(output_schema_for::<ScanToCadResult>)
+        .params("body? (or scan?): mesh body (default: the selected or only one); clean?: bool (default true: the clean steps scan.survey names first: repair, remove floating, its tolerance, and denoise or fill holes when it names them); tolerance?: mm (set before Find All, instead of Survey's); rest?: 0 to 20 rounds of scan.reconstruct_rest after the proposed steps (default 0): the automatic route in one command, as the scripted benchmark runs it: scan.find_all, scan.reconstruct, each step it proposes run into `<scan> Reconstructed` (a step whose fit verdict is worse, or that is refused, taken back), then scan.verdict; one undo step. A scan in the wrong unit, or a wall or panel, builds nothing and says what to run in `next`. Run it first, then work on the verdict's places → body, solid?, steps [{command, kept, verdict?, explained?, why?}], kept, rest?, verdict?, next"),
     CommandSpec::new("scan.extrude_it", "Extrude It", crate::checked!("scan.extrude_it", fitted_extrude_it))
         .icon("extrude")
         .contract(&EXTRUDE_IT_CONTRACT)

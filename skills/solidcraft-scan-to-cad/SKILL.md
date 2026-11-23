@@ -14,6 +14,7 @@ A scan is a mesh body. Read it with `scan.survey {}`, clean and place it, choose
 3. No scan yet: `file.insert_mesh {"path": "…", "units": "m"}`. Give `units` when the file is not in millimetres.
 
 ## Work in this order
+0. **First, the automatic route:** `scan.to_cad {}` cleans, reads and builds the part in one call (seconds on most parts; one undo step) and ends with the verdict. When `verdict` says `met`, check it and you are done. Otherwise its `steps`, `verdict.places` and `next` say what is open: work on those places with the steps below (Reconstruct Selection, fits, sections, features by hand), not from scratch. It builds nothing on a scan in the wrong unit or a wall, and `next` says what to run. Give the user's tolerance with `{"tolerance": 0.2}`.
 1. **Read:** `scan.survey {}`. Read every `why` before running its step: `next` is advice, not a script. Survey again after cleaning and after `scan.find_all {}`.
 2. **Units:** `units_hint` set → `mesh.units {"units":"m"}`.
 3. **Clean, before fitting anything** (fits are not redone after a clean): `scan.repair {}`, `scan.remove_floating {}`, `scan.denoise {}` (only when the noise is a real share of the tolerance), `scan.fill_holes {}` (never on a wall or panel: its holes are real).
@@ -33,6 +34,7 @@ A scan is a mesh body. Read it with `scan.survey {}`, clean and place it, choose
 
 | Thought | Do instead |
 |---|---|
+| "Build it step by step from the start" | `scan.to_cad {}` first; refine where its verdict says. |
 | "List the scan commands" | `scan.survey {}`, then `reference.md`. |
 | "Reconstruct proposed it, so it's right" | `scan.deviation {}` after each stage. |
 | "Fill the holes, it's cleaner" | Read `sheet_like` first. |
