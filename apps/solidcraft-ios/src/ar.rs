@@ -36,6 +36,12 @@ const LARGEST_FIRST: f64 = 1.5;
 /// Pinching within this share of real size snaps to it.
 const SNAP: f64 = 0.06;
 
+/// The iOS Simulator has no ARKit: a made-up room answers in its place (`ar_sim.rs`).
+#[cfg(any(target_abi = "sim", test))]
+#[cfg_attr(test, allow(dead_code))]
+#[path = "ar_sim.rs"]
+pub(crate) mod sim;
+
 /// The framework's entry points.
 struct Bridge {
     supported: extern "C" fn() -> i32,
@@ -67,8 +73,21 @@ struct Bridge {
     anchor: extern "C" fn(*mut f32) -> i32,
 }
 
+/// The bridge AR talks to: the framework on a device, the simulated room in the Simulator.
+fn load_bridge() -> Result<Bridge, String> {
+    #[cfg(target_abi = "sim")]
+    {
+        Ok(sim::bridge())
+    }
+    #[cfg(not(target_abi = "sim"))]
+    {
+        load()
+    }
+}
+
 // The function types come from `Bridge`'s fields, which each transmute fills.
 #[allow(clippy::missing_transmute_annotations)]
+#[cfg_attr(target_abi = "sim", allow(dead_code))]
 fn load() -> Result<Bridge, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let path = exe.parent().ok_or("no app folder")?.join("Frameworks/SolidCraftAR.framework/SolidCraftAR");
@@ -319,9 +338,8 @@ impl Hole {
     /// (it follows them when the design changes), the size and style as chosen.
     fn params(&self) -> serde_json::Value {
         let mut p = serde_json::json!({ "position": self.center });
-        let refs: Vec<serde_json::Value> = (0..2)
-            .filter_map(|k| Some(serde_json::json!({ "edge": self.edge_point(k)?, "distance": self.to_edge(k)?.0 })))
-            .collect();
+        let refs: Vec<serde_json::Value> =
+            (0..2).filter_map(|k| Some(serde_json::json!({ "edge": self.edge_point(k)?, "distance": self.to_edge(k)?.0 }))).collect();
         if !refs.is_empty() {
             p["references"] = serde_json::json!(refs);
         }
@@ -646,7 +664,7 @@ pub struct State {
 
 impl State {
     fn bridge(&mut self) -> Result<&Bridge, String> {
-        match self.bridge.get_or_insert_with(load) {
+        match self.bridge.get_or_insert_with(load_bridge) {
             Ok(b) => Ok(b),
             Err(e) => Err(e.clone()),
         }
@@ -897,35 +915,35 @@ impl State {
                         self.cut = self.placed.and_then(|p| p.cut_facing(seen.back));
                     }
                     if std::mem::take(&mut self.test_joints) {
-                    self.joints = Some(Self::list_joints(app));
-                    crate::note(&format!("ar: joints {:?}", self.joints));
-                }
-                if let Some(start) = self.test_record.take()
-                    && let Ok(b) = self.bridge()
-                {
-                    if start {
-                        (b.record_start)();
-                    } else {
-                        (b.record_stop)();
+                        self.joints = Some(Self::list_joints(app));
+                        crate::note(&format!("ar: joints {:?}", self.joints));
                     }
-                }
-                if std::mem::take(&mut self.test_check) {
-                    self.check_overlaps(app);
-                }
-                if std::mem::take(&mut self.test_explode) {
-                    self.next_exploded_view(app);
-                }
-                if std::mem::take(&mut self.test_measure) {
+                    if let Some(start) = self.test_record.take()
+                        && let Ok(b) = self.bridge()
+                    {
+                        if start {
+                            (b.record_start)();
+                        } else {
+                            (b.record_stop)();
+                        }
+                    }
+                    if std::mem::take(&mut self.test_check) {
+                        self.check_overlaps(app);
+                    }
+                    if std::mem::take(&mut self.test_explode) {
+                        self.next_exploded_view(app);
+                    }
+                    if std::mem::take(&mut self.test_measure) {
                         self.measuring = Some(Vec::new());
                     }
                     self.gestures(ui, &response, rect, seen, app);
                     self.draw_measure(ui.painter(), rect, seen);
-                self.draw_pull(ui.painter(), rect, seen);
-                self.draw_move(ui.painter(), rect, seen);
-                self.draw_hole(ui.painter(), rect, seen);
-                self.draw_ink(ui.painter(), rect, seen);
-                self.draw_overlaps(ui.painter(), rect, seen);
-                self.draw_sizes(app, ui.painter(), rect, seen);
+                    self.draw_pull(ui.painter(), rect, seen);
+                    self.draw_move(ui.painter(), rect, seen);
+                    self.draw_hole(ui.painter(), rect, seen);
+                    self.draw_ink(ui.painter(), rect, seen);
+                    self.draw_overlaps(ui.painter(), rect, seen);
+                    self.draw_sizes(app, ui.painter(), rect, seen);
                 }
             });
         self.controls(ctx, screen, seen.as_ref(), coaching, app);
@@ -1169,7 +1187,8 @@ impl State {
             if self.ink.len() > before {
                 self.inking = true;
             }
-            if pull_end && std::mem::take(&mut self.inking)
+            if pull_end
+                && std::mem::take(&mut self.inking)
                 && let Some(stroke) = self.ink.last().cloned()
             {
                 self.record(Act::Ink(stroke));
@@ -1306,8 +1325,9 @@ impl State {
             let level = placed.anchor()[1];
             let ray_hit = |b: &Bridge| -> Option<([f64; 3], [f64; 3])> {
                 let mut hit = [0f32; 16];
-                ((b.raycast)(u.0, u.1, rect.width(), rect.height(), hit.as_mut_ptr()) == 1)
-                    .then(|| ([f64::from(hit[12]), f64::from(hit[13]), f64::from(hit[14])], [f64::from(hit[4]), f64::from(hit[5]), f64::from(hit[6])]))
+                ((b.raycast)(u.0, u.1, rect.width(), rect.height(), hit.as_mut_ptr()) == 1).then(|| {
+                    ([f64::from(hit[12]), f64::from(hit[13]), f64::from(hit[14])], [f64::from(hit[4]), f64::from(hit[5]), f64::from(hit[6])])
+                })
             };
             let point = match self.wall {
                 // On a wall: along it, where ARKit's hit on a wall is.
@@ -1398,13 +1418,23 @@ impl State {
             }
         }
         let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
-        let grabbed = pick(app, seen, &placed, u)
-            .and_then(|h| {
-                // On an edge (its nearest point within a fingertip of the Pencil on the screen):
-                // the edge is rounded instead of the face moved.
-                let edge = h.edge.filter(|e| to_screen(seen, &placed, rect, *e).is_some_and(|s| s.distance(at) < 16.0));
-                Some(Pull { body: h.body, point: edge.unwrap_or(h.point), normal: unit(h.normal)?, start: at, distance: 0.0, base: 0.0, held: true, edge, detent: 0, text: String::new() })
-            });
+        let grabbed = pick(app, seen, &placed, u).and_then(|h| {
+            // On an edge (its nearest point within a fingertip of the Pencil on the screen):
+            // the edge is rounded instead of the face moved.
+            let edge = h.edge.filter(|e| to_screen(seen, &placed, rect, *e).is_some_and(|s| s.distance(at) < 16.0));
+            Some(Pull {
+                body: h.body,
+                point: edge.unwrap_or(h.point),
+                normal: unit(h.normal)?,
+                start: at,
+                distance: 0.0,
+                base: 0.0,
+                held: true,
+                edge,
+                detent: 0,
+                text: String::new(),
+            })
+        });
         match grabbed {
             Some(p) => {
                 crate::note(&format!("ar: pull grabbed {} ({})", p.body, if p.edge.is_some() { "edge" } else { "face" }));
@@ -1609,7 +1639,8 @@ impl State {
         self.hover_picked = Some(at);
         let Some(placed) = self.placed else { return };
         let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
-        app.viewport.stereo.pointed = pick(app, seen, &placed, u).map(|h| solidcraft_ui_egui::stereo::Pointed { body: h.body, face: h.face, point: h.point });
+        app.viewport.stereo.pointed =
+            pick(app, seen, &placed, u).map(|h| solidcraft_ui_egui::stereo::Pointed { body: h.body, face: h.face, point: h.point });
     }
 
     /// Pencil double taps (undo each) and a squeeze (the tool palette at the tip).
@@ -1780,12 +1811,17 @@ impl State {
     fn draw_sizes(&self, app: &SolveApp, painter: &egui::Painter, rect: egui::Rect, seen: &Seen) {
         let Some(placed) = self.placed.filter(|_| self.sizes) else { return };
         // The selected part's own size when one is selected, else the whole model's.
-        let b = self.selected.as_deref().and_then(|n| solidcraft_ui_egui::viewport::body_box(app, n)).unwrap_or_else(|| solidcraft_ui_egui::viewport::model_bounds(app));
+        let b = self
+            .selected
+            .as_deref()
+            .and_then(|n| solidcraft_ui_egui::viewport::body_box(app, n))
+            .unwrap_or_else(|| solidcraft_ui_egui::viewport::model_bounds(app));
         if b.is_empty() {
             return;
         }
         let (lo, hi) = ([b.min.x, b.min.y, b.min.z], [b.max.x, b.max.y, b.max.z]);
-        let corner = |i: usize| [if i & 1 == 0 { lo[0] } else { hi[0] }, if i & 2 == 0 { lo[1] } else { hi[1] }, if i & 4 == 0 { lo[2] } else { hi[2] }];
+        let corner =
+            |i: usize| [if i & 1 == 0 { lo[0] } else { hi[0] }, if i & 2 == 0 { lo[1] } else { hi[1] }, if i & 4 == 0 { lo[2] } else { hi[2] }];
         let distance = |q: [f64; 3]| {
             let d = sub(placed.apply_room(q), seen.eye);
             dot(d, d)
@@ -2099,7 +2135,11 @@ impl State {
         let Some(t1) = unit(sub(e, scale3(normal, dot(e, normal)))) else { return };
         let t2 = cross(normal, t1);
         let b = solidcraft_ui_egui::viewport::model_bounds(app);
-        let reach = if b.is_empty() { 1000.0 } else { 2.0 * (0..3).map(|k| [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z][k]).fold(1.0, f64::max) };
+        let reach = if b.is_empty() {
+            1000.0
+        } else {
+            2.0 * (0..3).map(|k| [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z][k]).fold(1.0, f64::max)
+        };
         let mut on_face = |q: [f64; 3]| {
             pick_model(app, add(q, scale3(normal, 5.0)), scale3(normal, -1.0)).is_some_and(|h| h.body == hit.body && h.face == hit.face)
         };
@@ -2452,205 +2492,230 @@ impl State {
         let container = Container::new(ctx, Surface::Popup);
         if recording != 0 {
             // While recording, the video shows the room: the panel is one Stop button.
-            let shown = container.area(egui::Id::unique("ar-recording")).order(egui::Order::Tooltip).fixed_pos(safe.min + egui::vec2(16.0, 16.0)).show(ctx, |ui| {
-                let frame = Container::popup_frame(ui.style());
-                container.show_frame(ui, frame, safe, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.painter().circle_filled(ui.cursor().min + egui::vec2(8.0, 10.0), 6.0, egui::Color32::from_rgb(235, 64, 52));
-                        ui.add_space(20.0);
-                        let label = if recording == 2 { "Stop" } else { "…" };
-                        if button(ui, label, Button::Small).clicked()
-                            && recording == 2
-                            && let Ok(b) = self.bridge()
-                        {
-                            (b.record_stop)();
-                        }
+            let shown = container
+                .area(egui::Id::unique("ar-recording"))
+                .order(egui::Order::Tooltip)
+                .fixed_pos(safe.min + egui::vec2(16.0, 16.0))
+                .show(ctx, |ui| {
+                    let frame = Container::popup_frame(ui.style());
+                    container.show_frame(ui, frame, safe, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.painter().circle_filled(ui.cursor().min + egui::vec2(8.0, 10.0), 6.0, egui::Color32::from_rgb(235, 64, 52));
+                            ui.add_space(20.0);
+                            let label = if recording == 2 { "Stop" } else { "…" };
+                            if button(ui, label, Button::Small).clicked()
+                                && recording == 2
+                                && let Ok(b) = self.bridge()
+                            {
+                                (b.record_stop)();
+                            }
+                        });
                     });
                 });
-            });
             self.panel = Some(shown.response.rect);
             return;
         }
-        let shown = container.area(egui::Id::unique("ar-controls")).order(egui::Order::Tooltip).fixed_pos(safe.min + egui::vec2(16.0, 16.0)).show(ctx, |ui| {
-            let frame = Container::popup_frame(ui.style());
-            container.show_frame(ui, frame, safe, |ui| {
-                // As wide as the screen allows, so the controls take one or two rows.
-                ui.set_max_width((safe.width() - 32.0).min(1100.0));
-                ui.horizontal_wrapped(|ui| {
-                    if button(ui, "Done", Button::Small).clicked() {
-                        leave = true;
-                    }
-                    if button(ui, "Photo", Button::Small).backing_on_hover_text("Save the room and the model to Photos").clicked() {
-                        self.take_photo = true;
-                    }
-                    if button(ui, "Record", Button::Small).backing_on_hover_text("Record a video of the room and the model").clicked()
-                        && let Ok(b) = self.bridge()
-                    {
-                        (b.record_start)();
-                    }
-                    // The design's own undo history: a pull, a section applied, anything.
-                    let undo_tip = self.done.last().map_or("Undo".to_string(), |a| format!("Undo {}", a.name()));
-                    if button(ui, "Undo", Button::Small).backing_on_hover_text(undo_tip).clicked() {
-                        self.undo(app);
-                    }
-                    let redo_tip = self.undone.last().map_or("Redo".to_string(), |a| format!("Redo {}", a.name()));
-                    if button(ui, "Redo", Button::Small).backing_on_hover_text(redo_tip).clicked() {
-                        self.redo(app);
-                    }
-                    if let Some(mut p) = self.placed {
-                        let real = (p.scale / REAL_SIZE - 1.0).abs() < 1e-9;
-                        if solidcraft_ui_kit::text_button(ui, "Real size", !real).clicked() {
-                            let anchor = p.anchor();
-                            p.scale = REAL_SIZE;
-                            self.placed = Some(p.with_anchor(anchor));
+        let shown = container.area(egui::Id::unique("ar-controls")).order(egui::Order::Tooltip).fixed_pos(safe.min + egui::vec2(16.0, 16.0)).show(
+            ctx,
+            |ui| {
+                let frame = Container::popup_frame(ui.style());
+                container.show_frame(ui, frame, safe, |ui| {
+                    // As wide as the screen allows, so the controls take one or two rows.
+                    ui.set_max_width((safe.width() - 32.0).min(1100.0));
+                    ui.horizontal_wrapped(|ui| {
+                        if button(ui, "Done", Button::Small).clicked() {
+                            leave = true;
                         }
-                        // The scale, which opens a drawing's scales in a row under the panel.
-                        let label = format!("{} ▾", scale_name(p.scale / REAL_SIZE));
-                        if button(ui, label, if self.scales_open { Button::SmallSelected } else { Button::Small }).backing_on_hover_text("Scale").clicked() {
-                            self.scales_open = !self.scales_open;
+                        if button(ui, "Photo", Button::Small).backing_on_hover_text("Save the room and the model to Photos").clicked() {
+                            self.take_photo = true;
                         }
-                        if let Some(name) = &self.selected {
-                            ui.separator();
-                            ui.label(name);
-                        }
-                        ui.separator();
-                        let on = self.cut.is_some();
-                        if button(ui, "Section", if on { Button::SmallSelected } else { Button::Small }).clicked() {
-                            self.cut = if on { None } else { seen.and_then(|s| p.cut_facing(s.back)) };
-                        }
-                        if let Some(c) = self.cut
-                            && button(ui, "Apply", Button::Small).backing_on_hover_text("Keep this cut in the design (Section Analysis)").clicked()
+                        if button(ui, "Record", Button::Small).backing_on_hover_text("Record a video of the room and the model").clicked()
+                            && let Ok(b) = self.bridge()
                         {
-                            // One step in the design's undo history, as the design view's own
-                            // Section Analysis makes; the plane through the cut's point nearest
-                            // the origin.
-                            let origin = scale3(c.normal, c.d);
-                            let plane = serde_json::json!({ "origin": origin, "normal": c.normal });
-                            match app.run("inspect.section", serde_json::json!({ "plane": plane })) {
-                                Ok(_) => {
-                                    self.record(Act::Design("Section".into()));
-                                    self.cut = None;
-                                    self.message = "The cut is in the design now (Section Analysis).".into();
-                                }
-                                Err(e) => self.message = e,
+                            (b.record_start)();
+                        }
+                        // The design's own undo history: a pull, a section applied, anything.
+                        let undo_tip = self.done.last().map_or("Undo".to_string(), |a| format!("Undo {}", a.name()));
+                        if button(ui, "Undo", Button::Small).backing_on_hover_text(undo_tip).clicked() {
+                            self.undo(app);
+                        }
+                        let redo_tip = self.undone.last().map_or("Redo".to_string(), |a| format!("Redo {}", a.name()));
+                        if button(ui, "Redo", Button::Small).backing_on_hover_text(redo_tip).clicked() {
+                            self.redo(app);
+                        }
+                        if let Some(mut p) = self.placed {
+                            let real = (p.scale / REAL_SIZE - 1.0).abs() < 1e-9;
+                            if solidcraft_ui_kit::text_button(ui, "Real size", !real).clicked() {
+                                let anchor = p.anchor();
+                                p.scale = REAL_SIZE;
+                                self.placed = Some(p.with_anchor(anchor));
                             }
-                        }
-                        if button(ui, "Sizes", if self.sizes { Button::SmallSelected } else { Button::Small }).backing_on_hover_text("The model's width, depth and height").clicked() {
-                            self.sizes = !self.sizes;
-                        }
-                        let explode_label = if self.exploded > 0 { "Exploded" } else { "Explode" };
-                        if button(ui, explode_label, if self.exploded > 0 { Button::SmallSelected } else { Button::Small }).clicked() {
-                            self.next_exploded_view(app);
-                        }
-                        let current = self.tool();
-                        let on = |t: Tool| if current == t { Button::SmallSelected } else { Button::Small };
-                        if button(ui, "Move", on(Tool::Move)).backing_on_hover_text("Drag a part to a new place with the Pencil").clicked() {
-                            self.select_tool(Tool::Move);
-                        }
-                        if self.moving.as_ref().is_some_and(|m| !m.held) {
-                            if button(ui, "Apply", Button::SmallSelected).clicked() {
-                                self.apply_move(app);
+                            // The scale, which opens a drawing's scales in a row under the panel.
+                            let label = format!("{} ▾", scale_name(p.scale / REAL_SIZE));
+                            if button(ui, label, if self.scales_open { Button::SmallSelected } else { Button::Small })
+                                .backing_on_hover_text("Scale")
+                                .clicked()
+                            {
+                                self.scales_open = !self.scales_open;
                             }
-                            if button(ui, "Cancel", Button::Small).clicked() {
-                                self.moving = None;
+                            if let Some(name) = &self.selected {
+                                ui.separator();
+                                ui.label(name);
                             }
-                        }
-                        if button(ui, "Pull", on(Tool::Pull)).clicked() {
-                            self.select_tool(Tool::Pull);
-                        }
-                        if button(ui, "Hole", on(Tool::Hole)).backing_on_hover_text("Draw a hole on a face with the Pencil").clicked() {
-                            self.select_tool(Tool::Hole);
-                        }
-                        if button(ui, "Ink", on(Tool::Ink)).backing_on_hover_text("Draw on the model with the Pencil").clicked() {
-                            self.select_tool(Tool::Ink);
-                        }
-                        if !self.ink.is_empty() && button(ui, "Clear ink", Button::Small).clicked() {
-                            let all = std::mem::take(&mut self.ink);
-                            self.record(Act::ClearInk(all));
-                        }
-                        if button(ui, "Spin", if self.spin { Button::SmallSelected } else { Button::Small }).backing_on_hover_text("Turn the model slowly, as on a turntable").clicked() {
-                            self.spin = !self.spin;
-                        }
-                        if self.pulling.as_ref().is_some_and(|p| !p.held) {
-                            // The exact value, typed or written with the Pencil (Scribble).
-                            let mut entered = false;
-                            if let Some(p) = self.pulling.as_mut() {
-                                ui.label(if p.edge.is_some() { "R" } else { "mm" });
-                                // A number box, not the field's full width: the panel stays one short row.
-                                let size = egui::vec2(72.0, ui.spacing().interact_size.y);
-                                entered = ui
-                                    .allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                        ui.set_max_width(size.x);
-                                        solidcraft_ui_kit::field(ui, &mut p.text)
-                                    })
-                                    .inner;
-                                if let Some(v) = solidcraft_ui_kit::parse_number(&p.text) {
-                                    p.distance = if p.edge.is_some() { v.max(0.0) } else { v };
+                            ui.separator();
+                            let on = self.cut.is_some();
+                            if button(ui, "Section", if on { Button::SmallSelected } else { Button::Small }).clicked() {
+                                self.cut = if on { None } else { seen.and_then(|s| p.cut_facing(s.back)) };
+                            }
+                            if let Some(c) = self.cut
+                                && button(ui, "Apply", Button::Small)
+                                    .backing_on_hover_text("Keep this cut in the design (Section Analysis)")
+                                    .clicked()
+                            {
+                                // One step in the design's undo history, as the design view's own
+                                // Section Analysis makes; the plane through the cut's point nearest
+                                // the origin.
+                                let origin = scale3(c.normal, c.d);
+                                let plane = serde_json::json!({ "origin": origin, "normal": c.normal });
+                                match app.run("inspect.section", serde_json::json!({ "plane": plane })) {
+                                    Ok(_) => {
+                                        self.record(Act::Design("Section".into()));
+                                        self.cut = None;
+                                        self.message = "The cut is in the design now (Section Analysis).".into();
+                                    }
+                                    Err(e) => self.message = e,
                                 }
                             }
-                            if button(ui, "Apply", Button::SmallSelected).clicked() || entered {
-                                self.apply_pull(app);
+                            if button(ui, "Sizes", if self.sizes { Button::SmallSelected } else { Button::Small })
+                                .backing_on_hover_text("The model's width, depth and height")
+                                .clicked()
+                            {
+                                self.sizes = !self.sizes;
                             }
-                            if button(ui, "Cancel", Button::Small).clicked() {
-                                self.release_focus = true;
-                                self.pulling = None;
+                            let explode_label = if self.exploded > 0 { "Exploded" } else { "Explode" };
+                            if button(ui, explode_label, if self.exploded > 0 { Button::SmallSelected } else { Button::Small }).clicked() {
+                                self.next_exploded_view(app);
+                            }
+                            let current = self.tool();
+                            let on = |t: Tool| if current == t { Button::SmallSelected } else { Button::Small };
+                            if button(ui, "Move", on(Tool::Move)).backing_on_hover_text("Drag a part to a new place with the Pencil").clicked() {
+                                self.select_tool(Tool::Move);
+                            }
+                            if self.moving.as_ref().is_some_and(|m| !m.held) {
+                                if button(ui, "Apply", Button::SmallSelected).clicked() {
+                                    self.apply_move(app);
+                                }
+                                if button(ui, "Cancel", Button::Small).clicked() {
+                                    self.moving = None;
+                                }
+                            }
+                            if button(ui, "Pull", on(Tool::Pull)).clicked() {
+                                self.select_tool(Tool::Pull);
+                            }
+                            if button(ui, "Hole", on(Tool::Hole)).backing_on_hover_text("Draw a hole on a face with the Pencil").clicked() {
+                                self.select_tool(Tool::Hole);
+                            }
+                            if button(ui, "Ink", on(Tool::Ink)).backing_on_hover_text("Draw on the model with the Pencil").clicked() {
+                                self.select_tool(Tool::Ink);
+                            }
+                            if !self.ink.is_empty() && button(ui, "Clear ink", Button::Small).clicked() {
+                                let all = std::mem::take(&mut self.ink);
+                                self.record(Act::ClearInk(all));
+                            }
+                            if button(ui, "Spin", if self.spin { Button::SmallSelected } else { Button::Small })
+                                .backing_on_hover_text("Turn the model slowly, as on a turntable")
+                                .clicked()
+                            {
+                                self.spin = !self.spin;
+                            }
+                            if self.pulling.as_ref().is_some_and(|p| !p.held) {
+                                // The exact value, typed or written with the Pencil (Scribble).
+                                let mut entered = false;
+                                if let Some(p) = self.pulling.as_mut() {
+                                    ui.label(if p.edge.is_some() { "R" } else { "mm" });
+                                    // A number box, not the field's full width: the panel stays one short row.
+                                    let size = egui::vec2(72.0, ui.spacing().interact_size.y);
+                                    entered = ui
+                                        .allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                                            ui.set_max_width(size.x);
+                                            solidcraft_ui_kit::field(ui, &mut p.text)
+                                        })
+                                        .inner;
+                                    if let Some(v) = solidcraft_ui_kit::parse_number(&p.text) {
+                                        p.distance = if p.edge.is_some() { v.max(0.0) } else { v };
+                                    }
+                                }
+                                if button(ui, "Apply", Button::SmallSelected).clicked() || entered {
+                                    self.apply_pull(app);
+                                }
+                                if button(ui, "Cancel", Button::Small).clicked() {
+                                    self.release_focus = true;
+                                    self.pulling = None;
+                                }
+                            }
+                            let joints_open = self.joints.is_some();
+                            if button(ui, "Joints", if joints_open { Button::SmallSelected } else { Button::Small }).clicked() {
+                                self.joints = if joints_open { None } else { Some(Self::list_joints(app)) };
+                            }
+                            if button(ui, "Check", Button::Small).backing_on_hover_text("Find parts that overlap").clicked() {
+                                self.check_overlaps(app);
+                            }
+                            let measuring = self.measuring.is_some();
+                            if button(ui, "Measure", if measuring { Button::SmallSelected } else { Button::Small }).clicked() {
+                                self.select_tool(Tool::Measure);
+                            }
+                            ui.separator();
+                            if button(ui, "Pick up", Button::Small).clicked() {
+                                self.clear_transients(app);
+                                self.measuring = None;
+                                self.placed = None;
+                                self.cut = None;
                             }
                         }
-                        let joints_open = self.joints.is_some();
-                        if button(ui, "Joints", if joints_open { Button::SmallSelected } else { Button::Small }).clicked() {
-                            self.joints = if joints_open { None } else { Some(Self::list_joints(app)) };
+                    });
+                    let hint = if !self.message.is_empty() {
+                        self.message.clone()
+                    } else if coaching {
+                        String::new()
+                    } else {
+                        match seen {
+                            None => "Starting the camera…".into(),
+                            Some(s) if s.tracking == 0 => "Tracking is not available.".into(),
+                            Some(_) if self.restore.is_some() => {
+                                "Point the iPad where the model was to bring it back, or tap a surface to place it again.".into()
+                            }
+                            Some(s) if s.tracking == 1 => match s.reason {
+                                2 => "Move the iPad more slowly.".into(),
+                                3 => "Point at a surface with more detail or light.".into(),
+                                4 => "Point the iPad at where it was before, to find the model again.".into(),
+                                _ => "Finding the room…".into(),
+                            },
+                            Some(_) if self.placed.is_none() => "Tap a surface to put the model there.".into(),
+                            Some(_) if self.measuring.as_ref().is_some_and(|m| m.len() < 2) => "Tap two points on the model with the Pencil.".into(),
+                            Some(_) if self.pulling.as_ref().is_some_and(|p| !p.held) => {
+                                "Apply moves the face; drag its arrow again to change how far.".into()
+                            }
+                            Some(_) if self.holing.as_ref().is_some_and(|h| !h.held) => {
+                                "Set its size, style and depth below, or its distances to the edges, then Apply. The Pencil on it moves it again."
+                                    .into()
+                            }
+                            Some(_) if self.hole_mode => {
+                                "Press the Pencil on a face where the hole goes; it measures from the face's edges as you move.".into()
+                            }
+                            Some(_) if self.ink_mode => "Draw on the model with the Pencil. Clear ink takes it all away.".into(),
+                            Some(_) if self.moving.as_ref().is_some_and(|m| !m.held) => "Apply puts the part there.".into(),
+                            Some(_) if self.move_mode => "Press the Pencil on a part and drag it where it goes.".into(),
+                            Some(_) if self.pull_mode => "Press the Pencil on a face and drag to push or pull it.".into(),
+                            Some(_) if self.cut.is_some() => "Drag up and down to move the cut. Apply keeps it in the design.".into(),
+                            Some(_) => "Drag to move, pinch to scale, twist to turn. Tap a part with the Pencil to select it.".into(),
                         }
-                        if button(ui, "Check", Button::Small).backing_on_hover_text("Find parts that overlap").clicked() {
-                            self.check_overlaps(app);
-                        }
-                        let measuring = self.measuring.is_some();
-                        if button(ui, "Measure", if measuring { Button::SmallSelected } else { Button::Small }).clicked() {
-                            self.select_tool(Tool::Measure);
-                        }
-                        ui.separator();
-                        if button(ui, "Pick up", Button::Small).clicked() {
-                            self.clear_transients(app);
-                            self.measuring = None;
-                            self.placed = None;
-                            self.cut = None;
-                        }
+                    };
+                    if !hint.is_empty() {
+                        ui.label(hint);
                     }
                 });
-                let hint = if !self.message.is_empty() {
-                    self.message.clone()
-                } else if coaching {
-                    String::new()
-                } else {
-                    match seen {
-                        None => "Starting the camera…".into(),
-                        Some(s) if s.tracking == 0 => "Tracking is not available.".into(),
-                        Some(_) if self.restore.is_some() => "Point the iPad where the model was to bring it back, or tap a surface to place it again.".into(),
-                        Some(s) if s.tracking == 1 => match s.reason {
-                            2 => "Move the iPad more slowly.".into(),
-                            3 => "Point at a surface with more detail or light.".into(),
-                            4 => "Point the iPad at where it was before, to find the model again.".into(),
-                            _ => "Finding the room…".into(),
-                        },
-                        Some(_) if self.placed.is_none() => "Tap a surface to put the model there.".into(),
-                        Some(_) if self.measuring.as_ref().is_some_and(|m| m.len() < 2) => "Tap two points on the model with the Pencil.".into(),
-                        Some(_) if self.pulling.as_ref().is_some_and(|p| !p.held) => {
-                            "Apply moves the face; drag its arrow again to change how far.".into()
-                        }
-                        Some(_) if self.holing.as_ref().is_some_and(|h| !h.held) => "Set its size, style and depth below, or its distances to the edges, then Apply. The Pencil on it moves it again.".into(),
-                        Some(_) if self.hole_mode => "Press the Pencil on a face where the hole goes; it measures from the face's edges as you move.".into(),
-                        Some(_) if self.ink_mode => "Draw on the model with the Pencil. Clear ink takes it all away.".into(),
-                        Some(_) if self.moving.as_ref().is_some_and(|m| !m.held) => "Apply puts the part there.".into(),
-                        Some(_) if self.move_mode => "Press the Pencil on a part and drag it where it goes.".into(),
-                        Some(_) if self.pull_mode => "Press the Pencil on a face and drag to push or pull it.".into(),
-                        Some(_) if self.cut.is_some() => "Drag up and down to move the cut. Apply keeps it in the design.".into(),
-                        Some(_) => "Drag to move, pinch to scale, twist to turn. Tap a part with the Pencil to select it.".into(),
-                    }
-                };
-                if !hint.is_empty() {
-                    ui.label(hint);
-                }
-            });
-        });
+            },
+        );
         // A Pencil touch that starts on the panel is the panel's (its buttons), not the model's.
         let below = shown.response.rect.left_bottom() + egui::vec2(0.0, 8.0);
         let scales = self.scales_row(ctx, below);
@@ -2726,7 +2791,9 @@ fn on_level(seen: &Seen, u: (f32, f32), level: f64) -> Option<[f64; 3]> {
 fn to_screen(seen: &Seen, placed: &Placed, rect: egui::Rect, q: [f64; 3]) -> Option<egui::Pos2> {
     let r = placed.apply_room(q);
     let c: [f64; 4] = std::array::from_fn(|k| (0..3).map(|j| seen.view_proj[j][k] * r[j]).sum::<f64>() + seen.view_proj[3][k]);
-    (c[3] > 1e-6).then(|| egui::pos2(rect.min.x + ((c[0] / c[3] + 1.0) * 0.5) as f32 * rect.width(), rect.min.y + ((1.0 - c[1] / c[3]) * 0.5) as f32 * rect.height()))
+    (c[3] > 1e-6).then(|| {
+        egui::pos2(rect.min.x + ((c[0] / c[3] + 1.0) * 0.5) as f32 * rect.width(), rect.min.y + ((1.0 - c[1] / c[3]) * 0.5) as f32 * rect.height())
+    })
 }
 
 /// The part under view point `u` (0..1 across and down) and where its face is hit (model
@@ -2780,13 +2847,15 @@ fn pick_model(app: &mut SolveApp, origin: [f64; 3], dir: [f64; 3]) -> Option<Hit
 /// keeps), by the design's name.
 fn remembered(app: &SolveApp) -> (std::path::PathBuf, std::path::PathBuf) {
     let name: String = app.session.save_as_name().chars().map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' }).collect();
-    let dir = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir).join("Library/Application Support/SolidCraft/ar");
+    let dir =
+        std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir).join("Library/Application Support/SolidCraft/ar");
     (dir.join(format!("{name}.worldmap")), dir.join(format!("{name}.placement.json")))
 }
 
 impl Placed {
     fn to_json(self) -> String {
-        serde_json::json!({ "axes": self.axes, "scale": self.scale, "translation": self.translation, "foot": self.foot, "bounds": self.bounds }).to_string()
+        serde_json::json!({ "axes": self.axes, "scale": self.scale, "translation": self.translation, "foot": self.foot, "bounds": self.bounds })
+            .to_string()
     }
 
     fn from_json(text: &str) -> Option<Placed> {
@@ -2811,7 +2880,13 @@ impl Placed {
 /// iPad, at real size unless that is larger than [`LARGEST_FIRST`].
 /// On a wall (`wall`: its normal in the room) the model hangs upright with its back against the
 /// wall, facing out, the middle of its back side on `point`.
-fn first_placement(app: &SolveApp, source: Option<&solidcraft_ui_egui::stereo::Source>, seen: &Seen, point: [f64; 3], wall: Option<[f64; 3]>) -> Option<Placed> {
+fn first_placement(
+    app: &SolveApp,
+    source: Option<&solidcraft_ui_egui::stereo::Source>,
+    seen: &Seen,
+    point: [f64; 3],
+    wall: Option<[f64; 3]>,
+) -> Option<Placed> {
     let bounds = solidcraft_ui_egui::viewport::model_bounds(app);
     if bounds.is_empty() {
         return None;
@@ -3097,7 +3172,10 @@ fn photo(rs: &egui_wgpu::RenderState, size: [u32; 2]) -> Result<Vec<u8>, String>
     });
     encoder.copy_texture_to_buffer(
         target.as_image_copy(),
-        wgpu::TexelCopyBufferInfo { buffer: &read, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(padded), rows_per_image: Some(height) } },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &read,
+            layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(padded), rows_per_image: Some(height) },
+        },
         extent,
     );
     let submission = rs.queue.submit([encoder.finish()]);
@@ -3652,7 +3730,13 @@ mod tests {
     /// A placement read back from what it wrote is the same; anything else is refused.
     #[test]
     fn a_placement_is_remembered() {
-        let p = Placed { axes: [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]], scale: 0.002, translation: [0.1, 0.7, -0.4], foot: [5.0, 6.0, 0.0], bounds: [[0.0; 3], [10.0, 12.0, 4.0]] };
+        let p = Placed {
+            axes: [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]],
+            scale: 0.002,
+            translation: [0.1, 0.7, -0.4],
+            foot: [5.0, 6.0, 0.0],
+            bounds: [[0.0; 3], [10.0, 12.0, 4.0]],
+        };
         assert_eq!(Placed::from_json(&p.to_json()), Some(p));
         assert_eq!(Placed::from_json("{}"), None);
         assert_eq!(Placed::from_json(&p.to_json().replace("0.002", "-1")), None);
@@ -3662,7 +3746,13 @@ mod tests {
     /// where the motion takes it.
     #[test]
     fn a_placement_follows_its_anchor() {
-        let p = Placed { axes: [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]], scale: 0.001, translation: [0.1, 0.7, -0.4], foot: [5.0, 6.0, 0.0], bounds: [[0.0; 3], [10.0, 12.0, 4.0]] };
+        let p = Placed {
+            axes: [[1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]],
+            scale: 0.001,
+            translation: [0.1, 0.7, -0.4],
+            foot: [5.0, 6.0, 0.0],
+            bounds: [[0.0; 3], [10.0, 12.0, 4.0]],
+        };
         let (s, c) = 0.3f64.sin_cos();
         let m: Mat4 = [[c, 0.0, -s, 0.0], [0.0, 1.0, 0.0, 0.0], [s, 0.0, c, 0.0], [0.02, -0.01, 0.03, 1.0]];
         let Some(inv) = invert(&m) else { panic!("rigid") };
@@ -3682,7 +3772,15 @@ mod tests {
         let view: Mat4 = [[1.0, 0.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, -1.0, 0.0, 0.0], [0.0, 0.0, -0.5, 1.0]];
         let (n, f) = (NEAR, FAR);
         let proj: Mat4 = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, f / (n - f), -1.0], [0.0, 0.0, n * f / (n - f), 0.0]];
-        let seen = Seen { view_proj: mul(&proj, &view), eye: [0.0, 0.5, 0.0], back: [0.0, 1.0, 0.0], display: [0.0; 6], tracking: 2, reason: 0, light: [1.0; 3] };
+        let seen = Seen {
+            view_proj: mul(&proj, &view),
+            eye: [0.0, 0.5, 0.0],
+            back: [0.0, 1.0, 0.0],
+            display: [0.0; 6],
+            tracking: 2,
+            reason: 0,
+            light: [1.0; 3],
+        };
         let Some(p) = on_level(&seen, (0.5, 0.5), 0.0) else { panic!("straight down meets the table") };
         assert!(close(p, [0.0, 0.0, 0.0]), "{p:?}");
         let Some(q) = on_level(&seen, (0.75, 0.5), 0.0) else { panic!("meets it") };

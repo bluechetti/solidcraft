@@ -66,6 +66,17 @@ build notes): `ar`, `ar-off`, `ar-tap:x,y` (a finger tap, 0..1 across and down),
 `ar-squeeze:x,y` (points). The log (`tmp/solidcraft-last-error.txt`) has an `ar:` line for each tap and pick,
 the first LiDAR depth map, thermal changes, and every 300 frames the CPU time and light gains.
 
+## Testing without an iPad
+
+ARKit does not run in the iOS Simulator, so a Simulator build answers the AR bridge from a
+made-up room instead (`src/ar_sim.rs`): a floor of 0.5 m tiles and a back wall 3 m away, a camera
+1.3 m up looking 35° down, an exact depth map, and taps that land on the floor or the wall as
+ARKit's planes would. Everything above the bridge (placing, Pencil tools, the panel, test steps)
+runs as on the iPad. Two more test steps move the camera: `ar-sim-move:right,up,back` (metres,
+along the camera's own axes) and `ar-sim-look:yaw,pitch` (degrees). `ar-photo` writes the AR
+picture to the app's Documents as `ar-photo-N.ppm`. Screen recording and saved room maps are not
+simulated. A device build is unchanged.
+
 ## Limits
 
 - The camera picture is shared with the GPU without a copy (CVMetalTextureCache wrapped by

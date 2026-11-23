@@ -107,6 +107,22 @@ impl eframe::App for App {
                     if let Err(e) = self.ar.set_on(&mut self.solve, step == "ar") {
                         note(&format!("ar: {e}"));
                     }
+                } else if let Some(by) = step.strip_prefix("ar-sim-move:") {
+                    // The Simulator's made-up room: the camera moves along its own axes (metres).
+                    let v: Vec<f64> = by.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+                    #[cfg(all(target_os = "ios", target_abi = "sim"))]
+                    if let [right, up, back] = v[..] {
+                        ar::sim::move_camera([right, up, back]);
+                    }
+                    let _ = v;
+                } else if let Some(by) = step.strip_prefix("ar-sim-look:") {
+                    // The Simulator's camera turns (degrees of yaw and pitch).
+                    let v: Vec<f64> = by.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+                    #[cfg(all(target_os = "ios", target_abi = "sim"))]
+                    if let [yaw, pitch] = v[..] {
+                        ar::sim::turn_camera(yaw, pitch);
+                    }
+                    let _ = v;
                 } else if let Some(at) = step.strip_prefix("ar-tap:") {
                     let mut xy = at.split(',').filter_map(|v| v.trim().parse::<f32>().ok());
                     #[cfg(target_os = "ios")]
@@ -114,7 +130,13 @@ impl eframe::App for App {
                         self.ar.test_tap = Some((x, y));
                     }
                     let _ = &mut xy;
-                } else if step == "ar-section" || step == "ar-measure" || step == "ar-explode" || step == "ar-photo" || step == "ar-joints" || step == "ar-check" {
+                } else if step == "ar-section"
+                    || step == "ar-measure"
+                    || step == "ar-explode"
+                    || step == "ar-photo"
+                    || step == "ar-joints"
+                    || step == "ar-check"
+                {
                     #[cfg(target_os = "ios")]
                     match step.as_str() {
                         "ar-section" => self.ar.test_section = true,
