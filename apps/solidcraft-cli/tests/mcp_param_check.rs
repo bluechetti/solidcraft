@@ -42,6 +42,11 @@ fn param_check_applies_to_the_starting_script() {
     let off = run("off");
     assert!(off.status.success(), "{}", String::from_utf8_lossy(&off.stderr));
     assert!(!String::from_utf8_lossy(&off.stderr).contains("operaton"));
+    // No flag: warn, the server's default, so an agent's misspelt key is reported, not ignored.
+    let unset =
+        Command::new(env!("CARGO_BIN_EXE_solidcraft-cli")).args(["mcp", "--in", script.to_str().unwrap()]).stdin(Stdio::null()).output().unwrap();
+    let stderr = String::from_utf8_lossy(&unset.stderr);
+    assert!(unset.status.success() && stderr.contains("step 1: unknown key `operaton`"), "{stderr}");
     // A bare flag is an error, not off.
     let bare = Command::new(env!("CARGO_BIN_EXE_solidcraft-cli")).args(["mcp", "--param-check"]).stdin(Stdio::null()).output().unwrap();
     assert!(!bare.status.success());

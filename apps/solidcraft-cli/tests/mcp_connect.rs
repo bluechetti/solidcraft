@@ -65,12 +65,14 @@ fn mcp_connect_serves_before_the_app_runs_and_reaches_it_once_it_does() {
             let mut line = String::new();
             lines.read_line(&mut line).unwrap();
             let req: Value = serde_json::from_str(&line).unwrap();
-            // The server first asks for the agents' output options (the compact preference: off).
-            let options = req["method"] == "mcp.options";
+            // The server first asks for the agents' output options (the compact preference: off)
+            // and, checking parameters at its default level (warn), what the app checks itself
+            // (nothing here: the server checks the calls).
+            let options = req["method"] == "mcp.options" || req["method"] == "control.capabilities";
             let reply = if req["token"] != json!(token) {
                 json!({"id": req["id"], "ok": false, "error": format!("unauthorized: token {}", req["token"])})
             } else if options {
-                json!({"id": req["id"], "ok": true, "result": {"compact": false}})
+                json!({"id": req["id"], "ok": true, "result": if req["method"] == "mcp.options" { json!({"compact": false}) } else { json!({}) }})
             } else {
                 json!({"id": req["id"], "ok": true, "result": {"bodies": [], "method": req["method"]}})
             };
@@ -123,12 +125,17 @@ fn mcp_without_arguments_finds_the_running_app() {
         };
         let mut lines = BufReader::new(stream.try_clone().unwrap());
         let mut line = line;
-        // The server first asks for the agents' output options (the compact preference: off).
+        // The server first asks for the agents' output options (the compact preference: off)
+        // and what the app checks itself (nothing: the server checks the calls at warn).
         loop {
             let req: Value = serde_json::from_str(&line).unwrap();
             let ok = req["token"] == json!(token);
-            let options = req["method"] == "mcp.options";
-            let result = if options { json!({"compact": false}) } else { json!({"bodies": [], "method": req["method"]}) };
+            let options = req["method"] == "mcp.options" || req["method"] == "control.capabilities";
+            let result = match req["method"].as_str() {
+                Some("mcp.options") => json!({"compact": false}),
+                Some("control.capabilities") => json!({}),
+                _ => json!({"bodies": [], "method": req["method"]}),
+            };
             writeln!(&stream, "{}", json!({"id": req["id"], "ok": ok, "result": result, "error": "unauthorized"})).unwrap();
             if !options {
                 break;

@@ -101,7 +101,7 @@ const USAGE_KERNEL_CASES: &str = "  solidcraft-cli kernel-cases <case-dir>... [-
 const USAGE_FUZZ: &str =
     "  solidcraft-cli fuzz [--from N] [--count N] [--jobs J] [--timeout S] [--steps N] [--minimise] [--out DIR] [--report FILE]\n";
 /// `mcp`'s lines in the usage.
-const USAGE_MCP: &str = "  solidcraft-cli mcp [--headless] [--in design.sc|script.json] [--connect 127.0.0.1:PORT [--token T]] [--allow-path DIR]... [--allow-any-path] [--require-allow-path]\n                     [--param-check off|warn|strict] [--render-gpu] [--compact]\n      (--compact, SOLIDCRAFT_MCP_COMPACT=1 or the app's Preferences › AI (with --connect): compact tool output for\n       agents: inspect_design summarises sketches and takes `sketches` by name and a `bodies` filter, and tool JSON\n       is not pretty-printed; off by default)\n  solidcraft-cli mcp setup [--dry-run] [--client opencode|claude-desktop|claude-code|cursor] [--live]\n      (adds a `solidcraft` server, with this program's path, to each installed AI client; --live adds `solidcraft-live` for the running app; alias: mcp install)\n";
+const USAGE_MCP: &str = "  solidcraft-cli mcp [--headless] [--in design.sc|script.json] [--connect 127.0.0.1:PORT [--token T]] [--allow-path DIR]... [--allow-any-path] [--require-allow-path]\n                     [--param-check off|warn|strict] [--render-gpu] [--compact]\n      (--param-check: how a call that breaks a command's parameter contract is treated; default warn, which adds\n       `param_warnings` to its result)\n      (--compact, SOLIDCRAFT_MCP_COMPACT=1 or the app's Preferences › AI (with --connect): compact tool output for\n       agents: inspect_design summarises sketches by default; off by default)\n  solidcraft-cli mcp setup [--dry-run] [--client opencode|claude-desktop|claude-code|cursor] [--live]\n      (adds a `solidcraft` server, with this program's path, to each installed AI client; --live adds `solidcraft-live` for the running app; alias: mcp install)\n";
 /// The plugin operations' lines in the usage. The macro holds one text for each operation, so
 /// `plugin --help` prints both and an operation's own `--help` prints its own lines alone
 /// (#19237): what the operation does, its arguments and its exit codes.
@@ -540,11 +540,15 @@ fn print_param_warnings(path: &str, step: usize, r: &Value) {
 }
 
 /// `--param-check off|warn|strict`: how calls that break a command's parameter contract are
-/// treated (docs/mcp.md); off when the option isn't given.
-fn parse_param_check(cmd: &str, args: &[String]) -> Result<solidcraft_engine::schema::ParamCheck, String> {
+/// treated (docs/mcp.md); `default` when the option isn't given.
+fn parse_param_check(
+    cmd: &str,
+    args: &[String],
+    default: solidcraft_engine::schema::ParamCheck,
+) -> Result<solidcraft_engine::schema::ParamCheck, String> {
     match flag(args, "--param-check") {
         None if args.iter().any(|a| a == "--param-check") => Err(format!("{cmd}: --param-check wants off, warn or strict")),
-        None => Ok(solidcraft_engine::schema::ParamCheck::Off),
+        None => Ok(default),
         Some(v) => {
             solidcraft_engine::schema::ParamCheck::parse(v).ok_or_else(|| format!("{cmd}: --param-check wants off, warn or strict, not `{v}`"))
         }
@@ -624,7 +628,7 @@ fn print_json(v: &Value, file: Option<&str>) -> Result<(), String> {
 fn cmd_run(args: &[String]) -> Result<(), String> {
     let json_out = json_out(args)?;
     // Before the option check, so a bare `--param-check` gets the words `mcp` uses.
-    let check = parse_param_check("run", args)?;
+    let check = parse_param_check("run", args, solidcraft_engine::schema::ParamCheck::Off)?;
     known_args(
         "run",
         args,
@@ -1100,8 +1104,10 @@ fn cmd_mcp(args: &[String]) -> Result<(), String> {
             solidcraft_engine::note!("solidcraft mcp: the design's folder is left out because {why}; add it with --allow-path if you mean it");
         }
     }
-    // How calls that break a command's parameter contract are treated, headless or bridged.
-    let param_check = parse_param_check("mcp", args)?;
+    // How calls that break a command's parameter contract are treated, headless or bridged. An
+    // agent's misspelt key is warned about by default (`param_warnings`), not ignored in silence:
+    // replayed agent calls passed `edit.checkpoint {name}`, a key it does not have, unnoticed.
+    let param_check = parse_param_check("mcp", args, solidcraft_engine::schema::ParamCheck::Warn)?;
     let backend: Box<dyn solidcraft_mcp::Backend> = match (flag(args, "--connect"), flag(args, "--in")) {
         (Some(_), Some(_)) => return Err("mcp: use either --connect or --in, not both".into()),
         (Some(addr), None) => {
