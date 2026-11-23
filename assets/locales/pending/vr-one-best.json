@@ -1,10 +1,10 @@
 {
   "en": {
     "vr.assistant_changed": "The Assistant changed the design:",
-    "vr.assistant_keep": "Keep",
+    "vr.assistant_keep": "Keep change",
     "vr.assistant_kept": "Kept",
     "vr.assistant_off": "Turn on AI features in Preferences on the desktop to use the Assistant here.",
-    "vr.assistant_undo": "Undo",
+    "vr.assistant_undo": "Undo change",
     "vr.assistant_undone": "Undone: the design is as the request found it",
     "vr.belt_assistant": "Assistant",
     "vr.belt_parameters": "Parameters",

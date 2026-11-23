@@ -21,7 +21,27 @@ pub struct VrAssistant {
     /// The undo history's length when the last request was sent: once the agent is done, a design
     /// changed since is offered to keep or undo (the change seen before it is kept).
     base: Option<usize>,
+    /// The agent has been seen working on that request (a request is only queued when sent).
+    seen_working: bool,
     review: bool,
+}
+
+/// What to do about the request sent when the undo history was `base` long, the agent `working`
+/// now (and `seen_working` since it was sent), the history `undo_len` long now: wait, offer Keep
+/// and Undo, or forget it (done without changing the design).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Review {
+    Wait,
+    Offer,
+    Forget,
+}
+
+pub fn review(base: usize, seen_working: bool, working: bool, undo_len: usize) -> Review {
+    match (seen_working, working) {
+        (_, true) | (false, false) => Review::Wait,
+        (true, false) if undo_len > base => Review::Offer,
+        (true, false) => Review::Forget,
+    }
 }
 
 /// The environment variable that names the voice program.
@@ -88,6 +108,7 @@ impl VrAssistant {
             Ok(Some(text)) => {
                 self.note = format!("“{text}”");
                 self.base = Some(app.session.undo.len());
+                self.seen_working = false;
                 self.review = false;
                 crate::agent_chat::send_text(app, text);
             }
@@ -120,26 +141,23 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui, s: &mut VrAssistant) {
     }
     #[cfg(target_arch = "wasm32")]
     let _ = talk;
-    if !s.note.is_empty() {
-        ui.label(egui::RichText::new(&s.note).color(t.text_dim));
-    }
     // Once the agent is done with a request that changed the design: Keep it, or Undo it back to
     // where the request found it.
     let working = matches!(app.agent_chat.state(), crate::agent_chat::State::Busy | crate::agent_chat::State::Starting);
+    s.seen_working |= working && s.base.is_some();
     if let Some(base) = s.base
-        && !working
-        && !s.listening()
+        && !s.review
     {
-        if app.session.undo.len() > base {
-            s.review = true;
-        } else {
-            s.base = None;
+        match review(base, s.seen_working, working, app.session.undo.len()) {
+            Review::Wait => {}
+            Review::Offer => s.review = true,
+            Review::Forget => s.base = None,
         }
     }
+    // Right under Talk, at a place of its own: Keep or Undo what the request changed.
     if s.review
         && let Some(base) = s.base
     {
-        ui.label(egui::RichText::new(solidcraft_ui_text::tr("vr.assistant_changed")).strong());
         ui.horizontal(|ui| {
             let half = egui::vec2((ui.available_width() - t.space_8) / 2.0, 36.0);
             if ui.add_sized(half, egui::Button::new(solidcraft_ui_text::tr("vr.assistant_keep"))).clicked() {
@@ -158,6 +176,10 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui, s: &mut VrAssistant) {
                 s.note = solidcraft_ui_text::tr("vr.assistant_undone").to_string();
             }
         });
+    }
+    if !s.note.is_empty() {
+        let note = if s.review { format!("{}  {}", solidcraft_ui_text::tr("vr.assistant_changed"), s.note) } else { s.note.clone() };
+        ui.label(egui::RichText::new(note).color(t.text_dim));
     }
     ui.separator();
     crate::agent_chat::shared_content(app, ui, solidcraft_engine::panels::Flow::Tall);
