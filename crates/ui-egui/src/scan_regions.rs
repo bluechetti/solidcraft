@@ -193,7 +193,7 @@ pub(crate) fn draw(app: &SolveApp, painter: &egui::Painter, proj: &crate::viewpo
     for m in &marked {
         let Some(at) = proj.to_screen(solidcore_record::Vec3::new(m.at[0], m.at[1], m.at[2])) else { continue };
         let colour = role_colour(m.role);
-        let size = m.hold.map_or(String::new(), |h| format!(" {}", crate::prefs::show_mm(app, h, 2)));
+        let size = m.hold.map_or(String::new(), |h| format!(" {}", crate::prefs::show_mm(app, h, 1)));
         let galley = painter.layout_no_wrap(format!("{} · {}{size}", m.name, role_words(m.role)), font.clone(), t.text);
         let rect = tags.place(at, galley.size() + vec2(10.0, 6.0));
         painter.line_segment([at, rect.left_bottom()], Stroke::new(1.0, colour));

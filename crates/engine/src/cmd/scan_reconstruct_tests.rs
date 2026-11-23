@@ -539,6 +539,7 @@ fn a_held_size_is_placed_off_the_scan_and_checked_on_the_model() {
     let plan = run(&mut s, "scan.plan_region", json!({"scan": scan, "name": "Boss", "selected": true, "role": "hold", "hold": 10}));
     let boss = plan["regions"].as_array().unwrap().iter().find(|r| r["name"] == "Boss").unwrap().clone();
     assert_eq!(boss["hold_at"].as_array().map(Vec::len), Some(1), "a round face: one point: {plan}");
+    assert!(s.scan_shapes.as_ref().is_some_and(|k| !k.shown), "Find All read the scan to place it, not shown");
     // The block's top and bottom, selected together: its thickness held at 10.
     run(&mut s, "scan.select", json!({"body": scan, "brush": {"points": [[5, 5, 10]], "radius": "3 mm"}}));
     run(&mut s, "scan.select", json!({"body": scan, "mode": "add", "brush": {"points": [[5, 5, 0]], "radius": "3 mm"}}));

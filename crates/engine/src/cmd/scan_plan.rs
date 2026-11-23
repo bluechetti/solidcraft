@@ -752,9 +752,11 @@ pub fn kept_from_agent_request(s: &Session, method: &str, params: &Value) -> Opt
 fn hold_place(s: &mut Session, scan: &str) -> Result<Vec<[f64; 3]>> {
     let current = |s: &Session| s.scan_shapes.as_ref().is_some_and(|k| k.scan == scan && k.current(s));
     if !current(s) {
-        super::super::find_command("scan.find_all")
-            .ok_or_else(|| EngineError::UnknownCommand("scan.find_all".into()))?
-            .run_nested(s, &json!({"body": scan, "show": true}))?;
+        // Read, not shown: the person asked to hold a size, not to see the scan coloured by its
+        // shapes (which would hide the regions' own colours).
+        let find_all = super::super::find_command("scan.find_all").ok_or_else(|| EngineError::UnknownCommand("scan.find_all".into()))?;
+        find_all.run_nested(s, &json!({"body": scan}))?;
+        find_all.run_nested(s, &json!({"body": scan, "show": false}))?;
     }
     let (Some(found), Some(picked), Some(mesh)) = (
         s.scan_shapes.clone().filter(|k| k.scan == scan),
