@@ -136,6 +136,7 @@ impl eframe::App for App {
                     || step == "ar-photo"
                     || step == "ar-joints"
                     || step == "ar-check"
+                    || step == "ar-sweep"
                 {
                     #[cfg(target_os = "ios")]
                     match step.as_str() {
@@ -144,6 +145,7 @@ impl eframe::App for App {
                         "ar-photo" => self.ar.take_photo = true,
                         "ar-joints" => self.ar.test_joints = true,
                         "ar-check" => self.ar.test_check = true,
+                        "ar-sweep" => self.ar.test_sweep = true,
                         _ => self.ar.test_explode = true,
                     }
                 } else if step == "ar-record" || step == "ar-record-stop" {

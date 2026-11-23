@@ -212,6 +212,104 @@ struct Move {
     /// The model axis the move keeps to, once it has chosen one.
     axis: Option<usize>,
     held: bool,
+    /// A placed part that joints let move: the drag drives its joint instead (as the headset does).
+    joint: Option<JointMove>,
+}
+
+/// A part moved by its joints with the Pencil: its joint axes, the one the drag follows once
+/// chosen, the undo history's length when it began (the drag is one step after it), whether
+/// contact stops it (it touched nothing at first), the last clear value and what held it.
+#[derive(Clone, Debug, PartialEq)]
+struct JointMove {
+    axes: Vec<solidcraft_ui_egui::vr_joints::Axis>,
+    chosen: Option<solidcraft_ui_egui::vr_joints::Axis>,
+    base: usize,
+    stops_at_contact: bool,
+    clear: f64,
+    moved: bool,
+    held: Option<String>,
+}
+
+/// One step of a joint drag with the Pencil at `grab + model` (model units, `model` from where it
+/// was grabbed): the axis the move follows best once it is 3 mm long, then the joint driven to it
+/// (as the headset's joint drag: limits hold it, contact steps it back). What the panel says.
+fn drive_by_pencil(app: &mut SolveApp, j: &mut JointMove, grab: [f64; 3], model: [f64; 3], body: &str) -> Option<String> {
+    use solidcraft_ui_egui::vr_joints;
+    if j.chosen.is_none() {
+        if dot(model, model).sqrt() < 3.0 {
+            return None;
+        }
+        let response = |a: &vr_joints::Axis| {
+            if a.angular {
+                let r = sub(grab, a.origin);
+                let t = [a.axis[1] * r[2] - a.axis[2] * r[1], a.axis[2] * r[0] - a.axis[0] * r[2], a.axis[0] * r[1] - a.axis[1] * r[0]];
+                let n = dot(t, t).sqrt();
+                if n > 1e-12 { (dot(model, t) / n).abs() } else { 0.0 }
+            } else {
+                dot(model, a.axis).abs()
+            }
+        };
+        j.chosen = j.axes.iter().max_by(|a, b| response(a).total_cmp(&response(b))).cloned();
+    }
+    let axis = j.chosen.clone()?;
+    let amount = if axis.angular {
+        let (a, b) = (angle_about(grab, axis.origin, axis.axis)?, angle_about(add(grab, model), axis.origin, axis.axis)?);
+        let mut d = b - a;
+        while d > std::f64::consts::PI {
+            d -= std::f64::consts::TAU;
+        }
+        while d < -std::f64::consts::PI {
+            d += std::f64::consts::TAU;
+        }
+        d
+    } else {
+        dot(model, axis.axis)
+    };
+    if j.clear.is_nan() {
+        j.clear = axis.value;
+    }
+    let value = vr_joints::wanted(&axis, amount);
+    let mut d = match vr_joints::drive(app, &axis, value, j.base) {
+        Ok(Some(d)) => d,
+        Ok(None) => return None,
+        Err(e) => return Some(e),
+    };
+    if d.held.is_none() && vr_joints::past_limit(&axis, amount) {
+        d.held = Some("limit".into());
+    }
+    if j.stops_at_contact && vr_joints::touching(app, &[body.to_string()]) == Ok(true) {
+        if let Ok(Some(back)) = vr_joints::drive(app, &axis, j.clear, j.base) {
+            d.value = back.value;
+        }
+        d.held = Some("contact".into());
+    } else {
+        j.clear = value;
+    }
+    j.moved = d.held.is_some() && d.held != j.held;
+    j.held = d.held.clone();
+    let unit = if d.unit == "deg" { "°".to_string() } else { format!(" {}", d.unit) };
+    let held = match d.held.as_deref() {
+        Some("limit") => "  (at its limit)".to_string(),
+        Some("contact") => "  (touching)".to_string(),
+        Some(other) => format!("  ({other})"),
+        None => String::new(),
+    };
+    Some(format!("{} {:.1}{unit}{held}", axis.name, d.value))
+}
+
+/// The angle of `p` about the line through `origin` along unit `axis` (radians).
+fn angle_about(p: [f64; 3], origin: [f64; 3], axis: [f64; 3]) -> Option<f64> {
+    let r = sub(p, origin);
+    let radial = sub(r, axis.map(|a| a * dot(r, axis)));
+    let pick = if axis[0].abs() < 0.9 { [1.0, 0.0, 0.0] } else { [0.0, 1.0, 0.0] };
+    let u = [axis[1] * pick[2] - axis[2] * pick[1], axis[2] * pick[0] - axis[0] * pick[2], axis[0] * pick[1] - axis[1] * pick[0]];
+    let n = dot(u, u).sqrt();
+    if n < 1e-12 || dot(radial, radial) < 1e-12 {
+        return None;
+    }
+    let u = u.map(|v| v / n);
+    let v = [axis[1] * u[2] - axis[2] * u[1], axis[2] * u[0] - axis[0] * u[2], axis[0] * u[1] - axis[1] * u[0]];
+    Some(dot(radial, v).atan2(dot(radial, u)))
 }
 
 /// A hole being drawn with the Pencil: its middle and the face's outward normal (model units),
@@ -556,6 +654,8 @@ pub struct State {
     /// The test hook opens Joints (`ar-joints`) or presses Check (`ar-check`) next frame.
     pub test_joints: bool,
     pub test_check: bool,
+    /// The test hook sweeps the selected part's joint (`ar-sweep`).
+    pub test_sweep: bool,
     /// The test hook starts (`ar-record`) or stops (`ar-record-stop`) a video next frame.
     pub test_record: Option<bool>,
     /// A Pencil pull asked for by the test hook: from and to (0..1 across and down the screen).
@@ -647,6 +747,9 @@ pub struct State {
     /// Overlapping parts from the last Check: the two bodies and the overlap's middle (model
     /// units), marked in the room until the model changes.
     overlaps: Vec<(String, String, [f64; 3])>,
+    /// Check is on: the overlaps are found again whenever the design changes (the design they
+    /// were found in).
+    checking: Option<(u64, u64)>,
     /// Photo was asked for: taken after this frame's AR pass is set up.
     pub take_photo: bool,
     /// Where the AR panel was last drawn (screen points).
@@ -930,6 +1033,19 @@ impl State {
                     if std::mem::take(&mut self.test_check) {
                         self.check_overlaps(app);
                     }
+                    if std::mem::take(&mut self.test_sweep) {
+                        self.sweep_selected(app);
+                    }
+                    // Check on: found again once the design changed (not while a part is moved).
+                    if self.checking.is_some_and(|at| at != (app.session.uid, app.session.revision)) && self.moving.is_none() {
+                        let before = self.overlaps.len();
+                        let selection = app.session.selection.clone();
+                        self.check_overlaps(app);
+                        app.session.selection = selection;
+                        if self.overlaps.len() != before {
+                            crate::note(&format!("ar: check: {} overlaps now", self.overlaps.len()));
+                        }
+                    }
                     if std::mem::take(&mut self.test_explode) {
                         self.next_exploded_view(app);
                     }
@@ -1198,11 +1314,17 @@ impl State {
                 self.start_move(app, seen, rect, at);
             }
             if let Some(at) = pull_at {
-                self.drag_move(seen, rect, at);
+                self.drag_move(app, seen, rect, at);
             }
             if pull_end && let Some(m) = self.moving.as_mut() {
                 m.held = false;
-                if m.delta.iter().all(|v| v.abs() < 0.5) {
+                // A joint drag is applied as it goes: lifting the Pencil ends it (one undo step).
+                if let Some(j) = m.joint.take() {
+                    self.moving = None;
+                    if app.session.undo.len() > j.base {
+                        self.record(Act::Design(format!("move {}", j.chosen.as_ref().map_or("joint", |a| a.name.as_str()))));
+                    }
+                } else if m.delta.iter().all(|v| v.abs() < 0.5) {
                     self.moving = None;
                 }
             }
@@ -1765,29 +1887,17 @@ impl State {
     /// Check: which parts overlap (`inspect.interference`, held to a few seconds so the view
     /// does not stall). The overlapping parts are selected and each overlap is marked in the room.
     fn check_overlaps(&mut self, app: &mut SolveApp) {
-        let reply = match app.run("inspect.interference", serde_json::json!({ "budget_s": 8 })) {
-            Ok(r) => r,
+        // The overlaps between solid bodies (`inspect.clearance`: fast enough to run again after
+        // every change while Check is on).
+        let found = match solidcraft_ui_egui::vr_joints::clashes(app) {
+            Ok(found) => found,
             Err(e) => {
                 self.message = e;
                 return;
             }
         };
-        self.overlaps = reply
-            .get("interferences")
-            .and_then(|i| i.as_array())
-            .map(|list| {
-                list.iter()
-                    .filter_map(|o| {
-                        let c = o.get("center")?;
-                        Some((
-                            o.get("a")?.as_str()?.to_owned(),
-                            o.get("b")?.as_str()?.to_owned(),
-                            [c.get(0)?.as_f64()?, c.get(1)?.as_f64()?, c.get(2)?.as_f64()?],
-                        ))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+        self.checking = Some((app.session.uid, app.session.revision));
+        self.overlaps = found.into_iter().map(|c| (c.a, c.b, std::array::from_fn(|k| (c.bbox[0][k] + c.bbox[1][k]) / 2.0))).collect();
         if self.overlaps.is_empty() {
             self.message = "No parts overlap.".into();
         } else {
@@ -1841,6 +1951,36 @@ impl State {
             painter.rect_filled(back, 5.0, ink);
             painter.galley(back.center() - galley.size() * 0.5, galley, egui::Color32::BLACK);
         }
+    }
+
+    /// Sweep: the selected part's joint through its travel each way to the first contact
+    /// (`joint.sweep`, the design left as it was); the contact is marked in the room.
+    fn sweep_selected(&mut self, app: &mut SolveApp) {
+        use solidcraft_engine::Sel;
+        let occurrence = app.session.selection.iter().find_map(|s| match s {
+            Sel::Occurrence { path } => path.last().copied(),
+            Sel::Body { name } => solidcraft_ui_egui::vr_joints::placed_part(app, name),
+            _ => None,
+        });
+        let Some(axis) = occurrence.and_then(|o| solidcraft_ui_egui::vr_joints::axes(app, o).into_iter().next()) else {
+            self.message = "Select a part a joint moves, then Sweep.".into();
+            return;
+        };
+        match solidcraft_ui_egui::vr_joints::sweep(app, &axis) {
+            Ok(swept) => {
+                let unit = if axis.angular { "°" } else { " mm" };
+                let range = format!("{} {:.1} to {:.1}{unit}", axis.name, swept.reached[0], swept.reached[1]);
+                self.message = match swept.touches {
+                    Some((names, at)) => {
+                        self.overlaps = vec![(names.clone(), String::new(), at)];
+                        format!("{range}: then {names} touch.")
+                    }
+                    None => format!("{range}: clear all the way."),
+                };
+            }
+            Err(e) => self.message = e,
+        }
+        crate::note(&format!("ar: sweep: {}", self.message));
     }
 
     /// The overlaps from the last Check, marked where they are in the room.
@@ -1931,19 +2071,44 @@ impl State {
         match pick(app, seen, &placed, u) {
             Some(h) => {
                 let grab_room = placed.apply_room(h.point);
-                self.moving = Some(Move { body: h.body, grab: h.point, grab_room, delta: [0.0; 3], axis: None, held: true });
+                // A placed part that joints let move moves by them (driven as it goes).
+                let joint = solidcraft_ui_egui::vr_joints::placed_part(app, &h.body).and_then(|occurrence| {
+                    let axes = solidcraft_ui_egui::vr_joints::axes(app, occurrence);
+                    (!axes.is_empty()).then(|| JointMove {
+                        axes,
+                        chosen: None,
+                        base: app.session.undo.len(),
+                        stops_at_contact: solidcraft_ui_egui::vr_joints::touching(app, std::slice::from_ref(&h.body)) == Ok(false),
+                        clear: f64::NAN,
+                        moved: false,
+                        held: None,
+                    })
+                });
+                self.moving = Some(Move { body: h.body, grab: h.point, grab_room, delta: [0.0; 3], axis: None, held: true, joint });
             }
             None if self.moving.is_none() => self.message = "Put the Pencil on a part to move it.".into(),
             None => {}
         }
     }
 
-    /// Move: the part follows the Pencil across the level it was grabbed at.
-    fn drag_move(&mut self, seen: &Seen, rect: egui::Rect, at: egui::Pos2) {
+    /// Move: the part follows the Pencil across the level it was grabbed at; a part moved by its
+    /// joints drives them as it goes (held to their limits, stopped at contact).
+    fn drag_move(&mut self, app: &mut SolveApp, seen: &Seen, rect: egui::Rect, at: egui::Pos2) {
         let (Some(placed), Some(m)) = (self.placed, self.moving.as_mut()) else { return };
         let u = ((at.x - rect.min.x) / rect.width(), (at.y - rect.min.y) / rect.height());
         let Some(room) = on_level(seen, u, m.grab_room[1]) else { return };
         let model = placed.direction_to_model(sub(room, m.grab_room)).map(|v| v / placed.scale);
+        if let Some(j) = m.joint.as_mut() {
+            let said = drive_by_pencil(app, j, m.grab, model, &m.body);
+            let tick = std::mem::take(&mut j.moved) && j.held.is_some();
+            if let Some(said) = said {
+                self.message = said;
+            }
+            if tick && let Ok(b) = self.bridge() {
+                (b.tick)();
+            }
+            return;
+        }
         m.axis = lock_axis(model, m.axis);
         let kept = match m.axis {
             Some(k) => std::array::from_fn(|i| if i == k { model[i] } else { 0.0 }),
@@ -2657,8 +2822,24 @@ impl State {
                             if button(ui, "Joints", if joints_open { Button::SmallSelected } else { Button::Small }).clicked() {
                                 self.joints = if joints_open { None } else { Some(Self::list_joints(app)) };
                             }
-                            if button(ui, "Check", Button::Small).backing_on_hover_text("Find parts that overlap").clicked() {
-                                self.check_overlaps(app);
+                            let checking = self.checking.is_some();
+                            if button(ui, "Check", if checking { Button::SmallSelected } else { Button::Small })
+                                .backing_on_hover_text("Show parts that overlap, kept up to date")
+                                .clicked()
+                            {
+                                if checking {
+                                    self.checking = None;
+                                    self.overlaps.clear();
+                                    self.message.clear();
+                                } else {
+                                    self.check_overlaps(app);
+                                }
+                            }
+                            if button(ui, "Sweep", Button::Small)
+                                .backing_on_hover_text("Run the selected part's joint through its travel to the first contact")
+                                .clicked()
+                            {
+                                self.sweep_selected(app);
                             }
                             let measuring = self.measuring.is_some();
                             if button(ui, "Measure", if measuring { Button::SmallSelected } else { Button::Small }).clicked() {
