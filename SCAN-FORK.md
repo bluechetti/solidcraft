@@ -7,11 +7,12 @@ and nothing here is endorsed by the SolidCraft maintainers.
 
 ## Build and run
 
-The same as upstream (see README.md and docs/building.md):
+A prebuilt Linux x86_64 build is on this fork's Releases page (unofficial, unsigned). To build it
+yourself, the same as upstream (see README.md and docs/building.md):
 
 ```sh
 cargo run --release -p solidcraft            # the desktop app; Workspace › Scan
-cargo run --release -p solidcraft-cli -- commands | grep '^scan\.'
+cargo run --release -p solidcraft-cli -- commands | grep '"id": "scan\.'   # the scan commands
 ```
 
 Open or insert a scan (STL, OBJ, PLY, 3MF, or a point cloud: PTX, E57, LAS/LAZ, PLY, PCD, XYZ),
