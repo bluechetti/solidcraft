@@ -77,10 +77,13 @@ pub(crate) fn fixes() -> UpstreamFixes {
     UpstreamFixes::all()
 }
 
-/// A new kernel, with this backend's fixes.
+/// A new kernel, with this backend's fixes and the recertify memo solidcore-ops' kernels share:
+/// a body read here and again through solidcore-ops (a measure reads both) certifies its blends
+/// once.
 fn fresh() -> Kernel {
     let mut k = Kernel::new(&KernelOptions::default());
     k.fixes = fixes();
+    k.recertify_memo = solidcore_ops::session::recertify_memo();
     k
 }
 
@@ -435,6 +438,15 @@ mod tests {
         assert!(make_box([0.0; 3], [1.0, -1.0, 1.0]).is_err());
         let b = make_box([0.0; 3], [1.0; 3]).unwrap();
         assert!(volume(&b, f64::INFINITY).is_err());
+    }
+
+    /// A measure reads a body here and again through solidcore-ops: both pools' kernels hold the
+    /// one recertify memo, so the second read finds the blends the first certified.
+    #[test]
+    fn this_pools_kernels_share_solidcore_ops_recertify_memo() {
+        let ops = solidcore_ops::session::recertify_memo();
+        assert!(std::sync::Arc::ptr_eq(&fresh().recertify_memo, &ops));
+        assert!(std::sync::Arc::ptr_eq(&fresh().recertify_memo, &fresh().recertify_memo));
     }
 
     #[test]

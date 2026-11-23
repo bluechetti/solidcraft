@@ -1348,6 +1348,59 @@ fn a_records_procedural_blend_is_certified_once_on_a_kernel() {
     );
 }
 
+/// A body read on two kernels (SolidCraft reads one twice for a measure, on kernels of two
+/// pools) certified its rounds on each, as the memo was each kernel's own: 7 s a measure of a
+/// sphere's three rounds. Kernels holding one memo certify a record's blends on the first read
+/// only, and build the same body; a kernel with its own memo certifies them again. The session's
+/// kernels all hold the process's memo.
+#[test]
+fn kernels_holding_one_recertify_memo_certify_a_records_blends_once() {
+    all_fixes();
+    let b = make_box([0.0; 3], [10.0, 20.0, 30.0]).unwrap();
+    let e = edge_at(&b, [10.0, 10.0, 30.0]);
+    let start = vertex_at(&b, [10.0, 0.0, 30.0]);
+    fillet_variable(&b, e, start, 1, &[0.0, 0.0, 1.0, 1.0], &[2.0, 5.0]).unwrap();
+    let (record, _) = b.to_record().unwrap();
+    let blends = record
+        .faces
+        .iter()
+        .filter(|f| matches!(f.surface, solidcore_record::brep::Surface::Blend { .. }))
+        .count() as u64;
+    assert!(blends > 0, "the variable round kept no definition");
+    let kernel =
+        |memo: &solidcore::surface::procedural_blend::convert::SharedRecertifyMemo| Kernel {
+            fixes: solidcore::kernel::UpstreamFixes::all(),
+            memoize_curve_caches: true,
+            recertify_memo: memo.clone(),
+            ..Kernel::default()
+        };
+    let read = |k: &mut Kernel| {
+        let before = k.work_counters.blends_recertified();
+        let (mut made, _) = solidcore_convert::brep::to_kernel(k, &record, true).unwrap();
+        let (again, _) = solidcore_convert::brep::to_record(k, &mut made).unwrap();
+        (k.work_counters.blends_recertified() - before, again)
+    };
+    let shared = std::sync::Arc::default();
+    let (first, once) = read(&mut kernel(&shared));
+    let (second, twice) = read(&mut kernel(&shared));
+    let (own, thrice) = read(&mut kernel(&std::sync::Arc::default()));
+    assert_eq!(first, blends, "the first kernel certifies each blend");
+    assert_eq!(second, 0, "a second kernel holding the memo certifies none");
+    assert_eq!(
+        own, blends,
+        "a kernel with its own memo certifies each blend"
+    );
+    assert_eq!(once, twice, "the shared memo's read builds another body");
+    assert_eq!(
+        once, thrice,
+        "the memo's reads build another body than a fresh certificate's"
+    );
+    assert!(std::sync::Arc::ptr_eq(
+        &solidcore_ops::session::recertify_memo(),
+        &solidcore_ops::session::recertify_memo()
+    ));
+}
+
 /// A law with a corner rounds its edge as the union of its balls (`docs/generic-blend.md` §3.2,
 /// "Corners in a radius law"): at a peak the two sides' rounds cross and end on their crossing,
 /// at a dip the corner ball's zone lies between them. Each removes its balls' union, integrated
