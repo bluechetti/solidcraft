@@ -84,7 +84,15 @@ pub struct Headless {
     pub view: StandardView,
     /// Application layout persists across calls, outside Session/document undo.
     pub panels: solidcraft_engine::panels::PanelResult<solidcraft_engine::panels::commands::InMemoryPanelBackend>,
+    /// The design's autosave in the recovery folder ([`Headless::autosave_into`]): unsaved work
+    /// outlives a session that is killed or closed, and the app offers it at its next launch.
+    #[cfg(not(target_arch = "wasm32"))]
+    autosave: Option<solidcraft_engine::recovery::Autosaver>,
 }
+
+/// How often a headless session's unsaved design is autosaved while calls come in.
+#[cfg(not(target_arch = "wasm32"))]
+const AUTOSAVE_EVERY: std::time::Duration = std::time::Duration::from_secs(10);
 
 impl Default for Headless {
     fn default() -> Self {
@@ -102,7 +110,30 @@ impl Headless {
             }
             Err(e) => session.log.push(format!("image host unavailable: {e}")),
         }
-        Headless { session, view: StandardView::Iso, panels: solidcraft_engine::panels::commands::InMemoryPanelBackend::empty() }
+        Headless {
+            session,
+            view: StandardView::Iso,
+            panels: solidcraft_engine::panels::commands::InMemoryPanelBackend::empty(),
+            #[cfg(not(target_arch = "wasm32"))]
+            autosave: None,
+        }
+    }
+
+    /// Autosave the design into the recovery folder `dir` while the session runs (at most every
+    /// ten seconds, written beside the calls) and when it ends, whenever it has unsaved changes.
+    /// An agent session killed at a time limit, or closed before it saved, leaves its design for
+    /// the app to offer at its next launch: two of four hard agent runs on 2026-11-18 ended with
+    /// nothing saved. A design saved to its file leaves no entry.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn autosave_into(&mut self, dir: &std::path::Path) -> Result<(), String> {
+        self.autosave = Some(solidcraft_engine::recovery::Autosaver::new(dir, AUTOSAVE_EVERY).map_err(|e| e.to_string())?);
+        Ok(())
+    }
+
+    /// Whether this session keeps an autosave.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn autosaves(&self) -> bool {
+        self.autosave.is_some()
     }
     pub fn with_panels(mut self, panels: solidcraft_engine::panels::commands::InMemoryPanelBackend) -> Self {
         self.panels = Ok(panels);
@@ -245,6 +276,17 @@ impl Headless {
         }
     }
 }
+/// A session ending with unsaved work leaves it in the recovery folder: the last autosave is
+/// written whole before the process goes.
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for Headless {
+    fn drop(&mut self) {
+        if let Some(autosave) = self.autosave.as_mut() {
+            let _ = autosave.save(&self.session);
+        }
+    }
+}
+
 impl Backend for Headless {
     fn supports_plugin_tools(&mut self) -> bool {
         true
@@ -258,6 +300,12 @@ impl Backend for Headless {
         }
         let reply = self.call_at_current_level(method, p);
         self.session.param_check = own;
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(autosave) = self.autosave.as_mut()
+            && let Err(e) = autosave.tick(&self.session, false)
+        {
+            self.session.log.push(format!("autosave: {e}"));
+        }
         reply
     }
     fn has_ui(&self) -> bool {

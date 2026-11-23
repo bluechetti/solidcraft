@@ -19,7 +19,7 @@
 //! solidcraft-cli oracle <case-dir>...                         replay recipes and compare with expected.json
 //! solidcraft-cli kernel-cases [--json] [--dumps=DIR] [--validation=MODE] <case-dir>... the kernel regression rig (tests/kernel-cases)
 //! solidcraft-cli mcp [--headless] [--in design|script] [--connect HOST:PORT [--token T]] [--allow-path DIR]... [--allow-any-path] [--require-allow-path]
-//!                    [--param-check off|warn|strict] [--compact]
+//!                    [--param-check off|warn|strict] [--compact] [--no-autosave]
 //!                                                             MCP server on stdio (docs/mcp.md)
 //! solidcraft-cli mcp setup [--dry-run] [--client NAME] [--live] (alias: mcp install) add it to OpenCode, Claude Desktop, Claude Code, Cursor
 //! solidcraft-cli plugin check <folder|plugin.zip> [--json]    what Install and a call would refuse, with fixes
@@ -101,7 +101,7 @@ const USAGE_KERNEL_CASES: &str = "  solidcraft-cli kernel-cases <case-dir>... [-
 const USAGE_FUZZ: &str =
     "  solidcraft-cli fuzz [--from N] [--count N] [--jobs J] [--timeout S] [--steps N] [--minimise] [--out DIR] [--report FILE]\n";
 /// `mcp`'s lines in the usage.
-const USAGE_MCP: &str = "  solidcraft-cli mcp [--headless] [--in design.sc|script.json] [--connect 127.0.0.1:PORT [--token T]] [--allow-path DIR]... [--allow-any-path] [--require-allow-path]\n                     [--param-check off|warn|strict] [--render-gpu] [--compact]\n      (--param-check: how a call that breaks a command's parameter contract is treated; default warn, which adds\n       `param_warnings` to its result)\n      (--compact, SOLIDCRAFT_MCP_COMPACT=1 or the app's Preferences › AI (with --connect): compact tool output for\n       agents: inspect_design summarises sketches by default; off by default)\n  solidcraft-cli mcp setup [--dry-run] [--client opencode|claude-desktop|claude-code|cursor] [--live]\n      (adds a `solidcraft` server, with this program's path, to each installed AI client; --live adds `solidcraft-live` for the running app; alias: mcp install)\n";
+const USAGE_MCP: &str = "  solidcraft-cli mcp [--headless] [--in design.sc|script.json] [--connect 127.0.0.1:PORT [--token T]] [--allow-path DIR]... [--allow-any-path] [--require-allow-path]\n                     [--param-check off|warn|strict] [--render-gpu] [--compact] [--no-autosave]\n      (--no-autosave or SOLIDCRAFT_MCP_AUTOSAVE=0: a headless session keeps no autosave; by default its unsaved design\n       is kept in the recovery folder, which the app offers at its next launch)\n      (--param-check: how a call that breaks a command's parameter contract is treated; default warn, which adds\n       `param_warnings` to its result)\n      (--compact, SOLIDCRAFT_MCP_COMPACT=1 or the app's Preferences › AI (with --connect): compact tool output for\n       agents: inspect_design summarises sketches by default; off by default)\n  solidcraft-cli mcp setup [--dry-run] [--client opencode|claude-desktop|claude-code|cursor] [--live]\n      (adds a `solidcraft` server, with this program's path, to each installed AI client; --live adds `solidcraft-live` for the running app; alias: mcp install)\n";
 /// The plugin operations' lines in the usage. The macro holds one text for each operation, so
 /// `plugin --help` prints both and an operation's own `--help` prints its own lines alone
 /// (#19237): what the operation does, its arguments and its exit codes.
@@ -1126,6 +1126,7 @@ fn cmd_mcp(args: &[String]) -> Result<(), String> {
         }
         (None, Some(path)) => {
             let mut headless = solidcraft_mcp::Headless::new(load_checked(path, param_check)?);
+            autosave(&mut headless, args)?;
             if render_gpu {
                 headless.session.register_render_job_host(solidcraft_gpu::path::host().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
             }
@@ -1140,6 +1141,7 @@ fn cmd_mcp(args: &[String]) -> Result<(), String> {
             }
             let mut headless = solidcraft_mcp::Headless::default();
             headless.session.param_check = param_check;
+            autosave(&mut headless, args)?;
             if render_gpu {
                 headless.session.register_render_job_host(solidcraft_gpu::path::host().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
             }
@@ -1152,6 +1154,34 @@ fn cmd_mcp(args: &[String]) -> Result<(), String> {
         }
     };
     serve_mcp(backend, scope, options)
+}
+
+/// The environment variable that turns a headless session's autosave off (`0`, `false`, `no`,
+/// `off`); `--no-autosave` does the same.
+const AUTOSAVE_ENV: &str = "SOLIDCRAFT_MCP_AUTOSAVE";
+
+/// A headless session keeps its unsaved design in the recovery folder (`SOLIDCRAFT_RECOVERY_DIR`
+/// moves it), so an agent's work outlives a session killed at a time limit or closed before it
+/// saved; the app offers it at its next launch. On by default; `--no-autosave` or
+/// `SOLIDCRAFT_MCP_AUTOSAVE=0` turn it off. A folder that can't be used is said once, not fatal.
+fn autosave(headless: &mut solidcraft_mcp::Headless, args: &[String]) -> Result<(), String> {
+    let off = match std::env::var(AUTOSAVE_ENV).ok().map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+        None | Some("" | "1" | "true" | "yes" | "on") => false,
+        Some("0" | "false" | "no" | "off") => true,
+        Some(other) => return Err(format!("mcp: {AUTOSAVE_ENV} must be 1 or 0 (true/false, yes/no, on/off), not `{other}`")),
+    };
+    if off || args.iter().any(|a| a == "--no-autosave") {
+        return Ok(());
+    }
+    match solidcraft_engine::recovery::default_dir() {
+        Some(dir) => {
+            if let Err(e) = headless.autosave_into(&dir) {
+                solidcraft_engine::note!("solidcraft mcp: no autosave ({e}); unsaved work is lost if the session ends");
+            }
+        }
+        None => solidcraft_engine::note!("solidcraft mcp: no recovery folder for an autosave; unsaved work is lost if the session ends"),
+    }
+    Ok(())
 }
 
 fn serve_mcp(

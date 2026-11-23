@@ -146,6 +146,7 @@ fn mcp_without_arguments_finds_the_running_app() {
     });
     let mut child = Command::new(env!("CARGO_BIN_EXE_solidcraft-cli"))
         .args(["mcp", "--allow-any-path"])
+        .env("SOLIDCRAFT_MCP_AUTOSAVE", "0")
         .env("SOLIDCRAFT_CONTROL_DIR", &control_dir)
         .env_remove("SOLIDCRAFT_CONTROL_TOKEN")
         .stdin(Stdio::piped())
@@ -172,6 +173,7 @@ fn mcp_without_arguments_finds_the_running_app() {
     std::fs::write(control_dir.join("current.port"), format!("{dead}\n")).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_solidcraft-cli"))
         .args(["mcp", "--allow-any-path"])
+        .env("SOLIDCRAFT_MCP_AUTOSAVE", "0")
         .env("SOLIDCRAFT_CONTROL_DIR", &control_dir)
         .stdin(Stdio::null())
         .output()
@@ -375,6 +377,52 @@ mod scratch_cleanup {
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         assert_eq!(std::fs::read_to_string(saved).unwrap(), "saved output");
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// The designs the recovery folder holds: its `.sc` entries.
+    fn recovered(dir: &Path) -> Vec<PathBuf> {
+        std::fs::read_dir(dir.join("recovery"))
+            .map(|d| d.map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|x| x == "sc")).collect())
+            .unwrap_or_default()
+    }
+
+    /// A box built and never saved: the session ends (stdin closed, as a client that quits or a
+    /// harness at its time limit leaves it) and its design is in the recovery folder for the app
+    /// to offer. `--no-autosave` keeps nothing; a design saved to its file leaves no entry.
+    #[test]
+    fn unsaved_work_outlives_the_session_in_the_recovery_folder() {
+        let build = json!({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": {"name": "execute", "arguments": {"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10}}}});
+        let session = |case: &str, extra: &[&str], calls: &[Value]| {
+            let (dir, mut command) = command(case);
+            command.args(extra);
+            let mut child = command.spawn().unwrap();
+            let mut input = child.stdin.take().unwrap();
+            let mut replies = BufReader::new(child.stdout.take().unwrap());
+            for call in calls {
+                writeln!(input, "{call}").unwrap();
+                let mut reply = String::new();
+                replies.read_line(&mut reply).unwrap();
+                assert!(!reply.contains("\"isError\":true"), "{reply}");
+            }
+            drop(input);
+            assert!(child.wait().unwrap().success());
+            dir
+        };
+        let dir = session("autosave", &[], &[initialize(), build.clone()]);
+        assert_eq!(recovered(&dir).len(), 1, "the unsaved box is kept");
+        std::fs::remove_dir_all(dir).unwrap();
+
+        let dir = session("no-autosave", &["--no-autosave"], &[initialize(), build.clone()]);
+        assert!(recovered(&dir).is_empty(), "--no-autosave keeps nothing");
+        std::fs::remove_dir_all(dir).unwrap();
+
+        let target = std::env::temp_dir().join(format!("solidcraft-mcp-autosave-saved-{}.sc", std::process::id()));
+        let save = json!({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "save", "arguments": {"path": target}}});
+        let dir = session("saved", &["--allow-any-path"], &[initialize(), build, save]);
+        assert!(recovered(&dir).is_empty(), "a saved design leaves no entry");
+        std::fs::remove_dir_all(dir).unwrap();
+        std::fs::remove_file(target).ok();
     }
 
     #[test]

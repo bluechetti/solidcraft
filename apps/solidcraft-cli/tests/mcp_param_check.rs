@@ -13,6 +13,7 @@ fn param_check_applies_to_the_starting_script() {
     std::fs::write(&script, format!(r#"{{"commands": [{box_}]}}"#)).unwrap();
     let run = |level: &str| {
         Command::new(env!("CARGO_BIN_EXE_solidcraft-cli"))
+            .env("SOLIDCRAFT_MCP_AUTOSAVE", "0")
             .args(["mcp", "--in", script.to_str().unwrap(), "--param-check", level])
             .stdin(Stdio::null())
             .output()
@@ -31,6 +32,7 @@ fn param_check_applies_to_the_starting_script() {
     let failing = dir.join("typo_then_failure.json");
     std::fs::write(&failing, format!(r#"{{"commands": [{box_}, {{"command": "no.such_command"}}]}}"#)).unwrap();
     let out = Command::new(env!("CARGO_BIN_EXE_solidcraft-cli"))
+        .env("SOLIDCRAFT_MCP_AUTOSAVE", "0")
         .args(["mcp", "--in", failing.to_str().unwrap(), "--param-check", "warn"])
         .stdin(Stdio::null())
         .output()
@@ -43,12 +45,21 @@ fn param_check_applies_to_the_starting_script() {
     assert!(off.status.success(), "{}", String::from_utf8_lossy(&off.stderr));
     assert!(!String::from_utf8_lossy(&off.stderr).contains("operaton"));
     // No flag: warn, the server's default, so an agent's misspelt key is reported, not ignored.
-    let unset =
-        Command::new(env!("CARGO_BIN_EXE_solidcraft-cli")).args(["mcp", "--in", script.to_str().unwrap()]).stdin(Stdio::null()).output().unwrap();
+    let unset = Command::new(env!("CARGO_BIN_EXE_solidcraft-cli"))
+        .env("SOLIDCRAFT_MCP_AUTOSAVE", "0")
+        .args(["mcp", "--in", script.to_str().unwrap()])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
     let stderr = String::from_utf8_lossy(&unset.stderr);
     assert!(unset.status.success() && stderr.contains("step 1: unknown key `operaton`"), "{stderr}");
     // A bare flag is an error, not off.
-    let bare = Command::new(env!("CARGO_BIN_EXE_solidcraft-cli")).args(["mcp", "--param-check"]).stdin(Stdio::null()).output().unwrap();
+    let bare = Command::new(env!("CARGO_BIN_EXE_solidcraft-cli"))
+        .env("SOLIDCRAFT_MCP_AUTOSAVE", "0")
+        .args(["mcp", "--param-check"])
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
     assert!(!bare.status.success());
     assert!(String::from_utf8_lossy(&bare.stderr).contains("--param-check wants off, warn or strict"));
     std::fs::remove_dir_all(&dir).ok();

@@ -94,6 +94,16 @@ contract for goes to the app unchecked. With such an app, use the server from th
 an app newer than the server may take keys the server's contracts don't know yet, and `strict`
 would refuse them.
 
+### Unsaved work outlives a headless session
+
+A headless session keeps its design's autosave in the recovery folder while it has unsaved
+changes (at most every ten seconds as calls come in, and once more when the session ends), as
+the app does. An agent session killed at a time limit, or closed before the agent saved, leaves
+its design there, and the app offers it at its next launch. A design saved to its file leaves no
+entry. `SOLIDCRAFT_RECOVERY_DIR` moves the folder (a test or benchmark harness should give its
+own); `--no-autosave` or `SOLIDCRAFT_MCP_AUTOSAVE=0` turns it off. A session bridged to the app
+keeps no autosave of its own: the app's autosave covers it.
+
 ### Which files the agent can reach
 
 Tool calls read, write and delete files only inside the server's folders:
