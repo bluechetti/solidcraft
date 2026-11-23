@@ -225,28 +225,31 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui, s: &mut VrParams) {
                 {
                     todo = Some((r.name.clone(), e));
                 }
-                let value = value_words(r);
-                let shown =
-                    if plain_number(&r.expression, &r.unit).is_some() || r.text.is_some() { value } else { format!("{value}  ({})", r.expression) };
-                let colour = if r.error.is_some() { t.error } else { ui.visuals().text_color() };
-                if ui
-                    .add_sized(
-                        [ui.available_width() - ROW * 1.5, ROW],
-                        egui::Button::new(egui::RichText::new(shown).font(big.clone()).color(colour)).frame(false),
-                    )
-                    .clicked()
-                    && r.text.is_none()
-                {
-                    type_for = Some(r.name.clone());
-                }
-                let up = stepped(&r.expression, &r.unit, true, s.fine);
-                if ui
-                    .add_enabled(up.is_some(), egui::Button::new(egui::RichText::new("+").font(big.clone())).min_size(egui::vec2(ROW * 1.3, ROW)))
-                    .clicked()
-                    && let Some(e) = up
-                {
-                    todo = Some((r.name.clone(), e));
-                }
+                // The + at the right edge, the value filling what is left, cut short to fit: a long
+                // formula never pushes the + off the window.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let up = stepped(&r.expression, &r.unit, true, s.fine);
+                    if ui
+                        .add_enabled(up.is_some(), egui::Button::new(egui::RichText::new("+").font(big.clone())).min_size(egui::vec2(ROW * 1.3, ROW)))
+                        .clicked()
+                        && let Some(e) = up
+                    {
+                        todo = Some((r.name.clone(), e));
+                    }
+                    let value = value_words(r);
+                    let shown = if plain_number(&r.expression, &r.unit).is_some() || r.text.is_some() {
+                        value
+                    } else {
+                        format!("{value}  ({})", r.expression)
+                    };
+                    let colour = if r.error.is_some() { t.error } else { ui.visuals().text_color() };
+                    let button = egui::Button::new(egui::RichText::new(shown).font(big.clone()).color(colour))
+                        .frame(false)
+                        .wrap_mode(egui::TextWrapMode::Truncate);
+                    if ui.add_sized([ui.available_width(), ROW], button).clicked() && r.text.is_none() {
+                        type_for = Some(r.name.clone());
+                    }
+                });
             });
         }
         if rows.is_empty() {
