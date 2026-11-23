@@ -4075,6 +4075,23 @@ fn about_this_parts_rows_each_set_their_own_choice() {
     assert_eq!(plan.purpose, Some(solidcraft_engine::doc::scan_plan::Purpose::Replacement));
 }
 
+/// "Don't touch" holds on the control port as well: an outside agent's MCP server bridged to the
+/// app (or any script) is refused a command that would rewrite a kept scan, as the chat is; reading
+/// it is not refused.
+#[test]
+fn dont_touch_holds_for_every_program_on_the_control_port() {
+    let mut h = crate::scenario::Harness::new();
+    let scan = plate_scan(&mut h.app, "control");
+    h.app.run("scan.select", json!({"brush": {"points": [[10, 10, 0]], "radius": 4}})).unwrap();
+    h.app.run("scan.plan_region", json!({"scan": scan, "name": "Lip", "selected": true, "role": "keep"})).unwrap();
+    let refused = h.call("engine.execute", json!({"command": "scan.denoise", "params": {"body": scan}}));
+    assert!(refused.to_string().contains("don't touch"), "{refused}");
+    let script = h.call("engine.script", json!({"commands": [{"command": "scan.remesh", "params": {}}]}));
+    assert!(script.to_string().contains("don't touch"), "{script}");
+    let read = h.call("engine.execute", json!({"command": "scan.survey", "params": {"body": scan}}));
+    assert!(!read.to_string().contains("don't touch"), "{read}");
+}
+
 /// A queued message keeps the selection of the moment it was typed; queued messages go as one
 /// prompt with all their items.
 #[test]

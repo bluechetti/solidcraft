@@ -7205,6 +7205,8 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
                 .chain(crate::dialogs_scan_free_form::gpu_shade(app))
                 .chain(crate::dialogs_scan_patches::gpu_shade(app))
                 .chain(crate::dialogs_scan_template::gpu_shade(app))
+                // Last: what a map or a tool paints wins on the triangles both paint.
+                .chain(crate::scan_regions::gpu_cloud(app))
                 .collect(),
             analysis: analysis_uniform(app),
             analysis_colors: crate::gpu::analysis_colors(&t.analysis),
@@ -8093,6 +8095,7 @@ pub fn show(app: &mut SolveApp, ui: &mut egui::Ui) {
     paint_device_pivot(app, &painter, &proj);
     draw_notes(app, &painter, &proj);
     crate::scan_deviation::draw(app, &painter, &proj);
+    crate::scan_regions::draw(app, &painter, &proj);
     crate::section_scan::draw(app, &painter, &proj);
     crate::hole_table::draw(app, &painter, &proj);
     crate::scan_markers::draw(app, &painter, &proj);

@@ -5,6 +5,7 @@
 
 use serde_json::{Value, json};
 use solidcraft_doc::scan_plan::{MAX_REGIONS, MAX_SCANS, MAX_TEXT, Process, Purpose, Region, RegionState, Role, ScanPlan, valid_target};
+use solidcraft_geom::Vec3Geom as _;
 use solidcraft_scan::verdict::{Place, Reading, judge};
 
 use super::{CommandSpec, mesh_name, tolerance};
@@ -100,6 +101,7 @@ fn view(r: &Region) -> ScanPlanRegionView {
         reason,
         role: r.role.map(|x| role_name(x).to_owned()),
         hold: r.hold,
+        hold_at: r.hold_at.clone(),
         selection: r.selection.clone(),
     }
 }
@@ -270,6 +272,12 @@ fn plan_region(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         (None, at)
     };
+    // A held size on the selection: where it is, from the shapes Find All reads there.
+    let placed_hold = if role == Some(Some(Role::Hold)) && bool_(p, "selected") == Some(true) && p.get("hold_at").is_none() {
+        hold_place(s, &scan)?
+    } else {
+        Vec::new()
+    };
     let mut plan = s.doc.scan_plans.get(&scan).cloned().unwrap_or_default();
     let found = plan.regions.iter().position(|r| r.name == name);
     let state = match str_(p, "state").map(str::trim) {
@@ -332,6 +340,17 @@ fn plan_region(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if selection.is_some() {
         region.selection = selection;
+    }
+    // Where a held size is: given (`hold_at`), else read off the selection's shapes.
+    if let Some(points) = p.get("hold_at").filter(|v| !v.is_null()) {
+        let points: Vec<[f64; 3]> = points
+            .as_array()
+            .filter(|a| (1..=2).contains(&a.len()))
+            .and_then(|a| a.iter().map(|v| crate::params::vec3(v).filter(|q| q.is_finite()).map(|q| [q.x, q.y, q.z])).collect::<Option<Vec<_>>>())
+            .ok_or_else(|| bad(cmd, "`hold_at` is one point on a round face (its diameter) or two, one on each of two opposite faces"))?;
+        region.hold_at = points;
+    } else if region.role == Some(Role::Hold) && bool_(p, "selected") == Some(true) {
+        region.hold_at = placed_hold.clone();
     }
     let changed = !s.doc.scan_plans.contains_key(&scan) || plan != before;
     if changed {
@@ -427,11 +446,23 @@ fn read_verdict(s: &mut Session, p: &Value) -> Result<Value> {
                 .collect()
         },
     };
-    let v = judge(&reading);
+    let mut v = judge(&reading);
+    // Sizes the user holds: measured on the model's exact faces where each is.
+    if let Some(plan) = plan.as_ref() {
+        for issue in held_sizes(s, plan, &model) {
+            v.met = false;
+            v.issues.push(issue);
+        }
+    }
     let mut next = Vec::new();
     for issue in &v.issues {
         let step = match issue.code {
             "out_of_tolerance" => Some(("scan.reconstruct_rest", "read and build what the model does not hold yet", json!({"body": scan}))),
+            "hold_off" | "hold_unmeasured" => Some((
+                "parameters.list",
+                "set the size the region holds on the feature that makes it (parameters.change, or timeline.edit), then read the verdict again",
+                json!({"filter": "feature"}),
+            )),
             "feature_off" => Some((
                 "scan.deviation",
                 "see the places a feature wide beyond the tolerance (`regions`), and model them or mark their region skipped or inferred",
@@ -705,12 +736,133 @@ pub fn kept_from_agent_request(s: &Session, method: &str, params: &Value) -> Opt
     };
     match method {
         "engine.execute" | "command" => check(step(params)?, params.get("params").unwrap_or(&Value::Null)),
-        "engine.batch" => params
-            .get("commands")
-            .and_then(Value::as_array)?
+        "engine.batch" | "engine.script" => params
+            .as_array()
+            .or_else(|| params.get("commands").and_then(Value::as_array))?
             .iter()
             .take(10_000)
             .find_map(|v| check(step(v)?, v.get("params").unwrap_or(&Value::Null))),
         _ => None,
     }
 }
+
+/// Where a held size is on the part of `scan` selected now, from the shapes Find All reads there
+/// (it reads the scan first when it has not): a round face (a cylinder, most of the selection) is
+/// its diameter, one point; two opposite planes, one point on each. Empty when neither is plain.
+fn hold_place(s: &mut Session, scan: &str) -> Result<Vec<[f64; 3]>> {
+    let current = |s: &Session| s.scan_shapes.as_ref().is_some_and(|k| k.scan == scan && k.current(s));
+    if !current(s) {
+        super::super::find_command("scan.find_all")
+            .ok_or_else(|| EngineError::UnknownCommand("scan.find_all".into()))?
+            .run_nested(s, &json!({"body": scan, "show": true}))?;
+    }
+    let (Some(found), Some(picked), Some(mesh)) = (
+        s.scan_shapes.clone().filter(|k| k.scan == scan),
+        s.scan_selection.clone().filter(|k| k.scan == scan && k.count > 0),
+        super::shown_mesh(s, scan),
+    ) else {
+        return Ok(Vec::new());
+    };
+    // The selected triangles by Find All region: (region, their area, their middles weighed by
+    // area). By area, not by count: a face meshed coarser than its neighbour is no less of the part.
+    let mut groups: std::collections::BTreeMap<u32, (f64, solidcore_record::Vec3)> = std::collections::BTreeMap::new();
+    for (t, _) in picked.selected.iter().enumerate().filter(|(_, on)| **on) {
+        let (Some(&r), Some(&[a, b, c])) = (found.regions.get(t), mesh.triangles.get(t)) else { continue };
+        let q = |i: u32| mesh.positions.get(i as usize).copied();
+        let (Some(a), Some(b), Some(c)) = (q(a), q(b), q(c)) else { continue };
+        let area = 0.5 * (b - a).cross(c - a).len();
+        let entry = groups.entry(r).or_insert((0.0, solidcore_record::Vec3::ZERO));
+        entry.0 += area;
+        entry.1 += (a + b + c) / 3.0 * area;
+    }
+    let mut groups: Vec<(u32, f64, solidcore_record::Vec3)> =
+        groups.into_iter().filter(|(_, (area, _))| *area > 0.0).map(|(r, (area, sum))| (r, area, sum / area)).collect();
+    groups.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let total: f64 = groups.iter().map(|g| g.1).sum();
+    let shape = |r: u32| found.outcome.segments.get(r as usize).and_then(|seg| seg.shape);
+    let at = |v: solidcore_record::Vec3| [v.x, v.y, v.z];
+    if let Some(&(r, area, middle)) = groups.first()
+        && matches!(shape(r), Some(solidcraft_scan::fit::Shape::Cylinder { .. }))
+        && area * 2.0 >= total
+    {
+        // The point on the scan in the group nearest its middle: the middle of a bore is off it.
+        let on = picked
+            .selected
+            .iter()
+            .enumerate()
+            .filter(|(t, on)| **on && found.regions.get(*t) == Some(&r))
+            .filter_map(|(t, _)| mesh.triangles.get(t).and_then(|tri| mesh.positions.get(tri[0] as usize)).copied())
+            .min_by(|a, b| (*a - middle).len().total_cmp(&(*b - middle).len()));
+        return Ok(on.map(|q| vec![at(q)]).unwrap_or_default());
+    }
+    // Two planes facing apart, each a share of the selection.
+    let planes: Vec<(solidcore_record::Vec3, solidcore_record::Vec3)> = groups
+        .iter()
+        .filter(|g| g.1 * 5.0 >= total)
+        .filter_map(|g| match shape(g.0) {
+            Some(solidcraft_scan::fit::Shape::Plane { normal, .. }) => Some((normal, g.2)),
+            _ => None,
+        })
+        .collect();
+    for (i, (na, a)) in planes.iter().enumerate() {
+        for (nb, b) in planes.iter().skip(i + 1) {
+            if na.dot(*nb) < -(5.0_f64.to_radians().cos()) {
+                return Ok(vec![at(*a), at(*b)]);
+            }
+        }
+    }
+    Ok(Vec::new())
+}
+
+/// The sizes a plan's regions hold, each measured on `model`'s exact faces where it is (the
+/// face nearest each point, solved): an issue for each the model does not hold within a hundredth
+/// of a millimetre, or where no face of the right kind is near.
+fn held_sizes(s: &Session, plan: &ScanPlan, model: &str) -> Vec<solidcraft_scan::verdict::Issue> {
+    let state = s.model.state();
+    let Some(body) = state.body(model) else { return Vec::new() };
+    let reach = 5.0;
+    let face = |q: [f64; 3]| {
+        let p = solidcore_record::Vec3::new(q[0], q[1], q[2]);
+        let (_, f) = body.body.nearest_face_within(p, reach)?;
+        solidcraft_kernel::face_surface(&body.body, f)
+    };
+    let mut issues = Vec::new();
+    for r in plan.regions.iter().filter(|r| r.role == Some(Role::Hold)) {
+        let Some(want) = r.hold else { continue };
+        let measured = match r.hold_at.as_slice() {
+            [] => continue,
+            [q] => match face(*q) {
+                Some(solidcraft_kernel::FaceSurface::Cylinder { radius, .. }) => Some(2.0 * radius),
+                _ => None,
+            },
+            [a, b, ..] => match (face(*a), face(*b)) {
+                (
+                    Some(solidcraft_kernel::FaceSurface::Plane { normal: na, point: pa }),
+                    Some(solidcraft_kernel::FaceSurface::Plane { normal: nb, point: pb }),
+                ) if solidcore_record::Vec3::from(na).dot(solidcore_record::Vec3::from(nb)) < -(2.0_f64.to_radians().cos()) => {
+                    Some((pb - pa).dot(solidcore_record::Vec3::from(na)).abs())
+                }
+                _ => None,
+            },
+        };
+        match measured {
+            Some(m) if (m - want).abs() <= HOLD_WITHIN => {}
+            Some(m) => issues.push(solidcraft_scan::verdict::Issue {
+                code: "hold_off",
+                detail: format!("`{}` holds {want} mm; the model has {m:.3} mm there", r.name),
+            }),
+            None => issues.push(solidcraft_scan::verdict::Issue {
+                code: "hold_unmeasured",
+                detail: format!(
+                    "`{}` holds {want} mm, but the model has no {} near it to measure",
+                    r.name,
+                    if r.hold_at.len() == 1 { "round face" } else { "two opposite faces" }
+                ),
+            }),
+        }
+    }
+    issues
+}
+
+/// How close a held size must be on the model, mm: it is a design value, not a scan's reading.
+const HOLD_WITHIN: f64 = 0.01;

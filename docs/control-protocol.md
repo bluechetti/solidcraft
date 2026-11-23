@@ -683,6 +683,19 @@ Commands never open dialogs when run this way. `solidcraft-cli commands` prints 
 act on the app's open design rather than on an engine session, and they are not among the methods
 the agent chat may use.
 
+### What the person marked "don't touch"
+
+A scan's plan can mark a region of the scan `keep` ("don't touch": About this part in the agent
+chat, or `scan.plan_region` with `role: "keep"`). Every program on this port is held to it, as
+the agent chat and the headless MCP server are: an `engine.execute`, `engine.batch` or
+`engine.script` whose command (or any step) would rewrite a scan with a kept region (`mesh.units`,
+`scan.clean_up`, `scan.delete_selection`, `scan.denoise`, `scan.fill_holes`, `scan.known_size`
+with `apply`, `scan.reduce`, `scan.remesh`, `scan.remove_and_fill`, `scan.remove_floating`,
+`scan.remove_markers`, `scan.repair`, `solid.scale` of it), unless it works only on a selection
+apart from every kept region, or would edit, delete or suppress the feature that built one, is
+refused with the region named and nothing run. Reading the scan is never refused. The person's
+own clicks are not requests on this port and are not held to it.
+
 ### Driving a joint interactively
 
 Keep one authenticated desktop control connection open for all requests of a movement.

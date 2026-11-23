@@ -546,6 +546,12 @@ pub fn handle(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> 
 }
 
 fn handle_request(app: &mut SolveApp, ctx: &egui::Context, req: &ControlRequest) -> Outcome {
+    // What the person marked "don't touch" in a scan's plan: every program on the control port
+    // (an outside agent's MCP server, a script, the agent chat) is held to it; the person's own
+    // clicks never come this way.
+    if let Some(why) = solidcraft_engine::cmd::scan::plan::kept_from_agent_request(&app.session, &req.method, &req.params) {
+        return err(why);
+    }
     let level = match request_param_check(&req.method, &req.params) {
         Ok(level) => level,
         Err(e) => return err(e),

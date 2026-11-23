@@ -58,6 +58,9 @@ pub struct ScanPlanRegionView {
     /// The size held there, mm (hold).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hold: Option<f64>,
+    /// Where the held size is (hold): one point on a round face, or one on each of two opposite faces.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hold_at: Vec<[f64; 3]>,
     /// The kept scan selection that is its extent (`scan.select {"saved": name}` selects it).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selection: Option<String>,
@@ -117,6 +120,10 @@ pub struct ScanPlanRegionParams {
     /// The size held there, mm (role hold).
     #[serde(default)]
     pub hold: Option<f64>,
+    /// Where the held size is: one point on a round face (its diameter) or two, one on each of two
+    /// opposite faces. Default with `selected`: read off the selection's shapes.
+    #[serde(default)]
+    pub hold_at: Option<Vec<[f64; 3]>>,
     /// Why it was skipped, or what it was inferred from.
     #[serde(default)]
     pub reason: Option<String>,
@@ -198,7 +205,7 @@ mod tests {
         assert_keys(input_schema_for::<ScanPlanParams>(), &["body", "process", "purpose", "reset", "scan", "target", "tolerance"]);
         assert_keys(
             input_schema_for::<ScanPlanRegionParams>(),
-            &["at", "body", "feature", "hold", "name", "reason", "role", "scan", "selected", "state"],
+            &["at", "body", "feature", "hold", "hold_at", "name", "reason", "role", "scan", "selected", "state"],
         );
         assert_keys(input_schema_for::<ScanVerdictParams>(), &["body", "model", "scan"]);
     }

@@ -2629,7 +2629,8 @@ fn part_strip(chat: &mut AgentChat, strip: &ScanStrip, ui: &mut egui::Ui) {
                 }
             }
             ui.label(RichText::new(tr("ui.agent_chat_part_hold_size")).color(t.text_dim).size(t.font_caption));
-            ui_kit::number_field(ui, &mut chat.part.hold, 0.0..=100_000.0, 0.05, " mm");
+            let field = ui_kit::number_field(ui, &mut chat.part.hold, 0.0..=100_000.0, 0.05, " mm");
+            solidcraft_ui_registry::publish_handle("agent_chat:part:hold", field.rect.center());
         });
         if let Some(role) = clicked {
             let name = if chat.part.region_name.trim().is_empty() { next } else { chat.part.region_name.trim().to_owned() };

@@ -98,6 +98,11 @@ pub struct Region {
     /// The size held there, mm (role hold).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hold: Option<f64>,
+    /// Where the held size is, read off the scan when the region was kept: one point on a round
+    /// face (its diameter) or one on each of two opposite faces (the distance between them);
+    /// empty when it could not be told. Scan Verdict measures the model's exact faces there.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hold_at: Vec<[f64; 3]>,
     /// The kept scan selection (`scan_selections`) that is its extent, by name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selection: Option<String>,
@@ -106,7 +111,7 @@ pub struct Region {
 impl Region {
     /// A region at `at` with nothing marked on it.
     pub fn new(name: impl Into<String>, at: [f64; 3], state: RegionState) -> Self {
-        Region { name: name.into(), at, state, role: None, hold: None, selection: None }
+        Region { name: name.into(), at, state, role: None, hold: None, hold_at: Vec::new(), selection: None }
     }
 }
 
@@ -169,7 +174,8 @@ pub fn check_all(kept: &BTreeMap<String, ScanPlan>) -> Result<()> {
                 RegionState::Built { feature } => feature,
                 RegionState::Skipped { reason } | RegionState::Inferred { reason } => reason,
             };
-            let hold_ok = r.hold.is_none_or(|h| h.is_finite() && h > 0.0);
+            let hold_ok =
+                r.hold.is_none_or(|h| h.is_finite() && h > 0.0) && r.hold_at.len() <= 2 && r.hold_at.iter().flatten().all(|x| x.is_finite());
             let selection_ok = r.selection.as_deref().is_none_or(|n| !n.trim().is_empty() && !long(n));
             if r.name.trim().is_empty() || long(&r.name) || long(text) || !r.at.iter().all(|x| x.is_finite()) || !hold_ok || !selection_ok {
                 return Err(DocError::Invalid(format!("a region of the plan for scan `{scan}` is not well formed")));

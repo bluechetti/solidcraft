@@ -524,6 +524,48 @@ fn regions_marked_by_the_user_steer_the_verdict_and_what_an_agent_may_change() {
     assert!(s.execute("scan.plan_region", &json!({"scan": scan, "name": "X", "at": [0, 0, 0], "role": "hold"})).is_err(), "hold needs a size");
 }
 
+/// A size held on the scan is placed where it is (a boss: its diameter; the block's top and
+/// bottom: the distance between) and the verdict measures it on the model's exact faces: a boss
+/// built 10.4 wide fails "holds 10", one built 10 passes.
+#[test]
+fn a_held_size_is_placed_off_the_scan_and_checked_on_the_model() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 40, "width": 30, "height": 10}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.cylinder", json!({"radius": 5, "height": 8, "base": [20, 15, 10], "operation": "join"}));
+    let (mut s, scan) = scanned(&part, &body, 3, "held");
+    // The boss's wall selected: its diameter held at 10.
+    run(&mut s, "scan.select", json!({"body": scan, "brush": {"points": [[25, 15, 14]], "radius": "2.5 mm"}}));
+    let plan = run(&mut s, "scan.plan_region", json!({"scan": scan, "name": "Boss", "selected": true, "role": "hold", "hold": 10}));
+    let boss = plan["regions"].as_array().unwrap().iter().find(|r| r["name"] == "Boss").unwrap().clone();
+    assert_eq!(boss["hold_at"].as_array().map(Vec::len), Some(1), "a round face: one point: {plan}");
+    // The block's top and bottom, selected together: its thickness held at 10.
+    run(&mut s, "scan.select", json!({"body": scan, "brush": {"points": [[5, 5, 10]], "radius": "3 mm"}}));
+    run(&mut s, "scan.select", json!({"body": scan, "mode": "add", "brush": {"points": [[5, 5, 0]], "radius": "3 mm"}}));
+    let debug = crate::cmd::scan::select::region_reading(&s);
+    let plan = run(&mut s, "scan.plan_region", json!({"scan": scan, "name": "Thickness", "selected": true, "role": "hold", "hold": 10}));
+    let thick = plan["regions"].as_array().unwrap().iter().find(|r| r["name"] == "Thickness").unwrap().clone();
+    assert_eq!(thick["hold_at"].as_array().map(Vec::len), Some(2), "two opposite faces: {debug:?}");
+
+    let mark = s.checkpoint();
+    let wide = run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 10}))["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut s, "solid.cylinder", json!({"radius": 5.2, "height": 8, "base": [20, 15, 10], "operation": "join"}));
+    let v = run(&mut s, "scan.verdict", json!({"scan": scan, "model": wide}));
+    let issues = v["issues"].to_string();
+    assert!(v["verdict"] == "not_done" && issues.contains("hold_off") && issues.contains("10.400"), "{v}");
+    assert!(!issues.contains("`Thickness`"), "the thickness is held: {v}");
+    s.restore_checkpoint(mark).unwrap();
+    let right = run(&mut s, "solid.box", json!({"length": 40, "width": 30, "height": 10}))["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut s, "solid.cylinder", json!({"radius": 5, "height": 8, "base": [20, 15, 10], "operation": "join"}));
+    let v = run(&mut s, "scan.verdict", json!({"scan": scan, "model": right}));
+    assert!(!v["issues"].to_string().contains("hold_"), "both sizes held: {v}");
+    // Given by hand: a point that is on no round face of the model says so.
+    let plan = run(&mut s, "scan.plan_region", json!({"scan": scan, "name": "Nowhere", "at": [5, 5, 10], "hold": 3, "hold_at": [[5, 5, 10]]}));
+    assert!(plan["regions"].to_string().contains("Nowhere"));
+    let v = run(&mut s, "scan.verdict", json!({"scan": scan, "model": right}));
+    assert!(v["issues"].to_string().contains("hold_unmeasured"), "{v}");
+}
+
 /// A block 40 × 30 × 10 with two holes Ø 8 through it: the prism's profile holds the holes as
 /// circles inside its outline, and Extrude It extrudes the outline with the holes open, not the
 /// discs inside them as well.

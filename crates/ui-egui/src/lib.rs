@@ -324,6 +324,7 @@ pub(crate) mod scan_how;
 pub(crate) mod scan_job;
 pub(crate) mod scan_line;
 pub(crate) mod scan_paint;
+pub(crate) mod scan_regions;
 pub(crate) mod scan_selection;
 pub(crate) mod scan_shapes;
 pub(crate) mod scan_snap;
