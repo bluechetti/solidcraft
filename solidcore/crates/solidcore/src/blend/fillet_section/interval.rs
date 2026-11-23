@@ -9,7 +9,12 @@
 //! Deviations: the widening and the products whose result is subnormal are computed in
 //! integers where the floating operation would be subnormal, bit for bit the same values
 //! (an Intel core's microcode assist on every subnormal result made them 17 to 25 times
-//! slower; [`round_up`], `product`).
+//! slower; [`round_up`], `product`). The product and the outward rounding take a short
+//! path where no end can meet those cases (`products_are_floating`, `round_out`), the same
+//! values bit for bit: one test instead of one per product, nothing spilled for the rare
+//! integer path, and inline, where the two calls were most of a G^n certificate's time;
+//! the widening of a tiny end is one scaled product rounded to an integer
+//! (`widening_tiny_float`), the integers only about a tie or for a subnormal end.
 
 use core::ops::{Add, Div, Mul, Sub};
 
@@ -72,12 +77,46 @@ const WIDEN_TINY: f64 = 9.0e-293;
 #[inline]
 fn widening(x: f64) -> f64 {
     let a = x.abs();
-    if a > 0.0 && a < WIDEN_TINY {
-        if let Some(w) = widening_tiny(a) {
+    if is_tiny(a) {
+        if let Some(w) = widening_tiny_float(a).or_else(|| widening_tiny(a)) {
             return w;
         }
     }
     a * WIDEN_REL + WIDEN_ABS
+}
+
+/// [`WIDEN_REL`] `2^1049`, exact: `2^-1049` is the grid of [`WIDEN_ABS`]'s binade
+/// (`2^-997 <= 1e-300 < 2^-996`, 52 bits below).
+const WIDEN_REL_GRID: f64 = f64::from_bits(WIDEN_REL.to_bits() + (1049 << 52));
+/// `2^52`: a non-negative double under `2^51` plus it, less it, is rounded to an integer.
+const TWO_52: f64 = 4_503_599_627_370_496.0;
+/// `2^-24`: how far from a tie [`widening_tiny_float`] decides.
+const TIE_MARGIN: f64 = 5.960_464_477_539_063e-8;
+
+/// [`widening`] for a positive finite `a` under [`WIDEN_TINY`] with floating operations that
+/// meet no subnormal, bit for bit [`widening_tiny`]'s; `None` for a subnormal `a` (whose
+/// product would take the assist) and within `2^-24` of a tie (about one `a` in eight
+/// million), which it leaves to the integers.
+///
+/// The value is `1e-300 + k 2^-1049`, `k` the integer nearest `n / 2^25`, where `n 2^-1074`
+/// is `a WIDEN_REL` rounded to the subnormal grid (ties to an even significand). `y =
+/// a WIDEN_REL 2^1049` is that quotient's exact value `X < 2^27` rounded once (within
+/// `2^-26`), and `n / 2^25` is within `2^-26` of `X`, so within `2^-25` of `y`: where `y`
+/// is farther than `2^-24` from every half-integer, `n / 2^25` is not a tie and has `y`'s
+/// nearest integer. `k < 2^27` keeps the sum in 1e-300's binade, so it is `k` added to
+/// its bits.
+#[inline]
+fn widening_tiny_float(a: f64) -> Option<f64> {
+    if a < f64::MIN_POSITIVE {
+        return None;
+    }
+    let y = a * WIDEN_REL_GRID;
+    let k = (y + TWO_52) - TWO_52;
+    if 0.5 - (y - k).abs() > TIE_MARGIN {
+        Some(f64::from_bits(WIDEN_ABS.to_bits() + k as u64))
+    } else {
+        None
+    }
 }
 
 /// The integer significand and the exponent of a positive finite `x`:
@@ -171,6 +210,67 @@ fn widening_tiny(a: f64) -> Option<f64> {
     Some(f64::from_bits(WIDEN_ABS.to_bits() + k))
 }
 
+/// Whether `0 < a <` [`WIDEN_TINY`] for an `a >= 0` (or NaN), where [`widening`] takes its
+/// integer path: one unsigned compare of the bits (0 wraps past the bound, and a NaN's
+/// bits are above it).
+#[inline]
+fn is_tiny(a: f64) -> bool {
+    a.to_bits().wrapping_sub(1) < WIDEN_TINY.to_bits() - 1
+}
+
+/// `[round_down(lo), round_up(hi)]` for ends that are not NaN, bit for bit: where neither
+/// end is tiny, [`widening`]'s expression inline (no call, nothing spilled for the integer
+/// path); otherwise [`round_out_tiny`].
+#[inline]
+fn round_out(lo: f64, hi: f64) -> Ivl {
+    let (a, b) = (lo.abs(), hi.abs());
+    if is_tiny(a) | is_tiny(b) {
+        return round_out_tiny(lo, hi);
+    }
+    Ivl::new(
+        lo - (a * WIDEN_REL + WIDEN_ABS),
+        hi + (b * WIDEN_REL + WIDEN_ABS),
+    )
+}
+
+/// [`round_out`] where an end is tiny: [`round_down`] and [`round_up`] themselves.
+#[inline(never)]
+fn round_out_tiny(lo: f64, hi: f64) -> Ivl {
+    Ivl::new(round_down(lo), round_up(hi))
+}
+
+/// `2^512`.
+const SCALE_UP: f64 = f64::from_bits((1023 + 512) << 52);
+/// `2^-508`: `2^-1020` times [`SCALE_UP`].
+const SAFE_SCALED: f64 = f64::from_bits((1023 - 508) << 52);
+
+/// Whether every [`product`] of an end of one interval and an end of another is the
+/// floating product, from the least magnitudes of their ends `ma`, `mb`: true where
+/// `ma mb >= 2^-1020`, computed as `(ma 2^512) mb` so that no subnormal is formed (the
+/// scaling is exact; an overflow is infinity, which passes). Then every product of ends is
+/// at least `ma mb > 2^-1021` exactly (the rounding moves it by at most 2^-53 relative), so
+/// two normal ends have `ea + eb >= 1024`, which [`product`] takes the floating way, as it
+/// does every other end. False, and the exact path (the same values), for a NaN, a 0 or
+/// a product under the bound.
+#[inline]
+fn products_are_floating(ma: f64, mb: f64) -> bool {
+    (ma * SCALE_UP) * mb >= SAFE_SCALED
+}
+
+/// `2^-565`: `2^-1077` times [`SCALE_UP`].
+const UNDER_SCALED: f64 = f64::from_bits((1023 - 565) << 52);
+
+/// Whether every [`product`] of ends is the floating product because every one rounds to
+/// 0 (under half the subnormal step, `2^-1075`), from the greatest magnitudes of the ends `ma`, `mb`:
+/// true where `ma mb < 2^-1077`, computed as `(ma 2^512) mb`. Then every product of ends is
+/// under `2^-1076` exactly, so two normal ends have `ea + eb <= 969` (`|a b| >=
+/// 2^(ea + eb - 2046)`), which [`product`] takes the floating way (a product rounding to
+/// 0 takes no assist). False for a NaN.
+#[inline]
+fn products_underflow(ma: f64, mb: f64) -> bool {
+    (ma * SCALE_UP) * mb < UNDER_SCALED
+}
+
 /// `sm_Ivl`: the closed interval `[lo, hi]`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Ivl {
@@ -202,11 +302,12 @@ impl Ivl {
 
     /// `sm_Checked`: `[a, b]` rounded outward, or the whole line if either is NaN.
     #[must_use]
+    #[inline]
     pub fn checked(a: f64, b: f64) -> Self {
-        if a.is_nan() || b.is_nan() {
+        if a.is_nan() | b.is_nan() {
             Self::whole()
         } else {
-            Self::new(round_down(a), round_up(b))
+            round_out(a, b)
         }
     }
 
@@ -377,6 +478,7 @@ impl Ivl {
 
 impl Add for Ivl {
     type Output = Self;
+    #[inline]
     fn add(self, b: Self) -> Self {
         Self::checked(self.lo + b.lo, self.hi + b.hi)
     }
@@ -384,35 +486,66 @@ impl Add for Ivl {
 
 impl Sub for Ivl {
     type Output = Self;
+    #[inline]
     fn sub(self, b: Self) -> Self {
         Self::checked(self.lo - b.hi, self.hi - b.lo)
     }
 }
 
+/// `sm_Ivl`'s product, [`product`] at every end: [`Ivl`]'s `*` where an end may meet its
+/// integer path.
+#[inline(never)]
+fn mul_exact_products(a: Ivl, b: Ivl) -> Ivl {
+    let p0 = product(a.lo, b.lo);
+    let rest = [
+        product(a.lo, b.hi),
+        product(a.hi, b.lo),
+        product(a.hi, b.hi),
+    ];
+    let mut lo = p0;
+    let mut hi = p0;
+    for pi in rest {
+        if pi.is_nan() {
+            return Ivl::whole();
+        }
+        lo = cmin(lo, pi);
+        hi = cmax(hi, pi);
+    }
+    Ivl::checked(lo, hi)
+}
+
 impl Mul for Ivl {
     type Output = Self;
+    /// [`mul_exact_products`] bit for bit: where [`products_are_floating`] or
+    /// [`products_underflow`], the four floating products, a NaN among them the whole line
+    /// (`std::min` keeps a NaN first one, which `sm_Checked` catches; a later one returns
+    /// at once), their least and greatest in the same order, rounded outward.
+    #[inline]
     fn mul(self, b: Self) -> Self {
-        let p0 = product(self.lo, b.lo);
-        let rest = [
-            product(self.lo, b.hi),
-            product(self.hi, b.lo),
-            product(self.hi, b.hi),
-        ];
-        let mut lo = p0;
-        let mut hi = p0;
-        for pi in rest {
-            if pi.is_nan() {
-                return Self::whole();
-            }
-            lo = cmin(lo, pi);
-            hi = cmax(hi, pi);
+        let (a0, a1, b0, b1) = (self.lo.abs(), self.hi.abs(), b.lo.abs(), b.hi.abs());
+        if !products_are_floating(cmin(a0, a1), cmin(b0, b1))
+            && !products_underflow(cmax(a0, a1), cmax(b0, b1))
+        {
+            return mul_exact_products(self, b);
         }
-        Self::checked(lo, hi)
+        let (p0, p1, p2, p3) = (
+            self.lo * b.lo,
+            self.lo * b.hi,
+            self.hi * b.lo,
+            self.hi * b.hi,
+        );
+        if p0.is_nan() | p1.is_nan() | p2.is_nan() | p3.is_nan() {
+            return Self::whole();
+        }
+        let lo = cmin(cmin(cmin(p0, p1), p2), p3);
+        let hi = cmax(cmax(cmax(p0, p1), p2), p3);
+        round_out(lo, hi)
     }
 }
 
 impl Div for Ivl {
     type Output = Self;
+    #[inline]
     fn div(self, b: Self) -> Self {
         let excludes_zero = b.lo > 0.0 || b.hi < 0.0;
         if !excludes_zero {
@@ -529,6 +662,138 @@ mod tests {
         ] {
             same(x);
         }
+    }
+
+    /// The short paths are the long ones bit for bit: `*` against [`mul_exact_products`]
+    /// and [`Ivl::checked`] against [`round_down`] and [`round_up`], over intervals of every
+    /// kind (narrow about numbers of every size, about 0 at the widening's 1e-300, zeros,
+    /// subnormal, huge, infinite, NaN, out of order) and over every pair of binades about
+    /// the products' subnormal window (random significands and signs, a fixed seed).
+    #[test]
+    fn the_short_paths_are_the_long_ones_bit_for_bit() {
+        let bits = |v: Ivl| (v.lo.to_bits(), v.hi.to_bits());
+        let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let mut ends = vec![
+            0.0,
+            -0.0,
+            1.0,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            f64::MIN_POSITIVE,
+            f64::from_bits(1),
+            f64::MAX,
+            1.0e-300,
+            WIDEN_TINY,
+            f64::from_bits(WIDEN_TINY.to_bits() - 1),
+            2.0e-8,
+            1.0e-160,
+        ];
+        for _ in 0..3000 {
+            let r = next();
+            let sign = if r & 1 == 0 { 1.0 } else { -1.0 };
+            let unit = (next() >> 11) as f64 / (1_u64 << 53) as f64;
+            let e = i32::try_from(next() % 640).unwrap_or(0) - 320;
+            ends.push(f64::from_bits(next()));
+            ends.push(sign * unit * 10f64.powi(e));
+            ends.push(sign * 1.0e-300 * (1.0 + unit * 1e-14));
+            ends.push(sign * unit * 1.0e-8);
+        }
+        let mut ivls = Vec::new();
+        for (i, &a) in ends.iter().enumerate() {
+            let b = ends.get((i * 7 + 3) % ends.len()).copied().unwrap_or(0.0);
+            ivls.push(Ivl::new(a, b));
+            ivls.push(Ivl::new(round_down(a), round_up(a)));
+            let w = 1.0e-300 * (1.0 + a.abs().fract());
+            ivls.push(Ivl::new(-w, w));
+        }
+        let f = |e: u64, r: u64, s: u64| f64::from_bits((s & (1 << 63)) | (e << 52) | (r >> 12));
+        for ea in (1_u64..0x7ff).step_by(5) {
+            for d in 960_u64..1035 {
+                let Some(eb) = d.checked_sub(ea).filter(|&e| (1..0x7ff).contains(&e)) else {
+                    continue;
+                };
+                let a = Ivl::new(f(ea, next(), next()), f(ea, next(), next()));
+                let b = Ivl::new(f(eb, next(), next()), f(eb, next(), next()));
+                assert_eq!(bits(a * b), bits(mul_exact_products(a, b)), "{a:?} * {b:?}");
+                assert_eq!(bits(b * a), bits(mul_exact_products(b, a)), "{b:?} * {a:?}");
+            }
+        }
+        for (i, &a) in ivls.iter().enumerate() {
+            for &b in ivls.iter().skip(i % 13).step_by(13) {
+                assert_eq!(bits(a * b), bits(mul_exact_products(a, b)), "{a:?} * {b:?}");
+            }
+            let long = if a.lo.is_nan() || a.hi.is_nan() {
+                Ivl::whole()
+            } else {
+                Ivl::new(round_down(a.lo), round_up(a.hi))
+            };
+            assert_eq!(bits(Ivl::checked(a.lo, a.hi)), bits(long), "{a:?}");
+        }
+    }
+
+    /// The floating tiny widening is the integer one bit for bit wherever it decides, over
+    /// every normal tiny binade (random significands, a fixed seed) and at `a` just either side of
+    /// each `k + 1/2` it refuses; it refuses only near those, and its constants are what
+    /// they say.
+    #[test]
+    fn the_floating_tiny_widening_is_the_integer_one() {
+        assert_eq!(TWO_52, 2f64.powi(52));
+        assert_eq!(TIE_MARGIN, 2f64.powi(-24));
+        assert_eq!(WIDEN_REL_GRID, WIDEN_REL * 2f64.powi(1000) * 2f64.powi(49));
+        // 2^-1049 is the grid of 1e-300's binade
+        assert_eq!(
+            f64::from_bits(WIDEN_ABS.to_bits() + 1) - WIDEN_ABS,
+            2f64.powi(-1049)
+        );
+        assert!(2f64.powi(-997) <= WIDEN_ABS && WIDEN_ABS < 2f64.powi(-996));
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        let (mut decided, mut refused) = (0_u32, 0_u32);
+        let mut judge = |a: f64| match widening_tiny_float(a) {
+            Some(w) => {
+                assert_eq!(
+                    Some(w.to_bits()),
+                    widening_tiny(a).map(f64::to_bits),
+                    "{a:e}"
+                );
+                decided += 1;
+            }
+            None => refused += 1,
+        };
+        // a subnormal end is left to the integers
+        assert!(widening_tiny_float(f64::from_bits(1)).is_none());
+        assert!(widening_tiny_float(f64::MIN_POSITIVE / 2.0).is_none());
+        for e in 1_u64..=55 {
+            for _ in 0..20_000 {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                let a = f64::from_bits((e << 52) | (seed & ((1 << 52) - 1)));
+                if a > 0.0 && a < WIDEN_TINY {
+                    judge(a);
+                }
+            }
+        }
+        for k in [0_u32, 1, 2, 3, 7, 1000, 123_456, 99_999_999] {
+            let a = (f64::from(k) + 0.5) / WIDEN_REL_GRID;
+            let mut x = a;
+            let mut y = a;
+            for _ in 0..64 {
+                judge(x);
+                judge(y);
+                x = f64::from_bits(x.to_bits() + 1);
+                y = f64::from_bits(y.to_bits() - 1);
+            }
+        }
+        // the refusals are the ones about a tie, a few per tie probed and almost none at random
+        assert!(decided > 1_000_000 && refused < 1100, "{decided} {refused}");
+        assert!(widening_tiny_float(1.0e-300).is_some());
     }
 
     #[test]
