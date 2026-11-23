@@ -1,8 +1,7 @@
 # Scan to CAD: a work-in-progress fork of SolidCraft
 
-This branch is [SolidCraft](https://github.com/tangency-labs/solidcraft) (upstream `main` at
-`bd46bd378`, after v0.46.2) with a Scan workspace added on top: tools that turn a 3D scan (a mesh
-or point cloud) into CAD. It is shared so it can be built and tried. It is not an upstream release,
+This branch is [SolidCraft](https://github.com/tangency-labs/solidcraft) v0.47.0 with a Scan workspace
+added on top: tools that turn a 3D scan (a mesh or point cloud) into CAD. It is shared so it can be built and tried. It is not an upstream release,
 and nothing here is endorsed by the SolidCraft maintainers.
 
 ## Build and run
