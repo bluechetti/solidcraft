@@ -357,6 +357,13 @@ pub struct ScanFitResult {
     /// The region's points' distance from the shape: root mean square and largest, in mm.
     pub rms: f64,
     pub max: f64,
+    /// The spread of the region's points' signed distances from the shape, largest less smallest,
+    /// in mm: its form error.
+    pub form_error: f64,
+    /// How far round its axis a cylinder's or a cone's region goes, in degrees: 360 less the widest
+    /// gap between its points. Under 90° the radius is uncertain, and `warning` says so.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coverage_deg: Option<f64>,
     /// The share of the region's area that is surface the scanner never saw (filled, mirrored,
     /// made from sparse points), when any is, and what that means.
     #[serde(default, skip_serializing_if = "Option::is_none")]
