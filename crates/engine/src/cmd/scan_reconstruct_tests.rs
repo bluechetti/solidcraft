@@ -110,7 +110,7 @@ fn volume(s: &Session, body: &str) -> f64 {
 /// A table: two posts 20 × 24 × 30, set apart so no wall of one lies in a wall of the other, under
 /// a top 100 × 60 × 10. Reconstruct reads the posts as one
 /// prism whose profile is two squares; extruded new, that made a body for each square, and the
-/// steps after it joined only the first (the Artec cylinder head's gasket flange, in two lobes,
+/// steps after it joined only the first (a scanned cylinder head's gasket flange, in two lobes,
 /// left a second body nothing joined). Extrude It joins the pieces into the one body it builds,
 /// whatever prism it starts from: one Reconstructed body, both posts in it.
 #[test]
@@ -185,7 +185,7 @@ fn a_prism_that_leaves_the_body_in_pieces_says_so() {
 /// long, each rounded into its webs R 6 (tangent, so no crease parts journal from web), and a
 /// rod Ø 40 running on 560 mm, so the part is 700 long. Find All seeds a patch 4 % of the part's
 /// size round each triangle (28 mm here): round a journal's middle that patch takes in the rounds
-/// and the webs, no shape fits it, and every triangle in it was set aside: the Artec crankshaft's
+/// and the webs, no shape fits it, and every triangle in it was set aside: a scanned crankshaft's
 /// journals, cylinders to 0.04 mm, were read as freeform (13 % of it in shapes). A seed no shape
 /// fits is tried again at half the reach, down to an eighth, as a cylinder, kept where it is
 /// about the patch's size and grows to the full patch's area: each journal is found, Ø 80.

@@ -1488,12 +1488,7 @@ fn refresh_links_in(
             Ok(r) => {
                 // An edge or vertex link saved without a name takes the name of the geometry it was
                 // found on. A sketch that is edited stores it; evaluation leaves the design as it is.
-                if l.edge_name.is_none()
-                    && let Some(name) = resolved_edge_name(st, &r)
-                    && let Some(link) = sk.links.iter_mut().find(|link| link.id == l.id)
-                {
-                    link.edge_name = Some(name);
-                }
+                let new_edge_name = l.edge_name.is_none().then(|| resolved_edge_name(st, &r)).flatten();
                 if l.vertex_name.is_none()
                     && let Some(name) = resolved_vertex_name(st, &r)
                     && let Some(link) = sk.links.iter_mut().find(|link| link.id == l.id)
@@ -1513,6 +1508,13 @@ fn refresh_links_in(
                 // the link recorded them (#18711).
                 let updated =
                     if l.kind == LinkKind::Project { sk.update_link_named(&l.id, &r.geom, &r.edge_names) } else { sk.update_link(&l.id, &r.geom) };
+                // A name captured from a point on this rebuild did not identify
+                // the saved curve. Publish it only after matching the old link.
+                if let Some(name) = new_edge_name
+                    && let Some(link) = sk.links.iter_mut().find(|link| link.id == l.id)
+                {
+                    link.edge_name = Some(name);
+                }
                 match updated {
                     Ok(true) if words_follow => {}
                     // A rebuilt projection is only worth a warning when it took something of
@@ -2770,8 +2772,78 @@ pub(crate) fn section(plane: &Plane, m: &Mesh, face: Option<u32>, shaded_flat: b
     // A line ends on a point of the section, an arc on its circle nearest that point: they part
     // by up to the fit's tolerance. On a mesh body's facets (a scan's, noisy), by that much: so
     // there an arc's end joins only the curve end nearest it, when that is a line's, and not a
-    // line of the outline beside it (a thin wall's other side).
-    if shaded_flat { join_rounds_nearest(fitted, within) } else { join_rounds(fitted, size * 1e-5) }
+    // line of the outline beside it (a thin wall's other side). Two arcs that meet part by up to
+    // twice that, and are stitched where they are each other's nearest.
+    if shaded_flat { stitch_ends(join_rounds_nearest(fitted, within), 3.0 * within) } else { join_rounds(fitted, size * 1e-5) }
+}
+
+/// A fit puts each arc's ends on its own circle, so two pieces that met at one point of the
+/// section can end up to twice the fit's tolerance apart, and the outline does not close (a
+/// sketch joins ends only 1e-4 mm apart). Ends that are each other's nearest, within `tol`, move
+/// to their midpoint. A moved arc takes the centre nearest its own that lies as far from both its
+/// ends (keeping the radius instead moves the centre of a half circle far off).
+fn stitch_ends(mut v: Vec<LinkGeom>, tol: f64) -> Vec<LinkGeom> {
+    let ends: Vec<(usize, Vec2)> = v
+        .iter()
+        .enumerate()
+        .flat_map(|(i, g)| match *g {
+            LinkGeom::Line(a, b) | LinkGeom::Arc { a, b, .. } => vec![(i, a), (i, b)],
+            _ => Vec::new(),
+        })
+        .collect();
+    if !(tol > 0.0) {
+        return v;
+    }
+    let cell = |p: Vec2| ((p.x / tol).floor() as i64, (p.y / tol).floor() as i64);
+    let mut grid: BTreeMap<(i64, i64), Vec<usize>> = BTreeMap::new();
+    for (k, (_, p)) in ends.iter().enumerate() {
+        grid.entry(cell(*p)).or_default().push(k);
+    }
+    let nearest = |k: usize| -> Option<usize> {
+        let &(i, p) = ends.get(k)?;
+        let (cx, cy) = cell(p);
+        let mut best: Option<(f64, usize)> = None;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for &m in grid.get(&(cx + dx, cy + dy)).map(Vec::as_slice).unwrap_or_default() {
+                    let Some(&(j, q)) = ends.get(m) else { continue };
+                    let d = p.dist(q);
+                    if j != i && d <= tol && best.is_none_or(|(e, _)| d < e) {
+                        best = Some((d, m));
+                    }
+                }
+            }
+        }
+        best.map(|(_, m)| m)
+    };
+    let mut moved: Vec<Vec2> = ends.iter().map(|(_, p)| *p).collect();
+    for k in 0..ends.len() {
+        let Some(m) = nearest(k).filter(|m| nearest(*m) == Some(k)) else { continue };
+        if let (Some(&(_, p)), Some(&(_, q)), Some(slot)) = (ends.get(k), ends.get(m), moved.get_mut(k)) {
+            *slot = p.lerp(q, 0.5);
+        }
+    }
+    let mut at = moved.into_iter();
+    for g in &mut v {
+        match *g {
+            LinkGeom::Line(..) => {
+                if let (Some(a), Some(b)) = (at.next(), at.next()) {
+                    *g = LinkGeom::Line(a, b);
+                }
+            }
+            LinkGeom::Arc { c, a: a0, b: b0 } => {
+                let (Some(a), Some(b)) = (at.next(), at.next()) else { continue };
+                if a == a0 && b == b0 {
+                    continue;
+                }
+                let mid = a.lerp(b, 0.5);
+                let Some(across) = (b - a).normalized().map(|u| u.perp()) else { continue };
+                *g = LinkGeom::Arc { c: mid + across * (c - mid).dot(across), a, b };
+            }
+            _ => {}
+        }
+    }
+    v
 }
 
 /// [`join_rounds`], each arc end joining at most one line: the line whose end is the nearest
@@ -2904,7 +2976,7 @@ fn section_segments(plane: &Plane, m: &Mesh, face: Option<u32>, shaded_flat: boo
     // facets that turn less than SMOOTH_TURN_DEGREES from their neighbours (never across a crease).
     // Only the corners at the ends of the edges the plane crosses are asked for: those of the
     // triangles it crosses, smoothed over every facet around them (their whole fans).
-    let smoothed: Option<std::collections::HashMap<u32, Vec3>> = shaded_flat
+    let smoothed: Option<std::collections::HashMap<(usize, usize), Vec3>> = shaded_flat
         .then(|| {
             let at = |k: &u32| m.positions.get(*k as usize).copied();
             let crossed = |t: &&[u32; 3]| {
@@ -2912,26 +2984,27 @@ fn section_segments(plane: &Plane, m: &Mesh, face: Option<u32>, shaded_flat: boo
                 sides.len() == 3 && sides.contains(&true) && sides.contains(&false)
             };
             let ends: std::collections::HashSet<Key> = m.triangles.iter().filter(crossed).flat_map(|t| t.iter().filter_map(at).map(key)).collect();
-            let around: Vec<&[u32; 3]> = m.triangles.iter().filter(|t| t.iter().filter_map(at).any(|p| ends.contains(&key(p)))).collect();
+            let around: Vec<(usize, &[u32; 3])> =
+                m.triangles.iter().enumerate().filter(|(_, t)| t.iter().filter_map(at).any(|p| ends.contains(&key(p)))).collect();
             let mut fans = Mesh::default();
-            for t in &around {
+            for (_, t) in &around {
                 let base = u32::try_from(fans.positions.len()).ok()?;
                 fans.positions.extend(t.iter().map(|k| at(k).unwrap_or(Vec3::ZERO)));
                 fans.triangles.push([base, base.checked_add(1)?, base.checked_add(2)?]);
             }
             let normals = fans.crease_corner_normals(SMOOTH_TURN_DEGREES.to_radians(), None).ok()?;
             let mut out = std::collections::HashMap::new();
-            for (t, fan) in around.iter().zip(normals) {
-                for (k, n) in t.iter().zip(fan) {
+            for ((ti, t), fan) in around.iter().zip(normals) {
+                for (c, (k, n)) in t.iter().zip(fan).enumerate() {
                     if at(k).is_some_and(|p| ends.contains(&key(p))) {
-                        out.insert(*k, n);
+                        out.insert((*ti, c), n);
                     }
                 }
             }
             Some(out)
         })
         .flatten();
-    let corner_normal = |k: u32| smoothed.as_ref().and_then(|o| o.get(&k)).or_else(|| m.normals.get(k as usize)).copied();
+    let corner_normal = |ti: usize, c: usize, k: u32| smoothed.as_ref().and_then(|o| o.get(&(ti, c))).or_else(|| m.normals.get(k as usize)).copied();
     let mut normals: BTreeMap<Key, Option<Vec3>> = BTreeMap::new();
     let mut face_normals: BTreeMap<(u32, Key), Option<Vec3>> = BTreeMap::new();
     // Faces on either side of each mesh edge.
@@ -2945,13 +3018,13 @@ fn section_segments(plane: &Plane, m: &Mesh, face: Option<u32>, shaded_flat: boo
             *e = None;
         }
     };
-    for (t, f) in m.triangles.iter().zip(&m.tri_face) {
+    for (ti, (t, f)) in m.triangles.iter().zip(&m.tri_face).enumerate() {
         // A flat mesh (the Scan workspace fork's) has no normals by vertex: its corners are lit
         // with their triangle's own, unless the round's rim smoothing above gave the vertex one.
         let lit = m.corner_normals(t);
         for (c, k) in t.iter().enumerate() {
             let Some(p) = m.positions.get(*k as usize) else { continue };
-            let Some(n) = corner_normal(*k).or_else(|| lit.map(|l| l[c])) else { continue };
+            let Some(n) = corner_normal(ti, c, *k).or_else(|| lit.map(|l| l[c])) else { continue };
             let Some(n) = n.normalized() else { continue };
             normals.entry(key(*p)).and_modify(|e| merge(e, n)).or_insert(Some(n));
             face_normals.entry((*f, key(*p))).and_modify(|e| merge(e, n)).or_insert(Some(n));
@@ -2964,7 +3037,7 @@ fn section_segments(plane: &Plane, m: &Mesh, face: Option<u32>, shaded_flat: boo
             let (ka, kb) = (key(*a), key(*b));
             edge_faces.entry(if ka <= kb { (ka, kb) } else { (kb, ka) }).or_default().push(*f);
             if let Some(o) = &smoothed {
-                let end = |k: usize| t.get(k).and_then(|v| o.get(v)).and_then(|n| n.normalized());
+                let end = |c: usize| o.get(&(ti, c)).and_then(|n| n.normalized());
                 let (Some(na), Some(nb)) = (end(i), end(j)) else { continue };
                 let (edge, (n0, n1)) = if ka <= kb { ((ka, kb), (na, nb)) } else { ((kb, ka), (nb, na)) };
                 edge_ends

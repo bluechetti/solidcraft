@@ -35,7 +35,7 @@ Vocabulary (math, pi, sqrt, sin, cos ready):
   with part('Name'): ...   # its features go in that part
   measure() -> {body: {volume, bbox, faces}}   edges(body) -> [{name, mid, length}]   faces(body) -> [{name, point}]
   cmd('command.id', **params) for anything else; commands('word') finds ids.
-run(..., look=True) adds a picture.
+run(..., look=true) adds a picture.
 
 Example:
   box(60, 40, 8, name='Plate')

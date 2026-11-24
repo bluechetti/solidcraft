@@ -1,4 +1,4 @@
-//! New Free Form (`scan.free_form`, SurfaceCraft's after QuickSurface's): a surface made by hand on
+//! New Free Form (`scan.free_form`, SurfaceCraft's): a surface made by hand on
 //! the scan, a cubic net over four corners clicked round its first face, fitted to the scan as it
 //! is made (Follow the Scan), or only to its overall shape so it spans openings and ribs (Overall
 //! Shape), or left flat over the corners (Off). It is kept as a surface body of its own, so Edit

@@ -1,4 +1,4 @@
-//! A Free Form (SurfaceCraft's, after QuickSurface's Free Form and Snap Mode): a surface made by
+//! A Free Form (SurfaceCraft's, its points snapped to the scan): a surface made by
 //! hand on the scan, a cubic B-spline net over four corners clicked round its first face. Fitted
 //! to the scan as it is made: the corners put on the scan, each edge the cubic nearest the scan
 //! along the straight line between its corners, and the points inside those that bring the face
@@ -357,7 +357,7 @@ pub fn fitted(corners: [Vec3; 4], fitting: &Fitting, snap: impl Fn(&[Vec3], Opti
     let fitting = Fitting { count: n, ..*fitting };
     let on = snap(&corners, None);
     // The places along the edges and across the inside go to the scan along the way the face
-    // faces as a whole (QuickSurface's ray projection), not to the scan's nearest place: on a rough
+    // faces as a whole (a projection along one way), not to the scan's nearest place: on a rough
     // scan the nearest place is often off to one side, and places drawn sideways leave the net
     // uneven, its edges zigzagging.
     let facing = (corners[2] - corners[0]).cross(corners[3] - corners[1]).normalized();

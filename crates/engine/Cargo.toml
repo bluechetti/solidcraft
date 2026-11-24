@@ -96,6 +96,8 @@ flate2 = { workspace = true }
 zip = { workspace = true }
 # The scan benchmark's example (examples/scan_bench.rs) makes its scans with the seeded degrader.
 solidcraft-testkit = { workspace = true }
+# A temporary folder per test, removed when the test ends, a failure included.
+tempfile = "3.27"
 
 # The transaction contract on random designs: its own binary, which pull requests skip by name
 # (.config/nextest.toml).

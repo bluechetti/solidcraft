@@ -1,4 +1,4 @@
-//! A Free Form's net changed as a whole (SurfaceCraft's net tools, after QuickSurface's): a row
+//! A Free Form's net changed as a whole (SurfaceCraft's net tools): a row
 //! or column of points put between two (Split), a row at an edge copied beside itself to be
 //! dragged out (the Alt-drag and the D grip), the net's points doubled (Increase Resolution), a
 //! row taken away, and a row made a crease (the surface runs through it, sharp along it, by a
@@ -108,7 +108,7 @@ fn widest_middle(s: &NurbsSurface, d: usize) -> Option<f64> {
     (p..n).map(|i| (k[i], k[i + 1])).filter(|(a, b)| b > a).max_by(|x, y| (x.1 - x.0).total_cmp(&(y.1 - y.0))).map(|(a, b)| 0.5 * (a + b))
 }
 
-/// The net's points doubled in u, in v or both (QuickSurface's Increase Resolution): a knot half
+/// The net's points doubled in u, in v or both (Increase Resolution): a knot half
 /// way along every span, the surface exactly as it was.
 pub fn refine(s: &NurbsSurface, in_u: bool, in_v: bool) -> Result<NurbsSurface, NetError> {
     let mut made = s.clone();
@@ -130,7 +130,7 @@ pub fn refine(s: &NurbsSurface, in_u: bool, in_v: bool) -> Result<NurbsSurface, 
 }
 
 /// A line put half way between `line` and its neighbour (the next, or the one before for the last),
-/// the surface exactly as it was (QuickSurface's Split). The new line comes back with the surface.
+/// the surface exactly as it was (Split). The new line comes back with the surface.
 pub fn split(s: &NurbsSurface, line: Line) -> Result<(NurbsSurface, Line), NetError> {
     let d = axis(line.dir());
     let (n, p, knots) = (s.count()[d], s.degree()[d], &s.knots()[d]);
@@ -152,7 +152,7 @@ pub fn split(s: &NurbsSurface, line: Line) -> Result<(NurbsSurface, Line), NetEr
 }
 
 /// The line copied beside itself (after it when `after`, else before), the copy lying on the
-/// original until it is moved: QuickSurface's Alt-drag on an edge, which drags the copy out. A
+/// original until it is moved: Alt-drag on an edge, which drags the copy out. A
 /// knot goes in the span nearest the new line, so the surface changes there and nowhere else the
 /// net reaches. The copy comes back with the surface.
 pub fn duplicate(s: &NurbsSurface, line: Line, after: bool) -> Result<(NurbsSurface, Line), NetError> {
@@ -235,7 +235,7 @@ pub fn creases(s: &NurbsSurface) -> Vec<Line> {
     out
 }
 
-/// The line made a crease (QuickSurface's Crease Edges): the surface runs through it and is sharp
+/// The line made a crease (Crease Edges): the surface runs through it and is sharp
 /// along it, smooth either side, by its three knots made one. It needs three lines each side of it
 /// and between it and another crease (a cubic net of at least seven points that way).
 pub fn crease(s: &NurbsSurface, line: Line) -> Result<NurbsSurface, NetError> {
@@ -282,7 +282,7 @@ pub fn uncrease(s: &NurbsSurface, line: Line) -> Result<NurbsSurface, NetError> 
 }
 
 /// The line at a side of the net copied out past it by `distance` along the way the surface leaves
-/// that side (the row next in to the side), so the surface goes on along its tangent: QuickSurface's
+/// that side (the row next in to the side), so the surface goes on along its tangent:
 /// Ctrl+Alt-drag. The new side comes back with the surface.
 pub fn extend(s: &NurbsSurface, side: Line, distance: f64) -> Result<(NurbsSurface, Line), NetError> {
     let d = axis(side.dir());

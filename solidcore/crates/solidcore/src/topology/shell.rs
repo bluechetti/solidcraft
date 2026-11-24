@@ -1655,9 +1655,16 @@ pub fn is_inner_shell_of_tri(
 /// shell (`ClosureTraversal` of its first face use; else [`SM_FALSE`]). Rays are cast
 /// from three sample points of each face use of the shell (along its normal), or from
 /// a wire shell's first edge or a vertex shell's vertex in random directions
-/// (`kernel.rng`, ND-1), against the whole B-rep; the first ray whose crossings are
+/// (ND-1), against the whole B-rep; the first ray whose crossings are
 /// all simple face crossings decides, by the stack of shells it exits and enters.
 /// Returns [`SM_TRUE`], [`SM_FALSE`] or [`SM_UNSURE`] (no ray decided).
+///
+/// The random directions and the face samples' dithers come from one generator the call
+/// makes from the kernel's seed ([`Kernel::seeded_rng`]); the face uses draw from it in
+/// the shell's face-use order, each taking the next draws, so two face uses are not
+/// sampled at the same relative places. So the rays, and with them the answer, are a
+/// function of the B-rep, the two shells and the seed: the same call on the same body
+/// gives the same answer whatever the kernel ran before.
 ///
 /// Upstream ignores the statuses of the closure traversal, the bounding box, the
 /// sample points, the ray solve, the classification insert and the crossing face's
@@ -1746,6 +1753,9 @@ pub fn is_inner_shell_of(
 
     // search the faceuses of the shells for likely ray casts (those that hit only faces)
     let smp_cnt = 3u64;
+    // this call's own draws, from the start of the seed's sequence: the face uses' sample
+    // dithers in face-use order, or a wire or vertex shell's ray directions
+    let mut rng = k.seeded_rng();
     let shell = b.shell(id)?.clone();
     let inner_vertex = shell.vertex(b)?;
     let inner_faceuses = shell.get_faceuses()?;
@@ -1772,7 +1782,7 @@ pub fn is_inner_shell_of(
             );
             // SmFaceuse::GetPointsInFace (which resets its outputs first; a failure
             // here leaves them empty)
-            let r = crate::topology::face::p2::points_in_face(k, b, f, smp_cnt);
+            let r = crate::topology::face::p2::points_in_face_drawing(k, b, f, smp_cnt, &mut rng);
             match checked(r)? {
                 Checked::Value(points) => {
                     let mut pv = points.pv;
@@ -1804,9 +1814,9 @@ pub fn is_inner_shell_of(
                     Checked::Decides => return Ok(SM_UNSURE),
                 };
                 let mut dir = Vec3::new(
-                    k.rng.next_signed_unit(),
-                    k.rng.next_signed_unit(),
-                    k.rng.next_signed_unit(),
+                    rng.next_signed_unit(),
+                    rng.next_signed_unit(),
+                    rng.next_signed_unit(),
                 );
                 dir = dir.unitize_or_z();
                 smp_pv.push(point);
@@ -1818,9 +1828,9 @@ pub fn is_inner_shell_of(
             for _ in 0..smp_cnt {
                 // pick varying directions for the vector
                 let mut dir = Vec3::new(
-                    k.rng.next_signed_unit(),
-                    k.rng.next_signed_unit(),
-                    k.rng.next_signed_unit(),
+                    rng.next_signed_unit(),
+                    rng.next_signed_unit(),
+                    rng.next_signed_unit(),
                 );
                 dir = dir.unitize_or_z();
                 smp_pv.push(point);

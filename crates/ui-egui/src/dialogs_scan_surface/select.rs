@@ -5,7 +5,7 @@
 //! - A drag begun on nothing draws a box and chooses the handles inside it (Shift adds them, Ctrl
 //!   toggles them, Alt takes them away).
 //! - A click on a line of the grid between two handles chooses both; a double-click on one
-//!   chooses the whole line it is part of, across the faces, to the edge (QuickSurface's).
+//!   chooses the whole line it is part of, across the faces, to the edge.
 //! - A double-click on a face (off its lines) chooses all its points.
 //! - A drag of a chosen handle, or of a line, moves every chosen handle by the same amount.
 //!
@@ -240,7 +240,7 @@ pub(super) fn line_at(k: &EditSurface, proj: &crate::viewport::Proj, at: egui::P
         })
 }
 
-/// The whole line of the grid through the step from handle `a` to handle `b`, as QuickSurface's
+/// The whole line of the grid through the step from handle `a` to handle `b`, as a
 /// double-click takes it: on along the grid both ways, across the sides the faces share, to the
 /// network's edge or a corner that is not a grid's (where the way straight on is not one line).
 /// At each point the line goes on along the one step that shares no cell with the step it came

@@ -1,4 +1,4 @@
-//! Merge Surfaces (SurfaceCraft's Merge Quad Surfaces, after QuickSurface's): Free Forms whose
+//! Merge Surfaces (SurfaceCraft's Merge Quad Surfaces): Free Forms whose
 //! sides run along each other made to meet exactly, so that they sew into one body. Each side of a
 //! net that runs along a side of another net within the gap is matched to it: their knots are made
 //! the same (each net refined by the other's knots, its surface exactly as it was), the corners

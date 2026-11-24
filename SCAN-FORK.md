@@ -1,6 +1,6 @@
 # Scan to CAD: a work-in-progress fork of SolidCraft
 
-This branch is [SolidCraft](https://github.com/tangency-labs/solidcraft) v0.47.0 with a Scan workspace
+This branch is [SolidCraft](https://github.com/tangency-labs/solidcraft) v0.48.1 with a Scan workspace
 added on top: tools that turn a 3D scan (a mesh or point cloud) into CAD. It is shared so it can be built and tried. It is not an upstream release,
 and nothing here is endorsed by the SolidCraft maintainers.
 
@@ -34,7 +34,7 @@ curves on the scan, deviation maps and a verdict against the scan, and a report.
 
 Works well:
 - Machined parts from synthetic noisy scans: 9–10 exact faces within 0.007 mm of the true part.
-- Wrap Scan on a real Artec industrial part: 99.9 % of the surface within 0.2 mm, volume off by
+- Wrap Scan on a real industrial part scan: 99.9 % of the surface within 0.2 mm, volume off by
   0.04 %.
 - Large scans: tens of millions of triangles import and display (28M triangles: 7 s, 3.2 GB).
 

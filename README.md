@@ -26,7 +26,6 @@
   <a href="https://solidcraft.io/download">Download</a> ·
   <a href="https://solidcraft.io/app">Try it in the browser</a> ·
   <a href="https://docs.solidcraft.io/">Documentation</a> ·
-  <a href="https://www.blacksmith.sh"><img src="https://img.shields.io/badge/CI-Blacksmith-000000?logo=githubactions&logoColor=white" alt="CI powered by Blacksmith" /></a>
   <a href="https://discord.gg/FtU4NQNVDH">Discord</a> ·
   <a href="https://github.com/tangency-labs/solidcore">SolidCore</a>
 </p>
@@ -268,13 +267,6 @@ Help is welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers how to build and test
 the clean-room and licence rules, and where help is wanted most. Open work is in
 [GitHub issues](https://github.com/tangency-labs/solidcraft/issues); chat is on
 [Discord](https://discord.gg/FtU4NQNVDH).
-
-## Sponsors
-
-[![CI powered by Blacksmith](docs/sponsors/blacksmith-ci-powered.png)](https://www.blacksmith.sh)
-
-SolidCraft's continuous integration runs on [Blacksmith](https://www.blacksmith.sh), which
-sponsors its CI minutes.
 
 ## Disclaimer
 

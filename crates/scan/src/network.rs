@@ -1,4 +1,4 @@
-//! A Free Form network (QuickSurface's quad surface, by way of SurfaceCraft's cage): faces, each a
+//! A Free Form network (a quad surface, from SurfaceCraft's cage): faces, each a
 //! cubic B-spline net, that share whole sides. A point on a shared side is one point of the
 //! network, held by both nets, so the faces meet exactly; where two faces met smoothly when the
 //! network was read (most of the seam's points meet straight), the points next to their shared
@@ -15,7 +15,7 @@
 //! where they go (a point dragged, the points round it held where they are, scan places to fit),
 //! the faces held tangent across smooth seams, and a light hold on how unevenly neighbouring
 //! points move. The points a user drags are on the surface ([`dots`]: the surface at each point's
-//! Greville place), as QuickSurface's feature points are; the control net is the cage behind them.
+//! Greville place), the surface's feature points; the control net is the cage behind them.
 
 use std::collections::HashMap;
 
@@ -62,7 +62,7 @@ pub struct Corner {
 impl Corner {
     /// Not as a grid's corner is: inside, other than four faces round it; on the edge, more than
     /// three (three are a grid's corner with a quarter left out). The surface cannot be smooth all
-    /// round such a point (QuickSurface's red points).
+    /// round such a point (drawn as a red point).
     pub fn irregular(&self) -> bool {
         if self.border { self.faces > 3 } else { self.faces != 4 }
     }
@@ -1032,7 +1032,7 @@ pub const DOT_RING: usize = 3;
 /// The faces with one network point `point` (a dot) put at `to`, the points round it moved as
 /// `ring` says: the points of the faces that hold it within `ring` of it move, the dots outside
 /// that stay where they are (with `hold_near`, those inside too: the surface runs through every
-/// other dot, QuickSurface's Don't Move Neighbours), the faces stay tangent across smooth seams.
+/// other dot, Don't Move Neighbours), the faces stay tangent across smooth seams.
 pub fn dot_moved(faces: &[NurbsSurface], joins: &Joins, point: usize, to: Vec3, ring: usize, hold_near: bool) -> Option<Vec<NurbsSurface>> {
     dots_moved(faces, joins, &[(point, to)], ring, hold_near, &[])
 }
@@ -1091,7 +1091,7 @@ pub fn without_face(faces: &[NurbsSurface], face: usize) -> Result<Vec<NurbsSurf
     Ok(rest)
 }
 
-/// The network smoothed one step (QuickSurface's Smooth): every point but the network's own
+/// The network smoothed one step (Smooth): every point but the network's own
 /// corners and the corners where faces meet unevenly moves to straighten its rows and columns,
 /// held near the scan by `scan` (its places on the faces) or, with none, near where the surface is
 /// (its dots), the faces tangent where they met smoothly. `strength` above 0: 1 smooths hard.
@@ -1116,7 +1116,7 @@ pub fn smoothed(faces: &[NurbsSurface], joins: &Joins, scan: &[Goal], strength: 
     moved(faces, joins, &Moves { free: &free, goals: &goals, tangent: 40.0, even: 0.0, bend, also_smooth: &[] })
 }
 
-/// The network under a smoothing brush (QuickSurface's): the points `under` it, each with how much
+/// The network under a smoothing brush: the points `under` it, each with how much
 /// of the brush it gets (0 to 1, more toward the brush's middle), move to straighten their rows and
 /// columns, as hard as `strength` (0 to 1); held near the scan by `scan` (its places on the faces)
 /// or, with none, near where the surface is (its dots), and each near its own dot the more the less

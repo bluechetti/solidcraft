@@ -24,3 +24,8 @@ monty-types = { workspace = true }
 [dev-dependencies]
 # The renderer `solidcraft-cli mcp` installs, so the tests' screenshots are drawn as the server's.
 solidcraft-gpu = { workspace = true }
+# A temporary folder per test, removed when the test ends, a failure included.
+tempfile = "3.27"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+wat = "1"

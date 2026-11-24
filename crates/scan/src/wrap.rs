@@ -1,4 +1,4 @@
-//! Wrap Surface (SurfaceCraft's, after QuickSurface's): a Free Form begun on a tube-like part of
+//! Wrap Surface (SurfaceCraft's): a Free Form begun on a tube-like part of
 //! the scan. A cylinder is fitted to the part round a point clicked on it (or about the world's X,
 //! Y or Z, its line and radius fitted across it), a net of rectangles laid on the cylinder over the
 //! part's reach, as many points the shorter way as Details says and enough the longer way to keep

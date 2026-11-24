@@ -1,4 +1,4 @@
-//! Slice Free Form (`scan.slice_surface`, SurfaceCraft's, after QuickSurface's Slicing Free Form):
+//! Slice Free Form (`scan.slice_surface`, SurfaceCraft's):
 //! a surface cut by a plane, the side kept chosen, and with Cap each loop of the cut closed with a
 //! flat face and sewn in, so that a part made round with free forms becomes a solid. It is the
 //! commands that were there, in one undo step: Trim by the plane, Patch on each loop of the cut,

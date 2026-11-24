@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use serde_json::{Value, json};
 
-use super::{MeshConvertParams, MeshUnitsParams, MeshUnitsResult};
+use super::{MeshConvertParams, MeshReduceParams, MeshReduceResult, MeshUnitsParams, MeshUnitsResult};
 use crate::schema::features::FeatureResult;
 use crate::schema::tests::{assert_keys, assert_strict_keeps_todays_errors, conforms};
 use crate::schema::{ParamCheck, input_schema_for, output_schema_for};
@@ -114,7 +114,6 @@ fn convert_mesh_replies_with_feature_result() {
         assert!(s.model.state().body("Mesh").is_some_and(|b| !b.body.is_mesh()), "{p}: still a mesh");
     }
 }
-
 #[test]
 fn units_schemas_and_the_key_check_agree() {
     assert_keys(input_schema_for::<MeshUnitsParams>(), &["body", "from", "units"]);
@@ -144,4 +143,18 @@ fn units_replies_match_the_output_schema() {
         assert!(reply.get("param_warnings").is_none() && conforms(schema, schema, &reply), "{p}: {reply} doesn't match {schema}");
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn reduction_schema_and_reply() {
+    assert_keys(input_schema_for::<MeshReduceParams>(), &["body", "name", "participants", "percentage", "triangle_count"]);
+    let mut s = crate::tests::mesh_convert::subdivided_box();
+    s.param_check = ParamCheck::Warn;
+    let reply = s.execute("mesh.reduce", &json!({"body":"Mesh", "triangle_count":1})).unwrap();
+    let schema = output_schema_for::<MeshReduceResult>();
+    let schema = schema.as_value();
+    assert!(conforms(schema, schema, &reply), "{reply} doesn't match {schema}");
+    assert!(reply.get("param_warnings").is_none());
+    assert!(reply["achieved_triangles"].as_u64().unwrap() < reply["original_triangles"].as_u64().unwrap());
+    assert!(!crate::schema::issues("mesh.reduce", &json!({"body":"Mesh","percentage":50,"unknown":1})).is_empty());
 }

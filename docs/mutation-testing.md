@@ -12,14 +12,14 @@ nobody would notice, and solidcore could get the same thing wrong without anyone
 
 ## What judges a mutant
 
-`.cargo/mutants.toml` judges mutants by the black-box suites only:
+`.cargo/mutants.toml` judges mutants by the backend-neutral suites only:
 
 - `oracle_suite` (`apps/solidcraft-cli/tests/oracle_cases.rs`): every case in `tests/oracle` with
   expected values and no `known_failure` must pass, as `cargo xtask oracle` requires. It is
   `#[ignore]`d so CI doesn't replay the oracle twice.
 
 The kernel's unit tests are left out on purpose. A mutant that only they catch marks a behaviour
-the black-box suites would miss once the kernel is swapped.
+the reference suites would miss once the kernel is swapped.
 
 ## Running it
 
@@ -52,7 +52,7 @@ Two problems with cargo-mutants 27.1 are behind the flags above:
 
 ## Pilot results (October 2026, `cb857f1f`)
 
-| Sample | Mutants that build | Caught by the black-box suites |
+| Sample | Mutants that build | Caught by the reference suites |
 |---|---:|---:|
 | `crates/kernel/src/measure.rs`, every mutant | 85 | 85% |
 | Whole kernel, every 200th mutant | 173 | 15% (95% interval 10–21%) |
@@ -61,7 +61,7 @@ Out of 49 of the kernel sample's survivors, the kernel's own unit tests caught 2
 nothing caught 28 (57%). About 11% of survivors swap `>` and `>=` on floating-point values that
 are never exactly equal, so they don't change behaviour.
 
-The black-box suites are weakest on tessellation and the display mesh (0 of 19 mutants caught),
+The reference suites are weakest on tessellation and the display mesh (0 of 19 mutants caught),
 offset, shell, emboss and lip (0 of 14), blends (15%) and STEP/IGES exchange (17%). For a
 survivor that a kernel unit test catches, that test's design is the starting point for a new
 oracle case or engine test.

@@ -1127,8 +1127,8 @@ def files_menu(d):
 
 # scan-clean.md: the CLEAN panel of the Scan workspace, one clip per tool, on openly licensed
 # scans (credited in ATTRIBUTION.md). The scans are not in the repository: SCAN_CORPUS points at a
-# folder laid out as below (default ~/Projects/scan-test-corpus); each path says where it comes from.
-CORPUS = Path(os.environ.get("SCAN_CORPUS") or Path.home() / "Projects/scan-test-corpus")
+# folder laid out as below (default `scan-corpus` in the current folder); each path says where it comes from.
+CORPUS = Path(os.environ.get("SCAN_CORPUS") or "scan-corpus")
 # YCB 025 mug, Berkeley TSDF mesh (CC BY 4.0, ycbbenchmarks.com): unwelded, with holes and specks.
 MUG = CORPUS / "ycb/025_mug/tsdf/nontextured.stl"
 # Stanford bunny, bun_zipper.ply (Stanford Computer Graphics Laboratory): five holes in its base.
