@@ -537,7 +537,8 @@ pub(super) fn ollama_tools(http: &super::backend::HttpFn, base_url: &str, model:
             url: format!("{origin}/api/{path}"),
             headers: if method == "POST" { vec![("Content-Type".into(), "application/json".into())] } else { Vec::new() },
             body,
-            timeout_s: 5,
+            // Match model_entries (15s) so an on-demand Ollama server has time to cold-start.
+            timeout_s: 15,
         })
         .ok()?;
         if !(200..300).contains(&status) || bytes.len() > 4 * 1024 * 1024 {
@@ -685,7 +686,7 @@ mod tests {
         assert_eq!(api_origin("http://[::1]:11434/proxy/v1/").as_deref(), Some("http://[::1]:11434"));
         assert_eq!(api_origin("file:///tmp/model"), None);
         let http: super::super::backend::HttpFn = std::sync::Arc::new(|request| {
-            assert_eq!(request.timeout_s, 5);
+            assert_eq!(request.timeout_s, 15);
             match request.method {
                 "GET" => {
                     assert_eq!(request.url, "http://localhost:11434/api/version");

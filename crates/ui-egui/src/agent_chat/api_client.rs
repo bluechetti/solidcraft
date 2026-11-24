@@ -1444,7 +1444,17 @@ fn sanitize_reasoning_details(details: Option<&Value>) -> Option<Value> {
 
 fn openai_reply(body: &Value) -> Reply {
     let message = body.pointer("/choices/0/message").cloned().unwrap_or(Value::Null);
-    let text = message.get("content").and_then(Value::as_str).filter(|t| !t.is_empty()).map(|t| vec![(false, t.to_string())]).unwrap_or_default();
+    let mut text = Vec::new();
+    // Thinking models on OpenAI-compatible endpoints (Ollama sends `reasoning`, DeepSeek/Qwen
+    // send `reasoning_content`): show reasoning as a thought block, matching Anthropic replies.
+    if let Some(thought) =
+        ["reasoning_content", "reasoning"].into_iter().filter_map(|k| message.get(k).and_then(Value::as_str)).find(|t| !t.trim().is_empty())
+    {
+        text.push((true, thought.to_string()));
+    }
+    if let Some(content) = message.get("content").and_then(Value::as_str).filter(|t| !t.is_empty()) {
+        text.push((false, content.to_string()));
+    }
     let refused = message.get("refusal").and_then(Value::as_str).is_some_and(|r| !r.trim().is_empty());
     let stop = if refused { "refusal" } else { stop_reason(body.pointer("/choices/0/finish_reason").and_then(Value::as_str)) };
     // No more than the loop answers: every call kept here must get a `tool` message. A call cut
@@ -2427,11 +2437,23 @@ mod tests {
             "refusal": null,
             "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "measure", "arguments": "{}"}}],
         }}]}));
+        assert_eq!(r.text, vec![(true, "pick the tool".to_string()), (false, "Measuring.".to_string())]);
         assert_eq!(r.assistant["reasoning_content"], "pick the tool");
         assert_eq!(r.assistant["reasoning_details"][0]["text"], "pick");
         assert!(r.assistant["reasoning_details"][0].get("index").is_none());
         assert!(r.assistant.get("refusal").is_none(), "null fields stay out");
         assert_eq!(r.calls.len(), 1);
+
+        // Ollama reports thinking in `reasoning` (and often leaves `content` empty on tool calls).
+        let ollama = openai_reply(&json!({"choices": [{"message": {
+            "role": "assistant",
+            "content": "",
+            "reasoning": "check dimensions first",
+            "tool_calls": [{"id": "c2", "type": "function", "function": {"name": "measure", "arguments": "{}"}}],
+        }}]}));
+        assert_eq!(ollama.text, vec![(true, "check dimensions first".to_string())]);
+        assert_eq!(ollama.assistant["reasoning"], "check dimensions first");
+        assert_eq!(ollama.calls.len(), 1);
     }
 
     /// The model list and connection test are plain GETs: no session header.
