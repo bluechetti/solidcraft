@@ -12,7 +12,7 @@ fn inspect_schema(args: &[&str], env: Option<&str>) -> Result<Value, String> {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_solidcraft-cli"));
     // --headless: never bridge to (and read the preference of) an app the developer has running.
     cmd.env("SOLIDCRAFT_MCP_AUTOSAVE", "0")
-        .args(["mcp", "--headless", "--allow-any-path"])
+        .args(["mcp", "--headless", "--allow-any-path", "--no-scx"])
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

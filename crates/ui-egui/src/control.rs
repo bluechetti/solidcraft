@@ -699,7 +699,7 @@ fn dispatch(app: &mut SolveApp, ctx: &egui::Context, method: &str, p: &Value) ->
         // The solved joint pose the preview shows: what a client follows a joint with (#19437).
         "control.joint_pose" => ok(crate::control_joint_pose::snapshot(app)),
         // What the MCP server bridged to this app shapes its output with (Preferences › AI).
-        "mcp.options" => ok(json!({"compact": app.preferences.mcp_compact})),
+        "mcp.options" => ok(json!({"compact": app.preferences.mcp_compact, "scx": app.preferences.mcp_scx})),
         "ui.messages" => ok(crate::messages::control(app, p)),
         "ui.inspect" => ui_inspect(app),
         "ui.vr_press" => ui_vr_press(app, p),

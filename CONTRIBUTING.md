@@ -61,8 +61,8 @@ contributors without write access can't push to them. To update one:
 You need [rustup](https://rustup.rs/). The repository pins Rust 1.99.1 in
 `rust-toolchain.toml`, the version CI builds with, and rustup installs it with rustfmt, clippy and
 the `wasm32-unknown-unknown` target the first time you run `cargo` here. The code itself builds on
-Rust 1.95 or newer (`rust-version` in Cargo.toml, required by egui/eframe 0.36). For the web build
-you also need [`trunk`](https://github.com/trunk-rs/trunk)
+Rust 1.96 or newer (`rust-version` in Cargo.toml, required by monty, the MCP script sandbox;
+egui/eframe 0.36 need 1.95). For the web build you also need [`trunk`](https://github.com/trunk-rs/trunk)
 ([documentation](https://trunk-rs.github.io/trunk/)).
 
 ```sh
