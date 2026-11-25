@@ -151,8 +151,9 @@ pub struct Fitted {
     /// how far the region is from that shape, as a form tolerance reads it.
     pub form_error: f64,
     /// How far round a cylinder's or a cone's axis the region goes, in radians: a full turn less
-    /// the widest gap between its vertices (`None` for the other shapes). A small arc fits a
-    /// radius poorly: a round edge, not a hole.
+    /// the widest gap between its vertices (`None` for the other shapes), those near the axis (a
+    /// cone's tip, see [`NEAR_AXIS`]) left out. A small arc fits a radius poorly: a round edge, not
+    /// a hole.
     pub arc: Option<f64>,
     /// The region's middle, on the shape: where to put what is made from it.
     pub middle: Vec3,
@@ -1340,6 +1341,10 @@ fn solve_linear<const N: usize>(mut a: [[f64; N]; N], mut b: [f64; N]) -> Option
     x.iter().all(|v| v.is_finite()).then_some(x)
 }
 
+/// A vertex nearer the axis than this share of the region's farthest says nothing of how far round
+/// the region goes: at a cone's tip the least noise puts it on any side.
+const NEAR_AXIS: f64 = 0.1;
+
 /// How well `shape` fits the region, and where its middle is.
 fn summarize(scan: &Scan, triangles: Vec<usize>, shape: Shape) -> Result<Fitted, FitError> {
     let (mut area, mut sum, mut squares, mut count, mut max) = (0.0, Vec3::ZERO, 0.0, 0usize, 0.0f64);
@@ -1371,7 +1376,10 @@ fn summarize(scan: &Scan, triangles: Vec<usize>, shape: Shape) -> Result<Fitted,
     let arc = match shape {
         Shape::Cylinder { point: from, axis, .. } | Shape::Cone { apex: from, axis, .. } => {
             let u = axis.any_perp().normalized().unwrap_or(Vec3::X);
-            crate::pipe::angular_extent(round.into_iter(), from, axis, u).map(|(start, end)| (end - start).clamp(0.0, 2.0 * PI))
+            let off_axis = |p: Vec3| ((p - from) - axis * (p - from).dot(axis)).len();
+            let least = NEAR_AXIS * round.iter().map(|&p| off_axis(p)).fold(0.0, f64::max);
+            let telling = round.into_iter().filter(|&p| off_axis(p) > least);
+            crate::pipe::angular_extent(telling, from, axis, u).map(|(start, end)| (end - start).clamp(0.0, 2.0 * PI))
         }
         _ => None,
     };
@@ -1567,6 +1575,35 @@ mod tests {
         assert!(apex.dist(place(Vec3::new(0.0, 0.0, 40.0))) < 0.2, "{apex:?}");
         assert!(axis.dot(turn.turned(-Vec3::Z)) > 1.0 - 1e-5, "{axis:?}");
         assert!(fitted.rms < 0.05, "{}", fitted.rms);
+    }
+
+    /// A 30° sector of a cone up to its tip, the tip's vertex 0.001 mm off to the far side (a
+    /// scan's noise): the region goes 30° round, not as far as the tip happens to lie.
+    #[test]
+    fn a_cones_tip_does_not_widen_the_arc_it_reaches() {
+        let (sides, rows, slope) = (6u32, 10u32, 30f64.to_radians().tan());
+        let mut positions = vec![Vec3::new(-0.001, 0.0, 0.0)];
+        for j in 1..=rows {
+            for i in 0..=sides {
+                let (z, a) = (f64::from(j), (f64::from(i) * 30.0 / f64::from(sides)).to_radians());
+                positions.push(Vec3::new(z * slope * a.cos(), z * slope * a.sin(), z));
+            }
+        }
+        let at = |i: u32, j: u32| 1 + (j - 1) * (sides + 1) + i;
+        let mut triangles: Vec<[u32; 3]> = (0..sides).map(|i| [0, at(i + 1, 1), at(i, 1)]).collect();
+        for j in 1..rows {
+            for i in 0..sides {
+                triangles.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+                triangles.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+            }
+        }
+        let scan = Scan::new(&positions, &triangles);
+        let all: Vec<usize> = (0..triangles.len()).collect();
+        let fitted = fit_region(&scan, &all, Kind::Cone).unwrap();
+        let Shape::Cone { half_angle, .. } = fitted.shape else { panic!("{:?}", fitted.shape) };
+        assert!((half_angle.to_degrees() - 30.0).abs() < 0.1, "{}", half_angle.to_degrees());
+        let arc = fitted.arc.unwrap().to_degrees();
+        assert!((arc - 30.0).abs() < 1.0, "{arc}");
     }
 
     /// Round the click on the chamfer, with the shaft and the end face within the radius: the cone
