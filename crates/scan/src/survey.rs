@@ -7,6 +7,7 @@ use solidcore_record::Vec3;
 use solidcraft_geom::prelude::*;
 
 use crate::base::{self, BaseKind};
+use crate::fit::DRAWN_PATCH;
 use crate::{Scan, denoise, holes, pieces, place, remesh};
 
 /// How many places the noise is read at.
@@ -203,9 +204,11 @@ fn noise_places(scan: &Scan, area: f64) -> Vec<(f64, f64)> {
             // a point as far as a sharp edge does: the noisiest points are passed over as edges
             // (0.3 mm on 0.5 mm triangles read 0.15, with a quarter of the points read). Where
             // fewer than [`READ_ENOUGH`] were read, the quadric fitted to a few dozen points round
-            // each place is read too (Find All's reading), and the larger kept.
+            // each place is read too (Find All's reading), and the larger kept. Not on a place drawn
+            // exactly (a CAD mesh's, as Fit tells it by [`DRAWN_PATCH`]): a coarse one's rims are
+            // many of its points, and every quadric reaching over them read millimetres of noise.
             let edge = remesh::typical_edge(&piece);
-            let noise = if read < READ_ENOUGH && edge > 0.0 {
+            let noise = if read < READ_ENOUGH && edge > 0.0 && denoise::drawn_share(&piece) < DRAWN_PATCH {
                 crate::segment::noise_within(&piece, QUADRIC_EDGES * edge).map_or(noise, |q| q.max(noise))
             } else {
                 noise
@@ -301,6 +304,30 @@ mod tests {
         let look = look(&scan, 0.02).unwrap();
         assert!(look.noise.is_none_or(|n| n < 0.01), "{:?}", look.noise);
         assert_eq!(super::noise(&scan), look.noise);
+    }
+
+    /// A coarse CAD mesh of a stepped shaft, its walls in rings 2 mm apart, square to the axes and
+    /// tilted, in an STL's single precision: no noise. So many of its points lie on rims that the
+    /// quadric reading was taken too, and read 1 mm, which set Scan to CAD's tolerance to 3 mm.
+    #[test]
+    fn a_coarse_cad_shaft_reads_no_noise() {
+        use crate::test_meshes::{revolved, steps, turned};
+        let mut profile = vec![[0.0, 0.0]];
+        profile.extend(steps([0.0, 10.0], [10.0, 10.0], 5));
+        profile.extend(steps([10.0, 6.0], [20.0, 6.0], 5));
+        profile.push([20.0, 0.0]);
+        let (square, t) = revolved(&profile, 64, false);
+        let tilted = turned(&square, Vec3::new(0.3, 0.5, 0.8).normalized().unwrap(), 0.7, Vec3::new(23.0, -11.0, 17.0));
+        for (pose, p) in [("square", square), ("tilted", tilted)] {
+            let single = |v: f64| f64::from(v as f32);
+            let p: Vec<Vec3> = p.iter().map(|q| Vec3::new(single(q.x), single(q.y), single(q.z))).collect();
+            let scan = Scan::new(&p, &t);
+            let read = denoise::noise_off_creases_read(&scan).unwrap().1;
+            assert!(read < READ_ENOUGH, "{pose}: the case has its points on rims: {read}");
+            let look = look(&scan, 0.02).unwrap();
+            assert!(look.noise.is_some_and(|n| n < 0.01), "{pose}: {:?}", look.noise);
+            assert_eq!(super::noise(&scan), look.noise);
+        }
     }
 
     /// Nothing to look at is no look, not a panic.

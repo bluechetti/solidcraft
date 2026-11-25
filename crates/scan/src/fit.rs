@@ -626,7 +626,7 @@ fn noise_round(scan: &Scan, neighbours: &EdgeNeighbours, start: &[usize]) -> Opt
 }
 
 /// The share of a patch's vertices drawn exactly that makes it a CAD mesh's, not a scan's.
-const DRAWN_PATCH: f64 = 0.25;
+pub(crate) const DRAWN_PATCH: f64 = 0.25;
 
 /// The connected triangles from `seeds` (each of them taken, on the shape or not) that lie on
 /// `shape` by `rules`, and only those `open` allows when it is given.
