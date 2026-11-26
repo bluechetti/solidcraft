@@ -1699,6 +1699,27 @@ mod tests {
         assert!(fitted.area > 300.0, "{}", fitted.area);
     }
 
+    /// A turned CAD part off the axes: on a patch at its step no vertex that is not drawn can be
+    /// read. That says nothing of noise, and the patch stays a CAD mesh's; taken for noisy, the pick
+    /// on its wall was refused.
+    #[test]
+    fn a_cad_patch_with_nothing_to_read_still_fits() {
+        use crate::test_meshes::{revolved, steps, turned};
+        let mut profile = vec![[0.0, 0.0]];
+        profile.extend(steps([0.0, 8.0], [3.0, 8.0], 2));
+        profile.extend(steps([3.0, 5.0], [6.0, 5.0], 2));
+        profile.push([6.0, 0.0]);
+        let (square, triangles) = revolved(&profile, 48, false);
+        let single = |v: f64| f64::from(v as f32);
+        let positions: Vec<Vec3> = turned(&square, Vec3::new(0.3, 0.5, 0.8).normalized().unwrap(), 0.7, Vec3::new(23.0, -11.0, 17.0))
+            .iter()
+            .map(|q| Vec3::new(single(q.x), single(q.y), single(q.z)))
+            .collect();
+        let scan = Scan::new(&positions, &triangles);
+        let fitted = fit(&scan, 112, Kind::Cylinder, None).unwrap();
+        assert!(fitted.area > 140.0, "{}", fitted.area);
+    }
+
     #[test]
     fn a_cylinder_fits_the_boss_picked() {
         let (positions, triangles, turn) = plate_with_boss(0.0);
