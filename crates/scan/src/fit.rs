@@ -1699,6 +1699,28 @@ mod tests {
         assert!(fitted.area > 300.0, "{}", fitted.area);
     }
 
+    /// The same plate turned off the axes and stored in single precision, as an STL has it: its
+    /// faces on one plane differ by the rounding. Told apart only to the last bits it read as a
+    /// noisy scan, and Fit Plane took only part of the face (1121 of 1400 mm² at the first pick).
+    #[test]
+    fn a_plane_on_a_tilted_cad_mesh_in_single_precision_takes_the_whole_face() {
+        let (square, triangles) = crate::test_meshes::holed_plate(40.0, 5.0, 8.0, 48);
+        let (axis, shift) = (Vec3::new(0.3, 0.5, 0.8).normalized().unwrap(), Vec3::new(23.0, -11.0, 17.0));
+        let single = |v: f64| f64::from(v as f32);
+        let positions: Vec<Vec3> =
+            crate::test_meshes::turned(&square, axis, 0.7, shift).iter().map(|q| Vec3::new(single(q.x), single(q.y), single(q.z))).collect();
+        let scan = Scan::new(&positions, &triangles);
+        for pick in [Vec3::new(14.0, 3.0, 5.0), Vec3::new(-17.0, -17.0, 5.0), Vec3::new(0.0, 12.0, 5.0)] {
+            let at = crate::test_meshes::turned(&[pick], axis, 0.7, shift)[0];
+            let seed = nearest_triangle(&scan, at).unwrap();
+            let fitted = fit(&scan, seed, Kind::Plane, None).unwrap_or_else(|e| panic!("{pick:?}: {e}"));
+            // 40 × 40 less the 48-sided hole of radius 8.
+            let expected = 1600.0 - 24.0 * 64.0 * (PI / 24.0).sin();
+            assert!((fitted.area - expected).abs() < 1e-3 * expected, "{pick:?}: {} against {expected}", fitted.area);
+            assert!(fitted.max < 1e-4, "{pick:?}: {}", fitted.max);
+        }
+    }
+
     #[test]
     fn a_cylinder_fits_the_boss_picked() {
         let (positions, triangles, turn) = plate_with_boss(0.0);

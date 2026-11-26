@@ -84,11 +84,17 @@ fn slice<'a>(start: &[u32], flat: &'a [u32], i: usize) -> &'a [u32] {
     flat.get(a..b).unwrap_or_default()
 }
 
-/// Whether two of `normals` are the same to the last few bits: two faces round a vertex on one
-/// exact plane, as a CAD mesh is drawn (or a region Flatten laid flat); measured points never lie so.
-fn drawn(normals: impl Iterator<Item = Vec3>) -> bool {
+/// Unit normals closer than this are the same to the last few bits.
+const EXACT: f64 = 1e-9;
+/// Unit normals closer than this are one plane's as a file stores it: turned off the axes, the
+/// single precision of an STL moves a drawn face's normal by some millionths.
+const STORED: f64 = 1e-5;
+
+/// Whether two of `normals` are within `same`: two faces round a vertex on one plane, as a CAD
+/// mesh is drawn (or a region Flatten laid flat); measured points never lie so to [`EXACT`].
+fn drawn(normals: impl Iterator<Item = Vec3>, same: f64) -> bool {
     let all: Vec<Vec3> = normals.filter(|n| *n != Vec3::ZERO).collect();
-    all.iter().enumerate().any(|(i, a)| all[i + 1..].iter().any(|b| a.dist(*b) < 1e-9))
+    all.iter().enumerate().any(|(i, a)| all[i + 1..].iter().any(|b| a.dist(*b) < same))
 }
 
 impl Mesh {
@@ -184,7 +190,7 @@ impl Mesh {
                     return None;
                 }
                 // Drawn exactly, not measured.
-                if off_creases && drawn(around.iter().map(|&f| faces[f as usize].0)) {
+                if off_creases && drawn(around.iter().map(|&f| faces[f as usize].0), EXACT) {
                     return on_drawn;
                 }
                 Some(ring.iter().map(|&q| normal.dot(positions[q as usize] - positions[v])).sum::<f64>() / ring.len() as f64)
@@ -430,9 +436,9 @@ pub(crate) fn noise_off_drawn(scan: &Scan) -> Option<f64> {
     (read > 0).then_some(noise)
 }
 
-/// The share of `scan`'s vertices with two faces on one exact plane: drawn (a CAD mesh, or a region
-/// Flatten laid flat), not measured as a scanner measures. A real scan has a few such vertices
-/// (a thousandth at most in the T-LESS scans); a CAD mesh has most of its vertices so.
+/// The share of `scan`'s vertices with two faces on one plane, as stored ([`STORED`]): drawn (a CAD
+/// mesh, or a region Flatten laid flat), not measured as a scanner measures. A real scan has few
+/// such vertices; a CAD mesh has most of its vertices so, however it is turned.
 pub fn drawn_share(scan: &Scan) -> f64 {
     let mesh = Mesh::new(scan);
     let faces = mesh.faces_at(scan.positions);
@@ -443,7 +449,7 @@ pub fn drawn_share(scan: &Scan) -> f64 {
             continue;
         }
         count += 1;
-        drawn_count += usize::from(drawn(around.iter().map(|&f| faces[f as usize].0)));
+        drawn_count += usize::from(drawn(around.iter().map(|&f| faces[f as usize].0), STORED));
     }
     if count == 0 { 0.0 } else { drawn_count as f64 / count as f64 }
 }
