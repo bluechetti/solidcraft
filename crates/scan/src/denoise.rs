@@ -206,12 +206,12 @@ impl Mesh {
         (MAD_TO_SIGMA * deviations[deviations.len() / 2] / (1.0 + 1.0 / self.mean_degree).sqrt(), residuals.len())
     }
 
-    /// Whether every vertex a roughness could be read at is drawn, as stored ([`STORED`]).
+    /// Whether every vertex a roughness could be read at is drawn exactly ([`drawn`]).
     fn all_drawn(&self, positions: &[Vec3]) -> bool {
         let faces = self.faces_at(positions);
         (0..positions.len())
             .filter(|&v| !self.fixed[v] && slice(&self.ring_start, &self.ring, v).len() >= 3)
-            .all(|v| drawn(slice(&self.face_start, &self.faces, v).iter().map(|&f| faces[f as usize].0), STORED))
+            .all(|v| drawn(slice(&self.face_start, &self.faces, v).iter().map(|&f| faces[f as usize].0), EXACT))
     }
 
     /// One pass: the face normals filtered bilaterally, then the vertices moved to lie square to them.
@@ -435,7 +435,7 @@ pub fn noise_off_creases_read(scan: &Scan) -> Option<(f64, f64)> {
 }
 
 /// [`noise_off_creases`] read only at the vertices that are not drawn exactly ([`drawn_share`]):
-/// 0 when every vertex is drawn as stored, `None` when there are others but fewer than two of them can be
+/// 0 when every vertex is drawn, `None` when there are others but fewer than two of them can be
 /// read (the rest lie at what reads as a sharp edge), which says nothing. On a CAD mesh these mostly
 /// stand off their neighbours alike, so they spread little; a measured mesh stored in coarse steps
 /// has many vertices drawn by the rounding alone, and the rest still show its noise.
