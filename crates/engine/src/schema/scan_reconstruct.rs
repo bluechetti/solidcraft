@@ -865,8 +865,12 @@ mod tests;
 pub struct ScanEdgeChamfer {
     /// The shape it is, as Find All numbers them.
     pub face: usize,
-    /// How far it cuts back along each of the two faces it joins, in mm.
+    /// How far it cuts back along the face that faces up most of the two it joins, in mm (along each when they are
+    /// even).
     pub distance: f64,
+    /// How far it cuts back along the other face, in mm. Given only when the two legs differ; else `distance` is both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distance2: Option<f64>,
     /// A point on the sharp edge of the model it cuts, where Chamfer It finds that edge.
     pub edge: [f64; 3],
 }
@@ -909,7 +913,11 @@ pub struct ScanShellItParams {
 /// One distance Chamfer It chamfered at, and how many edges.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ScanChamfered {
+    /// Along the face that faces up most, in mm.
     pub distance: f64,
+    /// Along the other face, in mm. Given only for a chamfer whose legs differ; else `distance` is both.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distance2: Option<f64>,
     pub edges: usize,
 }
 

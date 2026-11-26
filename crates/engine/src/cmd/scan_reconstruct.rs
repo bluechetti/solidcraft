@@ -151,7 +151,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("chamfer")
         .contract(&CHAMFER_IT_CONTRACT)
         .output(output_schema_for::<ScanChamferItResult>)
-        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to chamfer (default: `<scan> Reconstructed`): each flat chamfer along an edge that scan.reconstruct reads and no profile holds (its `chamfers`), cut at the edge of the body it cuts at the distance its two faces give; one Chamfer for each distance, one undo step; an edge the kernel refuses is set aside → body, solid, chamfers [{distance, edges}], set_aside, features, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); into?: body to chamfer (default: `<scan> Reconstructed`): each flat chamfer along an edge that scan.reconstruct reads and no profile holds (its `chamfers`), cut at the edge of the body it cuts at the distance its two faces give; one Chamfer for each distance, one undo step; an edge the kernel refuses is set aside A chamfer whose two legs differ (up to 4 to 1) is cut with two distances: the first along the face that faces up most, the second along the other (distance2). → body, solid, chamfers [{distance, edges}], set_aside, features, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
 ];
 
 /// What Find All found on a scan, and what Reconstruct reads off it: view state for the viewport
@@ -804,7 +804,16 @@ pub(super) fn read_scan(s: &mut Session, p: &Value) -> Result<Value> {
         built,
         proposals,
         fillets: reading.fillets.iter().map(|f| ScanEdgeRound { face: f.face, radius: f.radius, edge: at(f.edge) }).collect(),
-        chamfers: reading.chamfers.iter().map(|c| ScanEdgeChamfer { face: c.face, distance: c.distance, edge: at(c.edge) }).collect(),
+        chamfers: reading
+            .chamfers
+            .iter()
+            .map(|c| ScanEdgeChamfer {
+                face: c.face,
+                distance: c.distance,
+                distance2: ((c.distance2 - c.distance).abs() > 1e-9).then_some(c.distance2),
+                edge: at(c.edge),
+            })
+            .collect(),
         shell: reading.shell.as_ref().map(|w| ScanShell { thickness: w.thickness, inner: w.inner.clone(), open: w.open.clone() }),
         prism_repeats: reading.prism_repeats.iter().map(scan_repeat).collect(),
         coil: reading.coil.as_ref().map(shapes::coil_of),
@@ -2745,19 +2754,26 @@ pub(super) fn chamfer_it(s: &mut Session, p: &Value) -> Result<Value> {
     // of one chamfer its own feature, and the kernel refuses an edge once the edges it ends on
     // are cut.
     let reach = solidcraft_scan::hole_form::SNAP_SHARE * found.outcome.tolerance;
-    let mut read: Vec<(f64, [f64; 3])> = chamfers.iter().map(|c| (solidcraft_scan::hole_form::snapped(c.distance, reach), at(c.edge))).collect();
-    read.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let mut groups: Vec<(f64, Vec<[f64; 3]>)> = Vec::new();
-    for (distance, edge) in read {
+    let snap = |d: f64| solidcraft_scan::hole_form::snapped(d, reach);
+    let mut read: Vec<((f64, f64), [f64; 3])> = chamfers.iter().map(|c| ((snap(c.distance), snap(c.distance2)), at(c.edge))).collect();
+    read.sort_by(|a, b| a.0.0.total_cmp(&b.0.0).then(a.0.1.total_cmp(&b.0.1)));
+    let mut groups: Vec<((f64, f64), Vec<[f64; 3]>)> = Vec::new();
+    for (distances, edge) in read {
         match groups.last_mut() {
-            Some((kept, edges)) if distance - *kept <= reach => edges.push(edge),
-            _ => groups.push((distance, vec![edge])),
+            Some((kept, edges)) if distances.0 - kept.0 <= reach && (distances.1 - kept.1).abs() <= reach => edges.push(edge),
+            _ => groups.push((distances, vec![edge])),
         }
     }
     let run_chamfer = super::super::find_command("solid.chamfer").ok_or_else(|| EngineError::UnknownCommand("solid.chamfer".into()))?;
-    let chamfer = |s: &mut Session, distance: f64, edges: &[[f64; 3]]| -> Result<Value> {
+    // A chamfer of two distances gives the first along the face that faces up most, and the second along the other
+    // (a Chamfer's own order); a chamfer with even legs is one distance.
+    let chamfer = |s: &mut Session, (distance, distance2): (f64, f64), edges: &[[f64; 3]]| -> Result<Value> {
         let before = s.doc.clone();
-        let made = run_chamfer.run_nested(s, &json!({"edges": edges, "distance": format!("{distance} mm"), "body": solid, "tangent_chain": false}));
+        let mut params = json!({"edges": edges, "distance": format!("{distance} mm"), "body": solid, "tangent_chain": false});
+        if (distance - distance2).abs() > reach {
+            params["distance2"] = json!(format!("{distance2} mm"));
+        }
+        let made = run_chamfer.run_nested(s, &params);
         if made.is_err() {
             s.doc = before;
             s.refresh();
@@ -2769,7 +2785,11 @@ pub(super) fn chamfer_it(s: &mut Session, p: &Value) -> Result<Value> {
         // All the edges of one distance as one Chamfer; if the kernel refuses that, each alone.
         let tries: Vec<Vec<[f64; 3]>> = match chamfer(s, distance, &edges) {
             Ok(made) => {
-                done.push(ScanChamfered { distance, edges: edges.len() });
+                done.push(ScanChamfered {
+                    distance: distance.0,
+                    distance2: ((distance.1 - distance.0).abs() > reach).then_some(distance.1),
+                    edges: edges.len(),
+                });
                 features.push(made);
                 continue;
             }
@@ -2783,7 +2803,11 @@ pub(super) fn chamfer_it(s: &mut Session, p: &Value) -> Result<Value> {
         for one in tries {
             match chamfer(s, distance, &one) {
                 Ok(made) => {
-                    done.push(ScanChamfered { distance, edges: 1 });
+                    done.push(ScanChamfered {
+                        distance: distance.0,
+                        distance2: ((distance.1 - distance.0).abs() > reach).then_some(distance.1),
+                        edges: 1,
+                    });
                     features.push(made);
                 }
                 Err(e) => {

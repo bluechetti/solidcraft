@@ -247,12 +247,19 @@ pub struct EdgeRound {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EdgeChamfer {
     pub face: usize,
+    /// How far it cuts back along the face that faces up most (the first face of a Chamfer's two distances); the
+    /// mean of the two legs when they are even.
     pub distance: f64,
+    /// How far it cuts back along the other face; `distance` again when the legs are even.
+    pub distance2: f64,
     pub edge: Vec3,
 }
 
-/// How unequal a chamfer's two legs may be, as a share of the longer.
+/// How unequal a chamfer's two legs may be, as a share of the longer, and still be one distance.
 const CHAMFER_LEGS_EVEN: f64 = 0.15;
+/// How much longer one leg of a chamfer may be than the other (a 2 to 1 chamfer leans 27° from one face): beyond this
+/// the face is a slope of the part, not a chamfer.
+const CHAMFER_LEGS_RATIO: f64 = 4.0;
 /// The longest leg of a chamfer and the shortest, as shares of the part's size. A flat face that
 /// cuts back further is a side of the part (an octagon's), not a chamfer.
 const CHAMFER_MOST: f64 = 0.08;
@@ -272,12 +279,28 @@ fn middle_of(scan: &Scan, segment: &Segment) -> Vec3 {
     corners.iter().fold(Vec3::ZERO, |s, p| s + *p) / corners.len().max(1) as f64
 }
 
+/// The middle of a segment as its area balances it, from a sample of its triangles: a face's points need not be spread
+/// evenly (a fan of triangles round a hole puts most of them there), as the mean of [`middle_of`]'s corners would have
+/// it. Where a face lies from an edge of it is read off this.
+fn centroid_of(scan: &Scan, segment: &Segment) -> Vec3 {
+    let step = (segment.triangles.len() / 2000).max(1);
+    let (mut sum, mut area) = (Vec3::ZERO, 0.0);
+    for &t in segment.triangles.iter().step_by(step) {
+        let Some([a, b, c]) = scan.corners(t) else { continue };
+        let w = (b - a).cross(c - a).len();
+        sum += (a + b + c) * (w / 3.0);
+        area += w;
+    }
+    if area > 0.0 { sum / area } else { middle_of(scan, segment) }
+}
+
 /// The flat faces that are chamfers: a face whose two flat neighbours (each at least as big) meet
 /// in an edge it cuts back evenly, square to that edge, not further than [`CHAMFER_MOST`] of the
-/// part. `middles` are the middles of the faces' triangles; the faces in `skip` are not tried.
+/// part. `middles` are the middles of the faces' triangles and `centroids` where the faces' areas balance (which side of
+/// an edge a face lies on); the faces in `skip` are not tried.
 /// Each pair of neighbours is judged by how the chamfer's plane cuts the two faces' planes from
 /// the sharp edge they would make: a leg along each, on the side of the face's middle.
-fn chamfers(faces: &[Face], middles: &[Vec3], size: f64, skip: &BTreeSet<usize>) -> Vec<EdgeChamfer> {
+fn chamfers(faces: &[Face], middles: &[Vec3], centroids: &[Vec3], size: f64, skip: &BTreeSet<usize>) -> Vec<EdgeChamfer> {
     let planes: Vec<usize> = (0..faces.len()).filter(|&k| faces[k].area > 0.0 && plane(&faces[k]).is_some()).collect();
     if planes.len() > CHAMFER_PLANES || planes.len() < 3 {
         return Vec::new();
@@ -321,13 +344,13 @@ fn chamfers(faces: &[Face], middles: &[Vec3], size: f64, skip: &BTreeSet<usize>)
                 // to where the chamfer's plane cuts it.
                 let leg = |n: Vec3, face: usize| -> Option<(f64, Vec3)> {
                     let along = e.cross(n).normalized()?;
-                    let along = if along.dot(middles[face] - p0) < 0.0 { -along } else { along };
+                    let along = if along.dot(centroids[face] - p0) < 0.0 { -along } else { along };
                     let cuts = along.dot(nk);
                     (cuts.abs() > 0.1).then(|| (((c - p0).dot(nk)) / cuts, along))
                 };
                 let (Some((ta, ua)), Some((tb, ub))) = (leg(na, a), leg(nb, b)) else { continue };
                 let (longer, shorter) = (ta.max(tb), ta.min(tb));
-                if shorter < CHAMFER_LEAST * size || longer > CHAMFER_MOST * size || (longer - shorter) > CHAMFER_LEGS_EVEN * longer {
+                if shorter < CHAMFER_LEAST * size || longer > CHAMFER_MOST * size || longer > CHAMFER_LEGS_RATIO * shorter {
                     continue;
                 }
                 // The chamfer lies between the two cuts, not off to one side of them.
@@ -335,7 +358,17 @@ fn chamfers(faces: &[Face], middles: &[Vec3], size: f64, skip: &BTreeSet<usize>)
                 if between.dist(c) > 0.6 * longer {
                     continue;
                 }
-                let found = EdgeChamfer { face: k, distance: 0.5 * (ta + tb), edge: p0 };
+                // Even legs are one distance. Uneven ones are two: the first along the face that faces up most
+                // (a face's outward normal is square to the edge and to its leg, away from the other leg), as a
+                // Chamfer reads its two distances.
+                let (distance, distance2) = if (longer - shorter) <= CHAMFER_LEGS_EVEN * longer {
+                    (0.5 * (ta + tb), 0.5 * (ta + tb))
+                } else {
+                    let outward = |leg: Vec3, other: Vec3| e.cross(leg).normalized().map(|n| if n.dot(other) > 0.0 { -n } else { n });
+                    let up = |n: Option<Vec3>| n.map_or(0.0, |n| n.z);
+                    if up(outward(ua, ub)) >= up(outward(ub, ua)) { (ta, tb) } else { (tb, ta) }
+                };
+                let found = EdgeChamfer { face: k, distance, distance2, edge: p0 };
                 if best.as_ref().is_none_or(|(s, _)| longer - shorter < *s) {
                     best = Some((longer - shorter, found));
                 }
@@ -2271,7 +2304,8 @@ fn read_signed(scan: &Scan, outcome: &Outcome, sign: f64) -> Reading {
     // side profile holds two of the chamfers.
     let middles: Vec<Vec3> = (0..shaped.len()).map(|k| middle_of(scan, &whole(k))).collect();
     let chamfer_skip: BTreeSet<usize> = ignored.union(&rounds).copied().chain((0..shaped.len()).filter(|&k| hole(k))).collect();
-    let chamfered = chamfers(&faces, &middles, size, &chamfer_skip);
+    let centroids: Vec<Vec3> = (0..shaped.len()).map(|k| centroid_of(scan, &whole(k))).collect();
+    let chamfered = chamfers(&faces, &middles, &centroids, size, &chamfer_skip);
     let unscored: BTreeSet<usize> = rounds.iter().copied().chain(chamfered.iter().map(|c| c.face)).collect();
     // Walls of one thickness: the prisms are read off the outside, the inner faces set aside, while
     // that leaves the main prism an end with no inner face behind it for the shell to open.

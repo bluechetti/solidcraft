@@ -24,6 +24,10 @@ const PATCH_LEAST: usize = 200;
 const READ_ENOUGH: f64 = 0.75;
 /// The quadric's patches reach this many typical edges (some 80 triangles).
 const QUADRIC_EDGES: f64 = 3.0;
+/// The share of a patch's points drawn exactly that makes it a CAD mesh's, not a scan's (as Find All's fits read it): such
+/// a patch has no noise, and what the quadric reads off its long triangles round a hole's rim is their slope, not noise
+/// (a plate with three holes read 1.7 mm of it, and Scan to CAD then smoothed its small holes away).
+const DRAWN_PATCH: f64 = 0.25;
 /// The most points sampled for the scan's size along its own directions.
 const SIZE_SAMPLE: usize = 200_000;
 
@@ -197,6 +201,9 @@ fn noise_places(scan: &Scan, area: f64) -> Vec<(f64, f64)> {
             let (positions, triangles) = piece_of(scan, list);
             let piece = Scan::new(&positions, &triangles);
             let study = denoise::study(&piece)?;
+            if denoise::drawn_share(&piece) >= DRAWN_PATCH {
+                return study.suggested.is_finite().then_some((0.0, study.suggested));
+            }
             let (noise, read) = denoise::noise_off_creases_read(&piece)?;
             // Read off its neighbours, a point's noise is exact while it is small against the
             // triangles (every point read), and falls behind once the noise tilts the faces round

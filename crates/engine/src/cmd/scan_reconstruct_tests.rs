@@ -1836,27 +1836,46 @@ fn known_part_off(name: &str) -> f64 {
     }
 }
 
-/// Scan to CAD on the known-answer parts it rebuilds: within a quarter of a percent of the scan's volume.
+/// Scan to CAD on every known-answer part: the rebuilt volume within a quarter of a percent of the scan's. Plates with
+/// holes, pockets, bosses and a window; chamfers of one distance and of two; a plate with three holes of three sizes
+/// (a coarse CAD mesh's long triangles read as noise, and its small holes were smoothed away); a stepped cylinder.
 #[test]
-fn scan_to_cad_rebuilds_the_known_plates_with_holes_pockets_bosses_and_a_window() {
-    let off: Vec<(&str, f64)> =
-        ["bracket", "counterbore", "countersink", "fillet", "l-fillet", "l-plate", "parallel-bracket", "round-plate", "sphere-seat", "window"]
-            .into_iter()
-            .map(|name| (name, known_part_off(name)))
-            .collect();
-    let wrong: Vec<_> = off.iter().filter(|(_, o)| *o >= 0.0025).collect();
+fn scan_to_cad_rebuilds_the_known_parts_to_their_volume() {
+    let wrong: Vec<(&str, f64)> = [
+        "bracket",
+        "chamfer",
+        "counterbore",
+        "countersink",
+        "fillet",
+        "hole-block",
+        "l-chamfer",
+        "l-fillet",
+        "l-plate",
+        "parallel-bracket",
+        "round-plate",
+        "sphere-seat",
+        "stepped-cylinder",
+        "window",
+    ]
+    .into_iter()
+    .map(|name| (name, known_part_off(name)))
+    .filter(|(_, off)| *off >= 0.0025)
+    .collect();
     assert!(wrong.is_empty(), "off by more than 0.25 % of the scan's volume: {wrong:?}");
 }
 
-/// The known-answer parts Scan to CAD does not yet rebuild to within a quarter of a percent of the scan's
-/// volume (2026-11-26): the chamfers on a plate and on an L are left square, `hole-block` loses two of its three
-/// holes and still reads as met, and `stepped-cylinder` is built too small. Listed in tests/KNOWN_FAILING_TESTS.
+/// A chamfer of two distances is cut the right way round. The known plate's four top edges are cut 2 mm along the top
+/// and 1 mm down the side: a probe 1.5 mm in from a side, straight down, meets the chamfer's slope (7.75 mm up), not
+/// the top (8), and the volume cannot tell the two ways round apart.
 #[test]
-fn scan_to_cad_rebuilds_the_known_chamfers_extra_holes_and_steps() {
-    let off: Vec<(&str, f64)> =
-        ["chamfer", "l-chamfer", "hole-block", "stepped-cylinder"].into_iter().map(|name| (name, known_part_off(name))).collect();
-    let wrong: Vec<_> = off.iter().filter(|(_, o)| *o >= 0.0025).collect();
-    assert!(wrong.is_empty(), "off by more than 0.25 % of the scan's volume: {wrong:?}");
+fn a_chamfer_of_two_distances_is_cut_with_its_longer_leg_along_the_top() {
+    let (s, built, _) = known_part_rebuilt("chamfer");
+    let down = Vec3::new(0.0, 0.0, -1.0);
+    // 1.5 mm in from each of the four sides of the 50 x 30 plate.
+    for (x, y) in [(25.0, 1.5), (25.0, 28.5), (1.5, 15.0), (48.5, 15.0)] {
+        let at = super::entry_on_body(&s, &built, Vec3::new(x, y, 10.0), down, 5.0).expect("the probe meets the plate");
+        assert!((at.z - 7.75).abs() < 0.02, "at ({x}, {y}) the chamfer's slope is 7.75 mm up, not {}", at.z);
+    }
 }
 
 /// What Scan to CAD builds is edited by name: a plate's depth is `thickness`, a hole's size `hole1_diameter`. An L
