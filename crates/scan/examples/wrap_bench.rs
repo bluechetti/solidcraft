@@ -1,6 +1,7 @@
 //! Wrap Scan alone on a binary STL: time, peak memory, the coarse mesh's rounds and both-way
 //! distances, the patches and their distance from the scan.
 //! `cargo run --example wrap_bench -p solidcraft-scan --profile fast -- scan.stl [tolerance] [max_patches]`
+#![allow(clippy::print_stderr)]
 use solidcore_record::Vec3;
 use solidcraft_geom::prelude::*;
 use solidcraft_scan::Scan;

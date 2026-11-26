@@ -1,4 +1,5 @@
 //! Not committed: Flatten's speed on a region of a real scan (binary STL).
+#![allow(clippy::print_stderr)]
 use solidcore_record::Vec3;
 use solidcraft_scan::Scan;
 
