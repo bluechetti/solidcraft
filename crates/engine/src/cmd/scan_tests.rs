@@ -4170,3 +4170,25 @@ fn a_fit_on_a_point_cloud_says_what_it_cannot_do() {
     assert!(plane["rms"].as_f64().unwrap() < 1e-9, "{plane}");
     assert!(s.execute("scan.fit_cylinder", &json!({"cloud": "Capture", "keep": false})).is_err());
 }
+
+/// A region chosen by hand that holds a stray piece (the table a part stood on) is fitted to the
+/// part with `robust`, and the triangles left out are counted and said.
+#[test]
+fn a_hand_chosen_region_with_a_stray_piece_is_fitted_to_the_part_when_robust() {
+    let flat = |z: f64, n: u32, side: f64| -> Vec<[Vec3; 3]> {
+        let at = |i: u32, j: u32| Vec3::new(f64::from(i) * side, f64::from(j) * side, z);
+        (0..n).flat_map(|j| (0..n).flat_map(move |i| [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]])).collect()
+    };
+    let mut triangles = flat(5.0, 12, 4.0);
+    let plate = triangles.len();
+    triangles.extend(flat(-3.0, 6, 4.0));
+    let (mut s, _) = session_with_triangles("robust-region", &triangles);
+    let all: Vec<usize> = (0..triangles.len()).collect();
+    let height = |r: &Value| r["plane"]["point"][2].as_f64().unwrap();
+    let loose = run(&mut s, "scan.fit_plane", json!({"triangles": all, "keep": false}));
+    assert!(height(&loose) < 4.5, "{loose}");
+    let firm = run(&mut s, "scan.fit_plane", json!({"triangles": all, "keep": false, "robust": true, "tolerance": 0.1}));
+    assert!((height(&firm) - 5.0).abs() < 1e-6, "{firm}");
+    assert_eq!(firm["triangles"].as_u64(), Some(plate as u64), "{firm}");
+    assert!(firm["warning"].as_str().unwrap().contains(&format!("{} of the {} triangles", triangles.len() - plate, triangles.len())), "{firm}");
+}

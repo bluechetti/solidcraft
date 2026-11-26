@@ -9,6 +9,7 @@ use solidcraft_geom::prelude::*;
 use solidcraft_geom::inertia::{Tensor3, principal};
 
 use super::{FitError, Fitted, Kind, MAX_LEAN, SOLVE_LIMIT, Samples, Shape, solved};
+use crate::Scan;
 use crate::poisson::PointGrid;
 
 /// The neighbours (itself with them) a point's normal is read from.
@@ -53,6 +54,7 @@ impl PointsFitted {
             form_error: self.form_error,
             arc: self.arc,
             middle: self.middle,
+            left_out: self.points - self.inliers,
             half_length: self.half_length,
         }
     }
@@ -126,8 +128,58 @@ pub fn fit_points(points: &[Vec3], normals: Option<&[Vec3]>, kind: Kind, toleran
     Ok(summarize(shape, on, wanted.len()))
 }
 
+/// [`fit_region`](super::fit_region) on the triangles of `region` that lie on the shape most of
+/// them lie on within `tolerance` (a random-sample consensus), the rest left out and counted in
+/// [`Fitted::left_out`]: a hand-chosen region with a stray piece in it (the table the part stood on)
+/// does not pull the shape.
+pub fn fit_region_robust(scan: &Scan, region: &[usize], kind: Kind, tolerance: f64) -> Result<Fitted, FitError> {
+    let mut region: Vec<usize> = region.iter().copied().filter(|&t| scan.corners(t).is_some()).collect();
+    region.sort_unstable();
+    region.dedup();
+    if region.len() < 3 {
+        return Err(FitError::NotOnTheScan);
+    }
+    if !(tolerance.is_finite() && tolerance > 0.0) {
+        return Err(FitError::NoFit);
+    }
+    // The corners of an even sample of the triangles, each facing as its triangle does.
+    let mut points = Vec::new();
+    let mut directions = Vec::new();
+    for &t in &crate::thinned(&region, SOLVE_LIMIT / 3) {
+        let Some([a, b, c]) = scan.corners(t) else { continue };
+        let n = (b - a).cross(c - a).normalized().unwrap_or(Vec3::ZERO);
+        for p in [a, b, c] {
+            points.push(p);
+            directions.push(n);
+        }
+    }
+    let start = solve(&points, &directions, kind).ok_or(FitError::NoFit)?;
+    let shape = consensus(&points, &directions, kind, tolerance, start);
+    let on = |shape: &Shape, t: usize| {
+        scan.corners(t).is_some_and(|[a, b, c]| {
+            let n = (b - a).cross(c - a).normalized().unwrap_or(Vec3::ZERO);
+            [a, b, c].iter().all(|&p| super::points::on(shape, p, n, tolerance))
+        })
+    };
+    let mut inside: Vec<usize> = region.iter().copied().filter(|&t| on(&shape, t)).collect();
+    if inside.len() < 3 {
+        return Err(FitError::NoFit);
+    }
+    // Settled on the triangles that lie on it.
+    let settled = super::solve_with(scan, &inside, kind, SOLVE_LIMIT).unwrap_or(shape);
+    let again: Vec<usize> = region.iter().copied().filter(|&t| on(&settled, t)).collect();
+    if again.len() >= 3 {
+        inside = again;
+    }
+    let shape = super::solve_with(scan, &inside, kind, SOLVE_LIMIT).ok_or(FitError::NoFit)?;
+    let left_out = region.len() - inside.len();
+    let mut fitted = super::summarize(scan, inside, shape)?;
+    fitted.left_out = left_out;
+    Ok(fitted)
+}
+
 /// The shape of `kind` fitted to the points, each facing as its direction says.
-fn solve(points: &[Vec3], directions: &[Vec3], kind: Kind) -> Option<Shape> {
+pub(super) fn solve(points: &[Vec3], directions: &[Vec3], kind: Kind) -> Option<Shape> {
     if points.len() < FEWEST {
         return None;
     }
@@ -155,7 +207,7 @@ fn solve(points: &[Vec3], directions: &[Vec3], kind: Kind) -> Option<Shape> {
 
 /// Whether the point lies on the shape within `tolerance`, facing as the shape does there when its
 /// normal is known.
-fn on(shape: &Shape, p: Vec3, n: Vec3, tolerance: f64) -> bool {
+pub(super) fn on(shape: &Shape, p: Vec3, n: Vec3, tolerance: f64) -> bool {
     shape.distance(p).abs() <= tolerance
         && (n.len2() < 0.5 || shape.normal_at(p).is_none_or(|s| s.dot(n).abs() >= MAX_LEAN.cos()))
 }
@@ -166,7 +218,7 @@ fn support(shape: &Shape, points: &[Vec3], directions: &[Vec3], tolerance: f64) 
 }
 
 /// The shape of the most support among `start` and those fitted to random subsets.
-fn consensus(points: &[Vec3], directions: &[Vec3], kind: Kind, tolerance: f64, start: Shape) -> Shape {
+pub(super) fn consensus(points: &[Vec3], directions: &[Vec3], kind: Kind, tolerance: f64, start: Shape) -> Shape {
     let (mut best, mut most) = (start, support(&start, points, directions, tolerance));
     let mut state = 0x9e37_79b9_7f4a_7c15u64 ^ points.len() as u64;
     let mut next = || {
@@ -229,6 +281,46 @@ fn summarize(shape: Shape, on: Vec<Vec3>, points: usize) -> PointsFitted {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A flat grid of `n` × `n` squares of side 2 at height `z`, as triangles.
+    fn grid(n: u32, z: f64, positions: &mut Vec<Vec3>, triangles: &mut Vec<[u32; 3]>) {
+        let base = positions.len() as u32;
+        for j in 0..=n {
+            for i in 0..=n {
+                positions.push(Vec3::new(f64::from(i) * 2.0, f64::from(j) * 2.0, z));
+            }
+        }
+        let at = |i: u32, j: u32| base + j * (n + 1) + i;
+        for j in 0..n {
+            for i in 0..n {
+                triangles.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+                triangles.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+            }
+        }
+    }
+
+    /// A plate and a table 8 mm under it, both in the region asked for: fitted as it is the plane
+    /// leans between them; robustly it lies on the plate and counts the table left out.
+    #[test]
+    fn a_region_with_a_stray_piece_is_fitted_to_the_part() {
+        let (mut positions, mut triangles) = (Vec::new(), Vec::new());
+        grid(20, 5.0, &mut positions, &mut triangles);
+        let plate = triangles.len();
+        grid(8, -3.0, &mut positions, &mut triangles);
+        let scan = Scan::new(&positions, &triangles);
+        let all: Vec<usize> = (0..triangles.len()).collect();
+        let loose = super::super::fit_region(&scan, &all, Kind::Plane).unwrap();
+        let Shape::Plane { point, .. } = loose.shape else { panic!() };
+        assert!(point.z < 4.5, "pulled down: {point:?}");
+        let firm = fit_region_robust(&scan, &all, Kind::Plane, 0.1).unwrap();
+        let Shape::Plane { point, normal } = firm.shape else { panic!() };
+        assert!((point.z - 5.0).abs() < 1e-6 && normal.dot(Vec3::Z).abs() > 0.99999, "{point:?} {normal:?}");
+        assert_eq!(firm.triangles.len(), plate);
+        assert_eq!(firm.left_out, triangles.len() - plate);
+        assert_eq!(loose.left_out, 0);
+        assert_eq!(fit_region_robust(&scan, &all, Kind::Plane, 0.0), Err(FitError::NoFit));
+        assert_eq!(fit_region_robust(&scan, &[], Kind::Plane, 0.1), Err(FitError::NotOnTheScan));
+    }
 
     /// A cylinder of radius 10 about Z from z 0 to 40, `rings` × `around` points, `sweep` radians
     /// of it, its points nudged by a repeatable `noise` along the radius.

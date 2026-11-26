@@ -266,8 +266,10 @@ pub struct ScanFitParams {
     /// Only a construction shape is kept (`make` face needs a mesh).
     #[serde(default)]
     pub cloud: Option<String>,
-    /// With `cloud`: the shape most points lie on within `tolerance` (a random-sample consensus),
-    /// so stray points (the table under a part) do not pull it. Default false.
+    /// The shape most points lie on within `tolerance` (a random-sample consensus), so stray
+    /// points (the table under a part) do not pull it: with `cloud`, and for a region chosen by
+    /// hand (`triangles`, `saved`, what is selected; a region grown from a point is grown against
+    /// the shape already). Default false.
     #[serde(default)]
     pub robust: Option<bool>,
 }

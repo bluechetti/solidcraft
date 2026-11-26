@@ -13,7 +13,7 @@ use crate::base::{EdgeNeighbours, edge_neighbours};
 use crate::{Scan, denoise, in_plane};
 
 mod points;
-pub use points::{PointsFitted, fit_points, normals_of};
+pub use points::{PointsFitted, fit_points, fit_region_robust, normals_of};
 
 /// A fitted shape.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -160,6 +160,8 @@ pub struct Fitted {
     pub arc: Option<f64>,
     /// The region's middle, on the shape: where to put what is made from it.
     pub middle: Vec3,
+    /// How many of the triangles asked for were left out as off the shape ([`fit_region_robust`]).
+    pub left_out: usize,
     /// How far the region reaches along a cylinder's or a cone's axis, from `middle` either way (0
     /// for the other shapes).
     pub half_length: f64,
@@ -1398,7 +1400,7 @@ fn summarize(scan: &Scan, triangles: Vec<usize>, shape: Shape) -> Result<Fitted,
         }
     };
     let form_error = signed.1 - signed.0;
-    Ok(Fitted { shape, triangles, area, rms: (squares / count as f64).sqrt(), max, form_error, arc, middle, half_length })
+    Ok(Fitted { shape, triangles, area, rms: (squares / count as f64).sqrt(), max, form_error, arc, middle, left_out: 0, half_length })
 }
 
 #[cfg(test)]
