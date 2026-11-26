@@ -2027,6 +2027,10 @@ fn fitted_shape(s: &Session, p: &Value, cmd: &str, kind: Kind, tolerance: Option
 /// fitted to is said to be untrustworthy.
 const FIT_TOO_LARGE: f64 = 3.0;
 
+/// A fitted cylinder or cone whose region goes less than this far round its axis (degrees) is said
+/// to have an uncertain radius.
+const FIT_SHORT_ARC: f64 = 90.0;
+
 fn fit_shape(s: &mut Session, p: &Value, cmd: &str, kind: Kind) -> Result<Value> {
     let tolerance = fit_tolerance(s, p, cmd)?;
     let keep = crate::params::bool_(p, "keep").unwrap_or(true);
@@ -2083,6 +2087,14 @@ fn fit_shape(s: &mut Session, p: &Value, cmd: &str, kind: Kind) -> Result<Value>
         Shape::Torus { major, minor, .. } => major.max(minor),
         _ => 0.0,
     };
+    // A cylinder or cone the region goes only a little way round: its radius rests on a short arc
+    // and is uncertain (a round edge, or a hole seen from one side).
+    let short_arc = fitted.arc.filter(|arc| *arc < FIT_SHORT_ARC.to_radians()).map(|arc| {
+        format!(
+            "the region goes only {:.0}° round the axis (under {FIT_SHORT_ARC:.0}°): its radius is uncertain; fit a region that goes further round",
+            arc.to_degrees()
+        )
+    });
     let too_large = (across > 0.0 && largest > FIT_TOO_LARGE * across).then(|| {
         format!(
             "its radius ({largest:.1} mm) is over {FIT_TOO_LARGE} times the region it was fitted to ({across:.1} mm across): the region is too small or too flat to tell the shape; fit a larger region, or fit a plane"
@@ -2099,10 +2111,12 @@ fn fit_shape(s: &mut Session, p: &Value, cmd: &str, kind: Kind) -> Result<Value>
         area: fitted.area,
         rms: fitted.rms,
         max: fitted.max,
+        form_error: fitted.form_error,
+        coverage_deg: fitted.arc.map(f64::to_degrees),
         unseen,
-        warning: match (unseen.and_then(|share| unseen::warning(share, "fitted")), too_large) {
-            (Some(a), Some(b)) => Some(format!("{a}; {b}")),
-            (a, b) => a.or(b),
+        warning: {
+            let said: Vec<String> = [unseen.and_then(|share| unseen::warning(share, "fitted")), too_large, short_arc].into_iter().flatten().collect();
+            (!said.is_empty()).then(|| said.join("; "))
         },
         feature,
         face,

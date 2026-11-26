@@ -147,6 +147,14 @@ pub struct Fitted {
     /// The region's vertices' distance from the shape: root mean square and largest, in mm.
     pub rms: f64,
     pub max: f64,
+    /// The spread of the vertices' signed distances from the shape, largest less smallest, in mm:
+    /// how far the region is from that shape, as a form tolerance reads it.
+    pub form_error: f64,
+    /// How far round a cylinder's or a cone's axis the region goes, in radians: a full turn less
+    /// the widest gap between its vertices (`None` for the other shapes), those near the axis (a
+    /// cone's tip, see [`NEAR_AXIS`]) left out. A small arc fits a radius poorly: a round edge, not
+    /// a hole.
+    pub arc: Option<f64>,
     /// The region's middle, on the shape: where to put what is made from it.
     pub middle: Vec3,
     /// How far the region reaches along a cylinder's or a cone's axis, from `middle` either way (0
@@ -1333,10 +1341,16 @@ fn solve_linear<const N: usize>(mut a: [[f64; N]; N], mut b: [f64; N]) -> Option
     x.iter().all(|v| v.is_finite()).then_some(x)
 }
 
+/// A vertex nearer the axis than this share of the region's farthest says nothing of how far round
+/// the region goes: at a cone's tip the least noise puts it on any side.
+const NEAR_AXIS: f64 = 0.1;
+
 /// How well `shape` fits the region, and where its middle is.
 fn summarize(scan: &Scan, triangles: Vec<usize>, shape: Shape) -> Result<Fitted, FitError> {
     let (mut area, mut sum, mut squares, mut count, mut max) = (0.0, Vec3::ZERO, 0.0, 0usize, 0.0f64);
     let mut along: (f64, f64) = (f64::INFINITY, f64::NEG_INFINITY);
+    let mut signed: (f64, f64) = (f64::INFINITY, f64::NEG_INFINITY);
+    let mut round: Vec<Vec3> = Vec::new();
     for &t in &triangles {
         let Some(corners) = scan.corners(t) else { continue };
         let [a, b, c] = corners;
@@ -1348,15 +1362,27 @@ fn summarize(scan: &Scan, triangles: Vec<usize>, shape: Shape) -> Result<Fitted,
             squares += d * d;
             count += 1;
             max = max.max(d.abs());
+            signed = (signed.0.min(d), signed.1.max(d));
             if let Shape::Cylinder { point: from, axis, .. } | Shape::Cone { apex: from, axis, .. } = shape {
                 let s = (p - from).dot(axis);
                 along = (along.0.min(s), along.1.max(s));
+                round.push(p);
             }
         }
     }
     if !(area > 0.0 && count > 0) {
         return Err(FitError::NoFit);
     }
+    let arc = match shape {
+        Shape::Cylinder { point: from, axis, .. } | Shape::Cone { apex: from, axis, .. } => {
+            let u = axis.any_perp().normalized().unwrap_or(Vec3::X);
+            let off_axis = |p: Vec3| ((p - from) - axis * (p - from).dot(axis)).len();
+            let least = NEAR_AXIS * round.iter().map(|&p| off_axis(p)).fold(0.0, f64::max);
+            let telling = round.into_iter().filter(|&p| off_axis(p) > least);
+            crate::pipe::angular_extent(telling, from, axis, u).map(|(start, end)| (end - start).clamp(0.0, 2.0 * PI))
+        }
+        _ => None,
+    };
     let centre = sum / area;
     let cone_along = along;
     let (middle, half_length) = match shape {
@@ -1368,7 +1394,8 @@ fn summarize(scan: &Scan, triangles: Vec<usize>, shape: Shape) -> Result<Fitted,
             (apex + axis * ((lo + hi) / 2.0), (hi - lo) / 2.0)
         }
     };
-    Ok(Fitted { shape, triangles, area, rms: (squares / count as f64).sqrt(), max, middle, half_length })
+    let form_error = signed.1 - signed.0;
+    Ok(Fitted { shape, triangles, area, rms: (squares / count as f64).sqrt(), max, form_error, arc, middle, half_length })
 }
 
 #[cfg(test)]
@@ -1548,6 +1575,35 @@ mod tests {
         assert!(apex.dist(place(Vec3::new(0.0, 0.0, 40.0))) < 0.2, "{apex:?}");
         assert!(axis.dot(turn.turned(-Vec3::Z)) > 1.0 - 1e-5, "{axis:?}");
         assert!(fitted.rms < 0.05, "{}", fitted.rms);
+    }
+
+    /// A 30° sector of a cone up to its tip, the tip's vertex 0.001 mm off to the far side (a
+    /// scan's noise): the region goes 30° round, not as far as the tip happens to lie.
+    #[test]
+    fn a_cones_tip_does_not_widen_the_arc_it_reaches() {
+        let (sides, rows, slope) = (6u32, 10u32, 30f64.to_radians().tan());
+        let mut positions = vec![Vec3::new(-0.001, 0.0, 0.0)];
+        for j in 1..=rows {
+            for i in 0..=sides {
+                let (z, a) = (f64::from(j), (f64::from(i) * 30.0 / f64::from(sides)).to_radians());
+                positions.push(Vec3::new(z * slope * a.cos(), z * slope * a.sin(), z));
+            }
+        }
+        let at = |i: u32, j: u32| 1 + (j - 1) * (sides + 1) + i;
+        let mut triangles: Vec<[u32; 3]> = (0..sides).map(|i| [0, at(i + 1, 1), at(i, 1)]).collect();
+        for j in 1..rows {
+            for i in 0..sides {
+                triangles.push([at(i, j), at(i + 1, j), at(i + 1, j + 1)]);
+                triangles.push([at(i, j), at(i + 1, j + 1), at(i, j + 1)]);
+            }
+        }
+        let scan = Scan::new(&positions, &triangles);
+        let all: Vec<usize> = (0..triangles.len()).collect();
+        let fitted = fit_region(&scan, &all, Kind::Cone).unwrap();
+        let Shape::Cone { half_angle, .. } = fitted.shape else { panic!("{:?}", fitted.shape) };
+        assert!((half_angle.to_degrees() - 30.0).abs() < 0.1, "{}", half_angle.to_degrees());
+        let arc = fitted.arc.unwrap().to_degrees();
+        assert!((arc - 30.0).abs() < 1.0, "{arc}");
     }
 
     /// Round the click on the chamfer, with the shaft and the end face within the radius: the cone
@@ -1756,6 +1812,32 @@ mod tests {
         let on_axis = place(Vec3::new(30.0, 20.0, 0.0));
         assert!(((on_axis - point) - axis * (on_axis - point).dot(axis)).len() < 1e-6, "through the boss's middle");
         assert!((fitted.half_length - 7.5).abs() < 0.01, "{}", fitted.half_length);
+        // The whole boss goes all the way round (less one side's 3.75°); its vertices are all on the
+        // circle, so it has no form error.
+        let arc = fitted.arc.unwrap().to_degrees();
+        assert!(arc > 355.0 && arc <= 360.0, "{arc}");
+        assert!(fitted.form_error < 1e-9, "{}", fitted.form_error);
+        // Half of it, the triangles on one side of the axis: half way round.
+        let side = turn.turned(Vec3::X);
+        let half: Vec<usize> = fitted
+            .triangles
+            .iter()
+            .copied()
+            .filter(|&t| scan.corners(t).is_some_and(|[a, b, c]| ((a + b + c) / 3.0 - point).dot(side) > 0.0))
+            .collect();
+        let halved = fit_region(&scan, &half, Kind::Cylinder).unwrap();
+        let arc = halved.arc.unwrap().to_degrees();
+        assert!((arc - 180.0).abs() < 5.0, "{arc}");
+        let plane = fit(&scan, nearest_triangle(&scan, place(Vec3::new(8.0, 8.0, 8.0))).unwrap(), Kind::Plane, None).unwrap();
+        assert_eq!(plane.arc, None, "a plane has no axis to go round");
+        assert!(plane.form_error < 1e-9, "{}", plane.form_error);
+        // With noise of 0.1 mm from end to end across the plate, the top's form error is about all
+        // of it: a little more, as the plane of best fit leans with the noise.
+        let (positions, triangles, _) = plate_with_boss(0.1);
+        let noisy = Scan::new(&positions, &triangles);
+        let top = fit(&noisy, nearest_triangle(&noisy, place(Vec3::new(8.0, 8.0, 8.0))).unwrap(), Kind::Plane, None).unwrap();
+        assert!(top.form_error > 0.08 && top.form_error < 0.12, "{}", top.form_error);
+        assert!(top.form_error >= top.max, "the spread holds the largest distance either way");
         assert_eq!(
             fit(&scan, nearest_triangle(&scan, place(Vec3::new(8.0, 8.0, 8.0))).unwrap(), Kind::Cylinder, None),
             Err(FitError::NoFit),
