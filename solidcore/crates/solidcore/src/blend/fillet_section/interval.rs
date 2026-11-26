@@ -891,10 +891,10 @@ mod tests {
         assert_eq!(TWO_52, 2f64.powi(52));
         assert_eq!(TIE_MARGIN, 2f64.powi(-24));
         assert_eq!(WIDEN_REL_GRID, WIDEN_REL * 2f64.powi(1000) * 2f64.powi(49));
-        // 2^-1049 is the grid of 1e-300's binade
+        // 2^-1049 is the grid of 1e-300's binade (split: 2^1049 overflows f64 in unoptimised powi)
         assert_eq!(
             f64::from_bits(WIDEN_ABS.to_bits() + 1) - WIDEN_ABS,
-            2f64.powi(-1049)
+            2f64.powi(-1000) * 2f64.powi(-49)
         );
         assert!(2f64.powi(-997) <= WIDEN_ABS && WIDEN_ABS < 2f64.powi(-996));
         let mut seed = 0x2545_f491_4f6c_dd1d_u64;

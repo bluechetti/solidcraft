@@ -2099,4 +2099,50 @@ mod tests {
         assert_eq!(body.counts().expect("counts"), [6, 12, 8]);
         assert!((body.volume(1.0e-3).expect("volume") - 96.0).abs() < 1.0e-6);
     }
+
+    /// Two 20 x 10 rectangles on planes 45° apart that share one long side on the planes'
+    /// common line loft to a closed five-face ruled wedge (solidcore#3312, T-156).
+    #[test]
+    fn two_rectangles_sharing_an_edge_loft_to_a_wedge() {
+        let p = solidcore_record::Vec2::new;
+        let rect = [
+            Seg2::Line {
+                a: p(0.0, 0.0),
+                b: p(20.0, 0.0),
+            },
+            Seg2::Line {
+                a: p(20.0, 0.0),
+                b: p(20.0, 10.0),
+            },
+            Seg2::Line {
+                a: p(20.0, 10.0),
+                b: p(0.0, 10.0),
+            },
+            Seg2::Line {
+                a: p(0.0, 10.0),
+                b: p(0.0, 0.0),
+            },
+        ];
+        let s = std::f64::consts::FRAC_1_SQRT_2;
+        let tilt = solidcore_record::Plane {
+            origin: solidcore_record::Vec3::ZERO,
+            x: solidcore_record::Vec3::X,
+            y: solidcore_record::Vec3::new(0.0, s, s),
+        };
+        let a: Vec<Curve> = rect
+            .iter()
+            .map(|seg| Curve::from_seg2(seg, &solidcore_record::Plane::XY).expect("a"))
+            .collect();
+        let b: Vec<Curve> = rect
+            .iter()
+            .map(|seg| Curve::from_seg2(seg, &tilt).expect("b"))
+            .collect();
+        let body = loft(&[a, b], 1, true).expect("wedge loft");
+        assert_eq!(body.counts().expect("counts"), [5, 9, 6]);
+        let want = 20.0 * 0.5 * 10.0 * 10.0 * s;
+        let got = body.volume(1.0e-6).expect("volume");
+        assert!((got - want).abs() < 1e-6 * want, "{got} vs {want}");
+        assert!(body.is_manifold_solid().expect("manifold"));
+        body.check_solid().expect("valid solid");
+    }
 }

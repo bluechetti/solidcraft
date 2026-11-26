@@ -167,6 +167,7 @@ pub use measure::EdgePoint;
 pub use measure::EdgeRayPoint;
 pub use measure::FaceCentroid;
 pub use measure::FaceRayHit;
+pub use measure::FaceSummary;
 pub use measure::GapSample;
 pub use measure::MassPropertiesEstimate;
 pub use measure::MembersClosest;

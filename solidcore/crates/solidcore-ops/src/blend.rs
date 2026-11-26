@@ -94,19 +94,20 @@ pub struct RemovedFilletChain {
     pub edge_sources: Vec<Option<usize>>,
 }
 
-/// Remove the selected chain as one edit. `faces` names faces in the input record's `order`.
-/// An empty or single-index selection gives `None` before index validation. A larger
-/// selection gives `None` if the kernel does not recognize a fillet chain. The edit uses a copy.
+/// Remove the selected fillet face or chain as one edit. `faces` names faces in the input
+/// record's `order`. An empty selection gives `None` before index validation; a non-empty
+/// selection gives `None` if the kernel does not recognize a removable fillet or chain (such
+/// as a single ring round or a chain of four-sided rounds). The edit uses a copy.
 ///
 /// # Errors
-/// [`Error::Argument`] for an invalid or repeated index in a selection of two or more.
+/// [`Error::Argument`] for an invalid or repeated index.
 /// Copying, removal, the solid check and record conversion can also return errors.
 pub fn delete_fillet_chain(
     body: &Body,
     order: &crate::Order,
     faces: &[usize],
 ) -> Result<Option<RemovedFilletChain>> {
-    if faces.len() < 2 {
+    if faces.is_empty() {
         return Ok(None);
     }
     let (copy, input) = body.copy_with_order(order)?;

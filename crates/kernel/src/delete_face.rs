@@ -585,7 +585,7 @@ pub fn delete_faces(body: &Body, faces: &[usize]) -> Result<Body> {
         crate::assemble::body_with_history(finished, &asm, body, history.into_iter().map(|(_, h)| h).collect())
     });
     match planar {
-        Err(e @ KernelError::Invalid(_)) if del.len() >= 2 && del.iter().all(|&f| !matches!(surf_of(&rec, f), Some(Surf::Plane { .. }))) => {
+        Err(e @ KernelError::Invalid(_)) if !del.is_empty() && del.iter().all(|&f| !matches!(surf_of(&rec, f), Some(Surf::Plane { .. }))) => {
             delete_fillet_chain(body, &del)?.ok_or(e)
         }
         outcome => outcome,

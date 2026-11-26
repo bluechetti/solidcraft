@@ -351,3 +351,43 @@ fn a_chain_stops_where_it_would_turn_over() {
     let front = edge(&r, [-20.0, -5.0, 10.0], [20.0, -5.0, 10.0]);
     assert!(!chain.members.contains(&front), "{chain:?}");
 }
+
+/// A shallow outline edge (z = 0..25 at (300, 150)) meeting a collinear pocket-wall edge
+/// (z = 25..40 at (300, 150)) across the pocket's floor (z = 25) shares the outer slanted face,
+/// while the pocket floor stands between the outer wall y = 150 and the pocket wall x = 300.
+/// The chain stops at the pocket floor instead of crossing the step (#17600, T-103).
+#[test]
+fn a_chain_stops_at_a_stepped_pocket_floor() {
+    let pts = [
+        [0.0, 0.0, 0.0],
+        [500.0, 0.0, 0.0],
+        [500.0, 150.0, 0.0],
+        [300.0, 150.0, 0.0],
+        [100.0, 135.0, 0.0],
+        [0.0, 135.0, 0.0],
+    ];
+    let profile: Vec<Curve> = (0..pts.len())
+        .map(|i| Curve::Line {
+            start: pts[i],
+            end: pts[(i + 1) % pts.len()],
+        })
+        .collect();
+    let base = extrude(
+        &profile,
+        [0.0, 0.0, 1.0],
+        40.0,
+        0.0,
+        DraftCorner::default(),
+        true,
+    )
+    .unwrap();
+    let pocket = make_box([300.0, 122.0, 25.0], [60.0, 30.0, 20.0]).unwrap();
+    let b = boolean(base, pocket, BooleanOp::Subtract).unwrap().unwrap();
+    let (r, order) = b.to_record().unwrap();
+    let lower = edge(&r, [300.0, 150.0, 0.0], [300.0, 150.0, 25.0]);
+    let upper = edge(&r, [300.0, 150.0, 25.0], [300.0, 150.0, 40.0]);
+    let chain = tangent_chain(&b, Some(&order), &[lower], &[], ANGLE).unwrap();
+    assert!(chain.undecided.is_empty(), "{chain:?}");
+    assert_eq!(chain.members, vec![lower], "{chain:?}");
+    assert!(!chain.members.contains(&upper), "{chain:?}");
+}

@@ -480,8 +480,18 @@ fn skin_with_scratch(
     }
 
     // loft the loops on a sequence of faces or a sequence of loft curves
-    primitive.create_skin_from_faces_traced(
-        a, brep, &faces, &nurbs, approx_tol, degree, ends, side_faces, trace,
+    let mut collapsed_sides = Vec::new();
+    primitive.create_skin_from_faces_with_collapsed(
+        a,
+        brep,
+        &faces,
+        &nurbs,
+        approx_tol,
+        degree,
+        ends,
+        side_faces,
+        trace,
+        cap_ends.then_some(&mut collapsed_sides),
     )?;
 
     // A planar loft (all profiles coplanar) has no depth to cap. A nonplanar
@@ -537,6 +547,11 @@ fn skin_with_scratch(
             skin_u_min = min2(skin_u_min, domain.min().x);
             skin_u_max = max2(skin_u_max, domain.max().x);
             sides.push((surface, domain));
+        }
+        for (surface, domain) in &collapsed_sides {
+            skin_u_min = min2(skin_u_min, domain.min().x);
+            skin_u_max = max2(skin_u_max, domain.max().x);
+            sides.push((surface, *domain));
         }
 
         let mut start_curves = Vec::new();

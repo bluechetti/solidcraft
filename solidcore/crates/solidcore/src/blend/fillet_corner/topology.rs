@@ -258,7 +258,10 @@ pub(crate) fn find_side_edgeuse(
 
 /// The side edge of an `NByOne` corner that leaves `vertex` along the filleted edge's tangent:
 /// the face between them comes to a point there, so its rail crosses the side edge before the
-/// vertex. A tangent seam is not one (the corner ends on it as a tangent end).
+/// vertex. Returns the side edge and whether the corner may still build (either the side edge
+/// shares the filleted edge's convexity — a cliff — or its other face is bordered by the
+/// filleted edge's other side edge at `vertex`, so the blend can terminate on that wall face).
+/// A tangent seam is not one (the corner ends on it as a tangent end).
 ///
 /// # Errors
 /// Those of the edge lookups and the curve evaluations.
@@ -266,7 +269,7 @@ pub(crate) fn cusp_side_edge(
     k: &Kernel,
     target: &mut Brep,
     corner: &FilletCorner,
-) -> Result<Option<EdgeId>> {
+) -> Result<Option<(EdgeId, bool)>> {
     if corner.kind != FilletCornerKind::NByOne {
         return Ok(None);
     }
@@ -295,18 +298,17 @@ pub(crate) fn cusp_side_edge(
     };
     let tol_deg = crate::math::rad_to_deg(corner.tangency_tol_radians);
     let cos_tol = corner.tangency_tol_radians.cos();
-    for side in [
-        *need(
-            (index + total - 1)
-                .checked_rem(total)
-                .and_then(|i| all.get(i)),
-            "preceding side edge use",
-        )?,
-        *need(
-            (index + 1).checked_rem(total).and_then(|i| all.get(i)),
-            "following side edge use",
-        )?,
-    ] {
+    let prev = *need(
+        (index + total - 1)
+            .checked_rem(total)
+            .and_then(|i| all.get(i)),
+        "preceding side edge use",
+    )?;
+    let next = *need(
+        (index + 1).checked_rem(total).and_then(|i| all.get(i)),
+        "following side edge use",
+    )?;
+    for (side, other_side) in [(prev, next), (next, prev)] {
         let side_edge = edge_of(target, side)?;
         if side_edge == filleted_edge
             || check_tangential_edgeuse_at_vertex(k, target, side, vertex, tol_deg)?
@@ -317,7 +319,20 @@ pub(crate) fn cusp_side_edge(
             continue;
         };
         if along.dot(out) >= cos_tol {
-            return Ok(Some(side_edge));
+            let same = same_convexity_edges(k, target, filleted, side, vertex)?;
+            let may_build = if same {
+                true
+            } else {
+                let fil_faces = crate::query::edge::edge_faces(target, filleted_edge)?;
+                let side_faces = crate::query::edge::edge_faces(target, side_edge)?;
+                let other_edge = edge_of(target, other_side)?;
+                let other_faces = crate::query::edge::edge_faces(target, other_edge)?;
+                side_faces
+                    .iter()
+                    .find(|f| !fil_faces.contains(f))
+                    .is_some_and(|wall| other_faces.contains(wall))
+            };
+            return Ok(Some((side_edge, may_build)));
         }
     }
     Ok(None)

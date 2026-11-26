@@ -76,6 +76,42 @@ fn index_of<T: PartialEq + Copy>(list: &[T], x: T) -> Option<usize> {
     list.iter().position(|&y| y == x)
 }
 
+/// Whether `e` and `f` meet at a vertex (whose incident edges are `at`) as adjacent edges along one
+/// shared face across a step: they share exactly one face, and their other two faces do not share
+/// an edge in `at` (an intervening face, such as a pocket floor, stands between them in a ring of
+/// four or more edges).
+fn stepped_at(b: &Brep, e: EdgeId, f: EdgeId, at: &[EdgeId]) -> solidcore::Result<bool> {
+    let ef = solidcore::query::edge::edge_faces(b, e)?;
+    let ff = solidcore::query::edge::edge_faces(b, f)?;
+    let ([ea, eb], [fa, fb]) = (ef.as_slice(), ff.as_slice()) else {
+        return Ok(false);
+    };
+    let other_pair = if ea == fa && eb != fb {
+        Some((*eb, *fb))
+    } else if ea == fb && eb != fa {
+        Some((*eb, *fa))
+    } else if eb == fa && ea != fb {
+        Some((*ea, *fb))
+    } else if eb == fb && ea != fa {
+        Some((*ea, *fa))
+    } else {
+        None
+    };
+    let Some((oe, of)) = other_pair else {
+        return Ok(false);
+    };
+    if oe == of {
+        return Ok(false);
+    }
+    for &g in at {
+        let gf = solidcore::query::edge::edge_faces(b, g)?;
+        if gf.contains(&oe) && gf.contains(&of) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// The edge walk of [`crate::blend::tangent_chain`] on `b`, `list` its edges in record order.
 pub(crate) fn edge_walk(
     k: &Kernel,
@@ -123,7 +159,7 @@ pub(crate) fn edge_walk(
             let mut at: Vec<EdgeId> = vertex::edges(b, v, None)?;
             at.sort_by_key(|f| index.get(f).copied().unwrap_or(usize::MAX));
             at.dedup();
-            for f in at {
+            for &f in &at {
                 if chain.contains(&f) || skip.contains(&f) {
                     continue;
                 }
@@ -136,7 +172,7 @@ pub(crate) fn edge_walk(
                     (convex_at(k, b, e, v, angle)?, convex_at(k, b, f, v, angle)?),
                     (Some(a), Some(c)) if a != c
                 );
-                if turns_over {
+                if turns_over || stepped_at(b, e, f, &at)? {
                     continue;
                 }
                 match smooth.of(k, b, f, angle)? {

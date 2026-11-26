@@ -1542,7 +1542,7 @@ fn chain_of(rec: &Faces, seeds: &[usize], hidden: &[bool]) -> Result<Vec<usize>>
                     continue;
                 }
                 let turns_over = matches!((convex(e, v), convex(f, v)), (Some(a), Some(b)) if a != b);
-                if !turns_over && leaving(f, v).is_some_and(|g| d.dot(g) < -cos) {
+                if !turns_over && leaving(f, v).is_some_and(|g| d.dot(g) < -cos) && !stepped_at(rec, e, f, v) {
                     if let Some(slot) = in_chain.get_mut(f) {
                         *slot = true;
                     }
@@ -1552,6 +1552,38 @@ fn chain_of(rec: &Faces, seeds: &[usize], hidden: &[bool]) -> Result<Vec<usize>>
         }
     }
     Ok(chain)
+}
+
+/// Whether `e` and `f` meet at `v` as adjacent edges along one shared face across a step: they
+/// share exactly one face, and their other two faces do not share an edge at `v` (at least one
+/// intervening face, such as a pocket floor, stands between them in a vertex ring of four or more
+/// edges).
+fn stepped_at(rec: &Faces, e: usize, f: usize, v: u32) -> bool {
+    let (Some(ed_e), Some(ed_f)) = (rec.rec.edges.get(e), rec.rec.edges.get(f)) else {
+        return false;
+    };
+    let ([ea, eb], [fa, fb]) = (ed_e.uses.as_slice(), ed_f.uses.as_slice()) else {
+        return false;
+    };
+    let (ea, eb, fa, fb) = (ea.face, eb.face, fa.face, fb.face);
+    let other_pair = if ea == fa && eb != fb {
+        Some((eb, fb))
+    } else if ea == fb && eb != fa {
+        Some((eb, fa))
+    } else if eb == fa && ea != fb {
+        Some((ea, fb))
+    } else if eb == fb && ea != fa {
+        Some((ea, fa))
+    } else {
+        None
+    };
+    let Some((oe, of)) = other_pair else {
+        return false;
+    };
+    if oe == of {
+        return false;
+    }
+    !rec.rec.edges.iter().any(|g| g.vertices.contains(&v) && g.uses.iter().any(|u| u.face == oe) && g.uses.iter().any(|u| u.face == of))
 }
 
 /// Whether edge `e` is convex at its end `v` (its faces meet at less than 180° inside the body):

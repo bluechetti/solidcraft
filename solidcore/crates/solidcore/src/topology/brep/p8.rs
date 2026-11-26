@@ -87,7 +87,7 @@ use crate::geom::solution_array::{SolutionArray, SolutionType, SortKey};
 use crate::geom::tol::{self, SmallTopoType};
 use crate::intersect::point_class::{PointClassType, PointClassification};
 use crate::kernel::Kernel;
-use crate::math::{Point2, Point3, Vec2, Vec3, EFF_ZERO, EFF_ZERO_SQRT};
+use crate::math::{Point2, Point3, Vec2, Vec3, EFF_ZERO, EFF_ZERO_DEG, EFF_ZERO_SQRT};
 use crate::nurbs::b_spline_curve::BSplineCurve;
 use crate::nurbs::b_spline_surface::p1::SurfParamType;
 use crate::nurbs::b_spline_surface_n_lib::p2::OrientType;
@@ -334,6 +334,22 @@ pub fn create_faces_from_surface(
     continuity: ContinuityType,
     fenv: &mut FaceBuildEnv<'_, '_>,
 ) -> Result<Vec<FaceId>> {
+    create_faces_from_surface_recording_collapsed(k, b, surface, uv_domain, continuity, fenv, None)
+}
+
+/// [`create_faces_from_surface`], skipping split sub-patches that collapse to a curve or point
+/// when at least one sibling sub-patch has area (e.g. a wedge loft whose sections share an edge),
+/// and optionally recording each curve-collapsed sub-patch and its domain in `collapsed` so a
+/// caller can still cap the boundary curve it carried.
+pub(crate) fn create_faces_from_surface_recording_collapsed(
+    k: &mut Kernel,
+    b: &mut Brep,
+    surface: Option<Surface>,
+    uv_domain: &Extent2d,
+    continuity: ContinuityType,
+    fenv: &mut FaceBuildEnv<'_, '_>,
+    collapsed: Option<&mut Vec<(Surface, Extent2d)>>,
+) -> Result<Vec<FaceId>> {
     let _ = uv_domain; // SM_REF1(crUVDomain)
     let surface = surface.ok_or_else(|| failure(TopologyFailure::NoSurfaceGiven))?;
     let mut new_faces = Vec::new();
@@ -381,14 +397,50 @@ pub fn create_faces_from_surface(
 
         // A pole can be internal to an otherwise G1 patch. Keep that collapsed
         // rail on a face boundary, even when the profile's seam is elsewhere.
+        let mut parts: Vec<Surface> = Vec::new();
         for srf in sub_patches {
-            for part in split_pole_lines(k, srf, b.tolerance())? {
-                let dom = part.natural_uv_domain_with_nurb(k)?;
-                let region = b.infinite_region();
-                let made =
-                    create_face_in_region_from_surface(k, b, region, Some(part), &dom, fenv)?;
-                new_faces.push(made.face);
+            parts.extend(split_pole_lines(k, srf, b.tolerance())?);
+        }
+        // When splitting produced several patches and some collapse to a curve or point
+        // (for instance, two loft sections sharing an edge on their planes' common line),
+        // omit the zero-area patches while keeping at least one real face; a surface whose
+        // patches all collapse still fails in `create_face_in_region_from_surface`.
+        let to_build = if parts.len() > 1 {
+            let deg_tol = tol::ZONE_TOL_3D / 10.0;
+            let mut live: Vec<Surface> = Vec::new();
+            let mut skipped: Vec<(Surface, bool)> = Vec::new();
+            for part in parts {
+                let is_pt = ignored(part.is_degenerate_point(k, deg_tol, None))?.unwrap_or(false);
+                let is_crv = !is_pt
+                    && ignored(part.is_degenerate_curve(k, EFF_ZERO_DEG, None, deg_tol))?
+                        .unwrap_or(false);
+                if is_pt || is_crv {
+                    skipped.push((part, is_pt));
+                } else {
+                    live.push(part);
+                }
             }
+            if live.is_empty() {
+                skipped.into_iter().map(|(part, _)| part).collect()
+            } else {
+                if let Some(out) = collapsed {
+                    for (part, is_pt) in skipped {
+                        if !is_pt {
+                            let dom = part.natural_uv_domain_with_nurb(k)?;
+                            out.push((part, dom));
+                        }
+                    }
+                }
+                live
+            }
+        } else {
+            parts
+        };
+        for part in to_build {
+            let dom = part.natural_uv_domain_with_nurb(k)?;
+            let region = b.infinite_region();
+            let made = create_face_in_region_from_surface(k, b, region, Some(part), &dom, fenv)?;
+            new_faces.push(made.face);
         }
         Ok(())
     })?;

@@ -50,6 +50,7 @@ impl Answer for Vec<Option<f64>> {}
 impl Answer for Vec<Vec<Option<f64>>> {}
 impl Answer for Vec<Result<PointClass>> {}
 impl Answer for Vec<f64> {}
+impl Answer for Vec<FaceSummary> {}
 
 /// A kernel measure that has a read-only form, under one lock of the body
 /// ([`read_else_edit`]): `read`, which leaves the body (and its proof) as it is; where the
@@ -453,6 +454,18 @@ pub struct FaceCentroid {
     pub area: f64,
     /// The centroid of its area.
     pub centroid: [f64; 3],
+}
+
+/// A face's area, area centroid, and outward plane normal when planar
+/// ([`Body::face_summaries`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FaceSummary {
+    /// The face's area (`0.0` when the kernel cannot integrate the face).
+    pub area: f64,
+    /// The centroid of its area (`[0.0; 3]` when the face has no area).
+    pub centroid: [f64; 3],
+    /// The face's outward unit normal when planar, else `None`.
+    pub plane_normal: Option<Normal>,
 }
 
 /// A unit normal with its proved bound: the exact unit normal is within `bound` of `value`.
@@ -1588,27 +1601,49 @@ impl Body {
     pub fn face_plane_normal(&self, order: &Order, face: usize) -> Result<Option<Normal>> {
         let f = order::face(order, face)?;
         let n = with_body("face_plane_normal", self, |k, b| {
-            let planar = {
-                let surface = face::surface(b, f)?
-                    .ok_or_else(|| solidcore::SolidError::null_pointer("ops::face_plane_normal"))?;
-                surface.is_planar(k, face::tolerance(b, f)?)?.is_planar
-            };
-            if !planar {
-                return Ok(Ok(None));
-            }
-            let Some(&e) = face::edges(b, f, None, false, None)?.first() else {
-                return Ok(Err(Error::Unsupported("a planar face with no edge")));
-            };
-            let fu = match outer_faceuse(b, f)? {
-                Ok(fu) => fu,
-                Err(e) => return Ok(Err(e)),
-            };
-            face_normal_at_edge(k, b, e, f, fu).map(|n| Ok(Some(n)))
+            face_plane_normal_in(k, b, f)
         })??;
-        Ok(n.map(|n| Normal {
-            value: array(n.normal.value),
-            bound: n.normal.bound,
-        }))
+        Ok(n)
+    }
+
+    /// Exact area, area centroid, and outward plane normal (when planar) for every face in
+    /// `order`, in one kernel session lock without per-face rollback snapshots.
+    ///
+    /// # Errors
+    /// As [`Body::face_centroid`], except that an individual face whose area or plane normal the
+    /// kernel cannot evaluate falls back to zero area / origin / `None` normal rather than
+    /// aborting the whole body's face list.
+    pub fn face_summaries(
+        &self,
+        order: &Order,
+        relative_accuracy: f64,
+    ) -> Result<Vec<FaceSummary>> {
+        with_body("face_summaries", self, |k, b| {
+            let mut out = Vec::with_capacity(order.faces.len());
+            for &f in &order.faces {
+                let (area, centroid) = match face_centroid(k, b, f, relative_accuracy) {
+                    Ok((a, c))
+                        if a.is_finite() && [c.x, c.y, c.z].iter().all(|x| x.is_finite()) =>
+                    {
+                        (a, array(c))
+                    }
+                    _ => match face_area(k, b, f, relative_accuracy) {
+                        Ok(a) if a.is_finite() => (a, [0.0; 3]),
+                        _ => (0.0, [0.0; 3]),
+                    },
+                };
+                let plane_normal = match face_plane_normal_in(k, b, f) {
+                    Ok(Ok(n)) => n,
+                    _ => None,
+                };
+                out.push(FaceSummary {
+                    area,
+                    centroid,
+                    plane_normal,
+                });
+            }
+            Ok(out)
+        })
     }
 
     /// Where record face `face` lies along `direction`, when it is a plane square to it: the
@@ -1788,6 +1823,34 @@ fn rim_edges(b: &Brep, set: &[FaceId]) -> solidcore::Result<Result<Vec<EdgeId>>>
         }
     }
     Ok(Ok(rims))
+}
+
+/// Outward unit normal of `f` if planar, inside an existing kernel session lock.
+fn face_plane_normal_in(
+    k: &Kernel,
+    b: &mut Brep,
+    f: FaceId,
+) -> solidcore::Result<Result<Option<Normal>>> {
+    let planar = {
+        let surface = face::surface(b, f)?
+            .ok_or_else(|| solidcore::SolidError::null_pointer("ops::face_plane_normal"))?;
+        surface.is_planar(k, face::tolerance(b, f)?)?.is_planar
+    };
+    if !planar {
+        return Ok(Ok(None));
+    }
+    let Some(&e) = face::edges(b, f, None, false, None)?.first() else {
+        return Ok(Err(Error::Unsupported("a planar face with no edge")));
+    };
+    let fu = match outer_faceuse(b, f)? {
+        Ok(fu) => fu,
+        Err(e) => return Ok(Err(e)),
+    };
+    let n = face_normal_at_edge(k, b, e, f, fu)?;
+    Ok(Ok(Some(Normal {
+        value: array(n.normal.value),
+        bound: n.normal.bound,
+    })))
 }
 
 pub(crate) fn outer_faceuse(b: &Brep, f: FaceId) -> solidcore::Result<Result<FaceuseId>> {

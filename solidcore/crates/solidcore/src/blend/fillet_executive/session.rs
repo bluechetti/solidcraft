@@ -7765,25 +7765,28 @@ impl SessionObjects<'_> {
             extended_surfaces,
             ..
         } = self;
-        // Not upstream: at a cusp the band can run off its face before the vertex. Where the
-        // topology then fails ("Unable to Make Topology"), that is given as no room. Read before
-        // the topology is made and used only when it fails, so a corner that builds is never refused.
+        // Not upstream: at a cusp the band runs off its face before the vertex. When the cusp
+        // side edge has opposite convexity (a standing wall rising off the narrowing face), no
+        // positive-size blend fits without undercutting behind that wall, so refuse it directly
+        // even if the Nx1 end topology would otherwise fabricate a ruled gap patch; when it has
+        // the same convexity (a cliff, e.g. a knife-edge tip), only report no room if topology
+        // fails, so a corner that validly rolls off a cliff is never refused.
         let cusp = {
             let corner = corners
                 .get(id.0 as usize)
                 .ok_or_else(|| invalid("corner is not live"))?;
             // Infallible: a lookup that fails here only means no cusp note, never a refusal.
-            if crate::blend::fillet_corner::topology::cusp_side_edge(k, target, corner)
-                .ok()
-                .flatten()
-                .is_some()
+            if let Some((_, same_convexity)) =
+                crate::blend::fillet_corner::topology::cusp_side_edge(k, target, corner)
+                    .ok()
+                    .flatten()
             {
                 let vertex = corner.vertex;
                 let location = vertex.and_then(|v| crate::topology::vertex::point(target, v).ok());
                 let edge = crate::topology::edgeuse::p1::edge(target, edgeuse)
                     .ok()
                     .flatten();
-                Some((vertex, location, edge))
+                Some((vertex, location, edge, same_convexity))
             } else {
                 None
             }
@@ -7803,6 +7806,29 @@ impl SessionObjects<'_> {
             }
             _ => crate::blend::fillet_executive::p3::FitKind::Radius,
         };
+        if let Some((vertex, location, edge, false)) = cusp {
+            executive.error.note_vertex_error(
+                vertex.map(|v| FilletObject::Topology(FilletBody::Target, EntityRef::Vertex(v))),
+                location,
+                crate::blend::fillet_geom::p1::FilStatus::Failure,
+                crate::blend::fillet_geom::p1::FilletErrorType::NoRoom,
+                Some(NX1_CUSP_SIDE_EDGE),
+            );
+            executive.error.no_room =
+                Some(crate::blend::fillet_executive::NoRoomReason::RailLeavesFace);
+            executive.note_fit_radius(
+                0.0,
+                edge.map(|e| FilletObject::Topology(FilletBody::Target, EntityRef::Edge(e))),
+                fit_kind,
+            );
+            return Err(crate::error::Failure::new(
+                "SmFilletNx1Corner::MakeCornerTopology",
+                crate::error::blend::BlendFailure::NoRoom(
+                    crate::blend::fillet_executive::NoRoomReason::RailLeavesFace,
+                ),
+            )
+            .into_error());
+        }
         let corner = corners
             .get_mut(id.0 as usize)
             .ok_or_else(|| invalid("corner is not live"))?;
@@ -7825,7 +7851,7 @@ impl SessionObjects<'_> {
         };
         match (made, cusp) {
             (Err(e), _) if e.is_unported_or_cancelled() => Err(e),
-            (Err(cause), Some((vertex, location, edge))) => {
+            (Err(cause), Some((vertex, location, edge, _))) => {
                 executive.error.note_vertex_error(
                     vertex
                         .map(|v| FilletObject::Topology(FilletBody::Target, EntityRef::Vertex(v))),

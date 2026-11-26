@@ -2110,35 +2110,29 @@ impl Body {
         })
     }
 
-    /// Faces with area and centroid.
-    pub fn faces(&self, tol: f64) -> Result<Vec<FaceInfo>> {
-        let m = self.mesh(&MeshTolerance::chord(tol))?;
+    /// Faces with exact area, centroid and outward planar normal (from solidcore-ops on a B-rep
+    /// body, and from its own triangles on a mesh body).
+    pub fn faces(&self, _tol: f64) -> Result<Vec<FaceInfo>> {
         let nf = self.face_count();
-        let mut acc: Vec<(f64, Vec3, Vec3, bool)> = vec![(0.0, Vec3::ZERO, Vec3::ZERO, true); nf];
-        for (t, f) in m.triangles.iter().zip(&m.tri_face) {
-            let Some([a, b, c]) = m.tri(t) else { continue };
-            let cr = (b - a).cross(c - a);
-            let ar = cr.len() * 0.5;
-            if let Some(slot) = acc.get_mut(*f as usize) {
-                slot.0 += ar;
-                slot.1 += (a + b + c) * (ar / 3.0);
-                if let Some(n) = cr.normalized() {
-                    if slot.2 == Vec3::ZERO {
-                        slot.2 = n;
-                    } else if slot.2.dot(n) < 1.0 - 1e-6 {
-                        slot.3 = false;
-                    }
-                }
-            }
+        if nf == 0 {
+            return Ok(Vec::new());
         }
-        Ok(acc
+        if let Some(m) = self.display_mesh() {
+            return Ok(crate::meshbody::mesh_faces(&m, nf));
+        }
+        let Some(form) = self.ops_body() else {
+            return Err(KernelError::Failed("body has no exact kernel form".into()));
+        };
+        let (body, order) = &*form;
+        let summaries = body.face_summaries(order, solidcraft_smlib::MEASURE_ACCURACY).map_err(|e| KernelError::Failed(e.to_string()))?;
+        Ok(summaries
             .into_iter()
             .enumerate()
-            .map(|(index, (area, c, n, planar))| FaceInfo {
+            .map(|(index, s)| FaceInfo {
                 index,
-                area,
-                centroid: if area > 0.0 { c / area } else { Vec3::ZERO },
-                plane_normal: (planar && n != Vec3::ZERO).then_some(n),
+                area: s.area.abs(),
+                centroid: Vec3::from(s.centroid),
+                plane_normal: s.plane_normal.map(|n| Vec3::from(n.value)),
             })
             .collect())
     }

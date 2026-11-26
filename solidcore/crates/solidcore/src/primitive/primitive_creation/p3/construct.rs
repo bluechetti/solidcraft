@@ -529,7 +529,26 @@ impl PrimitiveCreation {
         degree: usize,
         ends: [SkinEnd; 2],
         new_faces: &mut Vec<FaceId>,
+        trace: Option<&mut SkinTrace>,
+    ) -> Result<()> {
+        self.create_skin_from_faces_with_collapsed(
+            a, brep, faces, profiles, approx_tol, degree, ends, new_faces, trace, None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn create_skin_from_faces_with_collapsed(
+        &mut self,
+        a: &mut impl PrimitiveAccess,
+        brep: BrepId,
+        faces: &[FaceRef],
+        profiles: &[BSplineCurve],
+        approx_tol: f64,
+        degree: usize,
+        ends: [SkinEnd; 2],
+        new_faces: &mut Vec<FaceId>,
         mut trace: Option<&mut SkinTrace>,
+        mut collapsed: Option<&mut Vec<(Surface, crate::geom::extent2d::Extent2d)>>,
     ) -> Result<()> {
         self.init_entity_maps();
         new_faces.clear();
@@ -724,7 +743,13 @@ impl PrimitiveCreation {
             // (a B-spline surface just made: never lazy)
             let domain = surface.natural_uv_domain_if_built();
             // fork c8f6a31 (WR-662): SER(CreateFacesFromSurface(..)).
-            a.surface_faces(brep, surface, domain, &mut made)?;
+            a.surface_faces_recording_collapsed(
+                brep,
+                surface,
+                domain,
+                &mut made,
+                collapsed.as_deref_mut(),
+            )?;
             new_faces.extend_from_slice(&made);
             if trace.is_some() && untraced.is_none() {
                 let sections: Vec<&LoopSpans> = loop_spans

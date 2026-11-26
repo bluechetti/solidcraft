@@ -146,15 +146,28 @@ pub trait PrimitiveAccess: SweepAccess {
         domain: Extent2d,
         faces: &mut Vec<FaceId>,
     ) -> Result<()> {
+        self.surface_faces_recording_collapsed(brep, surface, domain, faces, None)
+    }
+    /// [`PrimitiveAccess::surface_faces`], also collecting any curve-collapsed sub-patches
+    /// omitted from `faces` into `collapsed` so capped skins keep their end-cap curves.
+    fn surface_faces_recording_collapsed(
+        &mut self,
+        brep: BrepId,
+        surface: Surface,
+        domain: Extent2d,
+        faces: &mut Vec<FaceId>,
+        collapsed: Option<&mut Vec<(Surface, Extent2d)>>,
+    ) -> Result<()> {
         faces.clear();
         let made = with_face_env(self, brep, |kernel, model, fenv| {
-            crate::topology::brep::p8::create_faces_from_surface(
+            crate::topology::brep::p8::create_faces_from_surface_recording_collapsed(
                 kernel,
                 model,
                 Some(surface),
                 &domain,
                 ContinuityType::G1,
                 fenv,
+                collapsed,
             )
         })?;
         faces.extend(made);

@@ -494,7 +494,7 @@ fn continued_cliff_crossing(
 fn leaves_past_an_end(
     solver: &FilletSolver,
     k: &Kernel,
-    target: &Brep,
+    target: &mut Brep,
     face: FaceId,
     rail: &Curve,
     rail_param: f64,
@@ -504,13 +504,81 @@ fn leaves_past_an_end(
     // `NER(pEdgeCurve)` before either test
     filleted_curve(target, fil_edge)?;
 
-    // Across or through the face's side edge at an end.
-    if !side_edge_ends(target, fil_edge, face, leave)?.is_empty() {
+    // Across or through the face's side edge at an end — except when a convex blend's rail
+    // crosses a concave standing wall that only touches the end vertex because `face` narrows
+    // to a point there and is not the other filleted face's end face (e.g. a wedge plate
+    // against a standing wall).
+    let ends = side_edge_ends(target, fil_edge, face, leave)?;
+    if !ends.is_empty() && !concave_wall_not_end_face(k, target, fil_edge, face, leave, &ends)? {
         return Ok(true);
     }
 
     // On or beyond the cross section at an end.
     Ok(beyond_end_section(solver, k, target, rail, rail_param)?.is_some())
+}
+
+/// Whether `leave` crosses a concave side edge of `face` (a standing wall rising into solid
+/// material) on a convex `fil_edge` whose wall face is not bordered by the other filleted face's
+/// side edge at any end in `ends`: the rail has run into a standing wall before the end rather
+/// than onto a shared end face.
+fn concave_wall_not_end_face(
+    k: &Kernel,
+    target: &mut Brep,
+    fil_edge: EdgeId,
+    face: FaceId,
+    leave: &PointClassification<FilletClassObject>,
+    ends: &[usize],
+) -> Result<bool> {
+    let side = match (leave.point_class(), leave.object()) {
+        (PointClassType::Edge, Some(o)) => match o.target_entity()? {
+            EntityRef::Edge(e) => e,
+            _ => return Ok(false),
+        },
+        _ => return Ok(false),
+    };
+    if is_concave_edge(k, target, fil_edge)?
+        || !is_concave_edge_at(k, target, side, leave.t_param())?
+    {
+        return Ok(false);
+    }
+    let wall_faces = crate::query::edge::edge_faces(target, side)?;
+    let Some(&wall_face) = wall_faces.iter().find(|&&f| f != face) else {
+        return Ok(false);
+    };
+    let (fil_start, fil_end) = edge::start_end_vertices(target, fil_edge)?;
+    let mut saw_other_side = false;
+    for use_ in edge::edgeuses(target, fil_edge, None, None)? {
+        let Some(other_face) = eu::face(target, use_)? else {
+            continue;
+        };
+        if other_face == face || !eu::is_loop_edgeuse(target, use_)? {
+            continue;
+        }
+        for next in [
+            eu::cw_edgeuse(target, use_)?,
+            eu::ccw_edgeuse(target, use_)?,
+        ] {
+            let Some(other_side) = next.map(|n| eu::edge(target, n)).transpose()?.flatten() else {
+                continue;
+            };
+            if other_side == fil_edge {
+                continue;
+            }
+            let (first, second) = edge::start_end_vertices(target, other_side)?;
+            let touches_end = ends.iter().any(|&end| {
+                let v = if end == 0 { fil_start } else { fil_end };
+                v.is_some() && (v == first || v == second)
+            });
+            if !touches_end {
+                continue;
+            }
+            saw_other_side = true;
+            if crate::query::edge::edge_faces(target, other_side)?.contains(&wall_face) {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(saw_other_side)
 }
 
 /// The ends of the filleted edge (0 its start vertex, 1 its end vertex) whose side edge in
@@ -959,9 +1027,6 @@ impl FilletSolver {
                     };
                     // this run leaves past one end and comes back past the other
                     let mut wraps = false;
-                    let past_end = |point: &PointClassification<FilletClassObject>, d: f64| {
-                        leaves_past_an_end(solver.solver(), k, target, face, &curve, d, point)
-                    };
                     if j == 0 || j_last + 1 == n {
                         if let Some((rim, wall)) = continued_cliff_crossing(
                             solver.solver(),
@@ -975,16 +1040,22 @@ impl FilletSolver {
                             continued_cliffs.push((rim, wall));
                             continue;
                         }
-                        if past_end(leave, d_leave)?
-                            || past_closed_corner(
-                                solver.solver(),
-                                k,
-                                target,
-                                &curve,
-                                d_leave,
-                                j == 0,
-                            )?
-                        {
+                        if leaves_past_an_end(
+                            solver.solver(),
+                            k,
+                            target,
+                            face,
+                            &curve,
+                            d_leave,
+                            leave,
+                        )? || past_closed_corner(
+                            solver.solver(),
+                            k,
+                            target,
+                            &curve,
+                            d_leave,
+                            j == 0,
+                        )? {
                             continue;
                         }
                     } else if let Some(end) = run_end_past(

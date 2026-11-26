@@ -136,10 +136,7 @@ fn a_cylinder_whose_rim_is_a_great_circle_through_a_sphere_s_poles_joins_it() {
 
 /// A block (x -30 to 0, z 0 to 40) joined to a 60 x 40 x 17 plate whose end x = -30, bottom and long sides it shares, each
 /// within 4e-4 and turned up to 2e-5 rad off the plate's: the stacked prisms Reconstruct reads off a scan, each fitted on
-/// its own (the scan benchmark's block, holes plate and T-LESS parts are refused this way). The union is one solid of what
-/// the two define. Today the merge refuses it (`SmMerge::MakeFaceuse`: no radial edge use classifies the face's edge use):
-/// the block's faces outside the plate are slivers 1e-5 to 5e-4 wide, and the radial sector tests at their edges step off
-/// across them and read both sectors as outside. Listed in tests/KNOWN_FAILING_TESTS.
+/// its own. The union is one valid solid of the exact polyhedral volume the two define.
 #[test]
 fn a_block_flush_within_a_hair_with_a_plate_joins_into_one_solid() {
     let plate = box_solid(Vec3::new(-30.0, -20.0, 0.0), Vec3::new(30.0, 20.0, 17.0)).unwrap();
@@ -153,9 +150,12 @@ fn a_block_flush_within_a_hair_with_a_plate_joins_into_one_solid() {
         block = transform(&block, Vec3::ZERO, Vec3::new(x, 0.0, 10.0), axis, angle).unwrap();
     }
     let joined = boolean(&plate, &block, BoolOp::Union).unwrap().unwrap();
-    // The plate and the block above it, within the hairs the block's faces stand off the plate's.
+    // Exact polyhedral union volume (plate 40800 + block 48000.3484007114 - intersection
+    // 20399.5605001425 = 68400.7879005690; dx0 = -3.99e-4 over the 40x40 end face alone adds
+    // +0.638 mm³ above 68400).
+    let expected = 68400.7879005690;
     let v = measure(&joined).unwrap().volume;
-    assert!((v - (60.0 * 40.0 * 17.0 + 30.0 * 40.0 * 23.0)).abs() < 0.5, "{v}");
+    assert!((v - expected).abs() < 1e-4, "{v} vs {expected}");
     assert_eq!(joined.lumps().unwrap().len(), 1);
     assert!(joined.validity().is_empty(), "{:?}", joined.validity());
 }

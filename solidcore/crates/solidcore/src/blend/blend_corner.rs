@@ -912,8 +912,8 @@ pub fn exact_mitre_curve(
         else {
             return Ok(false);
         };
-        let surface =
-            face2::surface(target, common)?.ok_or_else(|| face_without_surface(OP_EXACT, common))?;
+        let surface = face2::surface(target, common)?
+            .ok_or_else(|| face_without_surface(OP_EXACT, common))?;
         let plane =
             BlendQuadric::from_surface(k, surface, face2::uv_domain(target, common)?.mid(), tol)?;
         if plane.kind != QuadricKind::Plane {

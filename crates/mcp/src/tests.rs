@@ -1401,7 +1401,12 @@ fn inspect_design_gives_a_timeline_summary_and_body_names_when_asked() {
     let mut b = Answers { calls: Vec::new(), answer: Box::new(|_, _| Ok(json!({"timeline": [], "bodies": [], "sketches": []}))) };
     crate::tools::call_tool(&mut b, "inspect_design", &json!({"sketches": false, "joints": false}));
     crate::tools::call_tool_with(&mut b, "inspect_design", &json!({"joints": false}), crate::Options { compact: true, ..Default::default() });
-    crate::tools::call_tool_with(&mut b, "inspect_design", &json!({"joints": false, "bodies": ["B"]}), crate::Options { compact: true, ..Default::default() });
+    crate::tools::call_tool_with(
+        &mut b,
+        "inspect_design",
+        &json!({"joints": false, "bodies": ["B"]}),
+        crate::Options { compact: true, ..Default::default() },
+    );
     let sent: Vec<&Value> = b.calls.iter().filter(|(m, _)| m == "document.inspect").map(|(_, p)| p).collect();
     assert_eq!(
         sent,
