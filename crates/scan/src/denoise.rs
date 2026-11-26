@@ -158,16 +158,17 @@ impl Mesh {
     /// The roughness of `positions`: the robust spread of each vertex's neighbours' mean height
     /// over its tangent plane, less the gain of averaging over them.
     fn roughness(&self, positions: &[Vec3]) -> f64 {
-        self.roughness_where(positions, false).0
+        self.roughness_where(positions, false, None).0
     }
 
     /// The roughness of `positions` and how many vertices it was read at. With `off_creases`, only
     /// vertices whose faces all lie within [`CREASE`] of their normal are read: at a vertex on a
     /// sharp edge the neighbours stand off the tangent plane by the part's own shape, not noise (a
     /// CAD mesh has almost no other vertices). A vertex with two faces on one exact plane
-    /// ([`drawn`]) reads as no noise: on a CAD mesh a rim vertex too gentle for [`CREASE`] (a
-    /// countersink's) would read its long triangles' slope as millimetres of noise.
-    fn roughness_where(&self, positions: &[Vec3], off_creases: bool) -> (f64, usize) {
+    /// ([`drawn`]) then reads `on_drawn` (`None`: it is not read). Mostly that is no noise: on a
+    /// CAD mesh a rim vertex too gentle for [`CREASE`] (a countersink's) would read its long
+    /// triangles' slope as millimetres of noise.
+    fn roughness_where(&self, positions: &[Vec3], off_creases: bool, on_drawn: Option<f64>) -> (f64, usize) {
         let faces = self.faces_at(positions);
         let crease_cos = CREASE.cos();
         let mut residuals: Vec<f64> = (0..positions.len())
@@ -182,9 +183,9 @@ impl Mesh {
                 if off_creases && around.iter().any(|&f| faces[f as usize].0.dot(normal) < crease_cos) {
                     return None;
                 }
-                // Drawn exactly, not measured: no noise there.
+                // Drawn exactly, not measured.
                 if off_creases && drawn(around.iter().map(|&f| faces[f as usize].0)) {
-                    return Some(0.0);
+                    return on_drawn;
                 }
                 Some(ring.iter().map(|&q| normal.dot(positions[q as usize] - positions[v])).sum::<f64>() / ring.len() as f64)
             })
@@ -337,7 +338,7 @@ impl Run {
 
     fn stage(&self, p: &[Vec3]) -> Stage {
         let (rms_moved, max_moved) = self.moved(p);
-        Stage { roughness: self.mesh.roughness(p), noise: self.mesh.roughness_where(p, true).0, rms_moved, max_moved }
+        Stage { roughness: self.mesh.roughness(p), noise: self.mesh.roughness_where(p, true, Some(0.0)).0, rms_moved, max_moved }
     }
 
     /// `p` with every position following its weld (a pass moves only the first copy of each).
@@ -414,9 +415,19 @@ pub fn noise_off_creases(scan: &Scan) -> Option<f64> {
 /// vertices; where most read as sharp, the noise itself tilts the faces that far.
 pub fn noise_off_creases_read(scan: &Scan) -> Option<(f64, f64)> {
     let run = Run::new(scan)?;
-    let (noise, read) = run.mesh.roughness_where(&run.original, true);
+    let (noise, read) = run.mesh.roughness_where(&run.original, true, Some(0.0));
     let free = run.mesh.fixed.iter().filter(|f| !**f).count();
     (read > 0).then(|| (noise, read as f64 / free.max(1) as f64))
+}
+
+/// [`noise_off_creases`] read only at the vertices that are not drawn exactly ([`drawn_share`]);
+/// `None` when there is none to read. On a CAD mesh these mostly stand off their neighbours alike,
+/// so they spread little; a measured mesh stored in coarse steps has many vertices drawn by the
+/// rounding alone, and the rest still show its noise.
+pub(crate) fn noise_off_drawn(scan: &Scan) -> Option<f64> {
+    let run = Run::new(scan)?;
+    let (noise, read) = run.mesh.roughness_where(&run.original, true, None);
+    (read > 0).then_some(noise)
 }
 
 /// The share of `scan`'s vertices with two faces on one exact plane: drawn (a CAD mesh, or a region
@@ -475,7 +486,7 @@ pub fn denoise_within(scan: &Scan, strength: Option<f64>, area: Option<&[bool]>)
     let measured = run.stage(&positions);
     Some(Denoised {
         roughness: measured.noise,
-        noise: run.mesh.roughness_where(&run.original, true).0,
+        noise: run.mesh.roughness_where(&run.original, true, Some(0.0)).0,
         positions,
         strength,
         suggested,
