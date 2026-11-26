@@ -1141,6 +1141,9 @@ pub struct Session {
     /// What is selected on a scan (`scan.select`), for the scan tools that work on part of one.
     /// View state: not part of the design and not an undo step (`scan.keep_selection` keeps it).
     pub scan_selection: Option<std::sync::Arc<cmd::scan::select::ScanSelected>>,
+    /// What is selected on a point cloud (`scan.select` with `cloud`): the points the fits take.
+    /// View state, as `scan_selection` is.
+    pub cloud_selection: Option<std::sync::Arc<cmd::scan::select::cloud::CloudSelected>>,
     /// The base `scan.stand_on_base` last stood a scan on by number: the scan and which base it
     /// was. Pressed again with nothing picked while the scan still stands there, it goes on to the
     /// next. View state: not part of the design.
@@ -1615,6 +1618,7 @@ impl Session {
             scan_survey: None,
             scan_verdict: None,
             scan_selection: None,
+            cloud_selection: None,
             scan_base_cycle: None,
             isocurves: Vec::new(),
             comb: None,
@@ -3961,6 +3965,7 @@ impl Session {
             scan_survey: None,
             scan_verdict: None,
             scan_selection: self.scan_selection.clone(),
+            cloud_selection: self.cloud_selection.clone(),
             scan_base_cycle: self.scan_base_cycle.clone(),
             isocurves: Vec::new(),
             comb: None,

@@ -4192,3 +4192,46 @@ fn a_hand_chosen_region_with_a_stray_piece_is_fitted_to_the_part_when_robust() {
     assert_eq!(firm["triangles"].as_u64(), Some(plate as u64), "{firm}");
     assert!(firm["warning"].as_str().unwrap().contains(&format!("{} of the {} triangles", triangles.len() - plate, triangles.len())), "{firm}");
 }
+
+/// `scan.select` works on a point cloud's points, and the fits with no point take them: a plate
+/// of points with a bump, the plate selected by a box and the bump left out.
+#[test]
+fn points_of_a_cloud_are_selected_and_the_fits_take_them() {
+    let mut points: Vec<Vec3> = (0..40).flat_map(|j| (0..40).map(move |i| Vec3::new(f64::from(i), f64::from(j), 0.0))).collect();
+    points.extend((0..100).map(|k| Vec3::new(f64::from(k % 10), f64::from(k / 10), 6.0)));
+    let mut s = session_with_a_cloud(&points);
+    let height = |r: &Value| r["plane"]["point"][2].as_f64().unwrap();
+
+    let boxed = run(&mut s, "scan.select", json!({"cloud": "Capture", "box": {"min": [-1, -1, -1], "max": [50, 50, 1]}}));
+    assert_eq!((boxed["points"].as_u64(), boxed["of"].as_u64(), boxed["triangles"].as_u64()), (Some(1600), Some(1700), Some(0)), "{boxed}");
+    assert_eq!(boxed["changed"], true);
+    let again = run(&mut s, "scan.select", json!({"cloud": "Capture", "box": {"min": [-1, -1, -1], "max": [50, 50, 1]}}));
+    assert_eq!(again["changed"], false, "{again}");
+
+    // The fit with no point takes what is selected; with `point` and `radius` it takes the region.
+    let plate = run(&mut s, "scan.fit_plane", json!({"cloud": "Capture", "keep": false}));
+    assert_eq!(plate["points"].as_u64(), Some(1600), "{plate}");
+    assert!(height(&plate).abs() < 1e-6, "{plate}");
+    let nearby = run(&mut s, "scan.fit_plane", json!({"cloud": "Capture", "keep": false, "point": [5, 5, 3], "radius": 4}));
+    assert!(nearby["points"].as_u64().unwrap() < 1700, "{nearby}");
+
+    // A brush adds, a box takes away, invert swaps, none clears.
+    let added = run(&mut s, "scan.select", json!({"cloud": "Capture", "mode": "add", "brush": {"points": [[5, 5, 6]], "radius": 0.5}}));
+    assert_eq!(added["points"].as_u64(), Some(1601), "{added}");
+    let taken = run(&mut s, "scan.select", json!({"cloud": "Capture", "mode": "remove", "box": {"min": [0, 0, -1], "max": [9, 9, 1]}}));
+    assert_eq!(taken["points"].as_u64(), Some(1601 - 100), "{taken}");
+    let swapped = run(&mut s, "scan.select", json!({"cloud": "Capture", "invert": true}));
+    assert_eq!(swapped["points"].as_u64(), Some(1700 - 1501), "{swapped}");
+    let none = run(&mut s, "scan.select", json!({"cloud": "Capture", "none": true}));
+    assert_eq!(none["points"].as_u64(), Some(0), "{none}");
+    // With nothing selected the fit takes the whole cloud again.
+    let whole = run(&mut s, "scan.fit_plane", json!({"cloud": "Capture", "keep": false}));
+    assert_eq!(whole["points"].as_u64(), Some(1700), "{whole}");
+
+    let refused = |s: &mut Session, p: Value| s.execute("scan.select", &p).unwrap_err().to_string();
+    assert!(refused(&mut s, json!({"cloud": "Capture", "triangles": [0]})).contains("scan's triangles"));
+    assert!(refused(&mut s, json!({"cloud": "Capture"})).contains("give one way"));
+    assert!(refused(&mut s, json!({"cloud": "Capture", "box": {"min": [1, 1, 1], "max": [0, 0, 0]}})).contains("below"));
+    assert!(refused(&mut s, json!({"cloud": "Capture", "brush": {"points": [[0, 0, 0]], "radius": 0}})).contains("above 0"));
+    assert!(refused(&mut s, json!({"cloud": "Nope", "all": true})).contains("no such point cloud"));
+}

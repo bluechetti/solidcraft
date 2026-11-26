@@ -49,7 +49,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("select")
         .contract(&SELECT_CONTRACT)
         .output(output_schema_for::<ScanSelectResult>)
-        .params("body?: the scan (default: the one selected on, else the selected or only one); mode?: replace|add|remove (default replace); and one of: brush: {points: [[x,y,z], …], radius: length} (the triangles within the radius of each place, reached across the scan from the one under it); polygon: {points: [[x,y,z], …] (its corners as the view draws them), direction: [x,y,z] (the way the view looks), eye?: [x,y,z] (a perspective view's), through?: bool (default false: only what is seen)}; region: {point, angle?: degrees (default 30), until?: facing|crease} (facing, the default: grown while the scan faces within the angle of the way it faces there, a face up to where its rounds turn away; crease: grown while it turns less than the angle from one triangle to the next, up to its creases, a whole hole wall or a fillet with the faces it runs into); shape: n | {point, like?: bool} (a shape Find All found; with like, every shape like it: cylinders and spheres of its radius, cones of its half angle, tori of its radii, planes facing its way); saved: name (a kept selection); triangles: [n, …]; all: true; none: true; invert: true; grow: rings; shrink: rings; unexplained: solid | {body: solid, piece?: n (default 0, the largest), grow?: rings} (the part of the scan the solid built from it does not explain yet: its triangles farther from the solid than five times the scan's tolerance, at least 0.5 mm, in pieces of 50 triangles or more; one piece selected, nothing when the solid explains the whole scan; read it with scan.reconstruct_selection to build what is missing). A view of the scan, not an undo step → body, triangles, area, of, changed, pieces? [{piece, triangles, area, side: missing|extra, deepest, point}], limit?"),
+        .params("body?: the scan (default: the one selected on, else the selected or only one); mode?: replace|add|remove (default replace); and one of: cloud?: a point cloud's name or id (select its points instead: one of brush, box: {min, max}, all, none, invert; mode as below; fit_* with the same cloud and no point take them; a view, not drawn); brush: {points: [[x,y,z], …], radius: length} (the triangles within the radius of each place, reached across the scan from the one under it); polygon: {points: [[x,y,z], …] (its corners as the view draws them), direction: [x,y,z] (the way the view looks), eye?: [x,y,z] (a perspective view's), through?: bool (default false: only what is seen)}; region: {point, angle?: degrees (default 30), until?: facing|crease} (facing, the default: grown while the scan faces within the angle of the way it faces there, a face up to where its rounds turn away; crease: grown while it turns less than the angle from one triangle to the next, up to its creases, a whole hole wall or a fillet with the faces it runs into); shape: n | {point, like?: bool} (a shape Find All found; with like, every shape like it: cylinders and spheres of its radius, cones of its half angle, tori of its radii, planes facing its way); saved: name (a kept selection); triangles: [n, …]; all: true; none: true; invert: true; grow: rings; shrink: rings; unexplained: solid | {body: solid, piece?: n (default 0, the largest), grow?: rings} (the part of the scan the solid built from it does not explain yet: its triangles farther from the solid than five times the scan's tolerance, at least 0.5 mm, in pieces of 50 triangles or more; one piece selected, nothing when the solid explains the whole scan; read it with scan.reconstruct_selection to build what is missing). A view of the scan, not an undo step → body, triangles, area, of, changed, pieces? [{piece, triangles, area, side: missing|extra, deepest, point}], limit?"),
     CommandSpec::new("scan.select_inside_curve", "Select Inside Curve", crate::checked!("scan.select_inside_curve", select_inside))
         .icon("boundary_fill")
         .contract(&INSIDE_CONTRACT)
@@ -279,7 +279,7 @@ fn set(s: &mut Session, scan: &str, flags: Vec<bool>, cmd: &str) -> Result<Value
         .then(|| Arc::new(ScanSelected { scan: scan.to_owned(), selected: Arc::new(flags), count, area, stamp, key, held: Mutex::new(held) }));
     let changed = changed && !(before.is_none() && count == 0);
     let reply =
-        ScanSelectResult { body: scan.to_owned(), triangles: count, area, of, changed, pieces: None, limit: None, param_warnings: Vec::new() };
+        ScanSelectResult { body: scan.to_owned(), triangles: count, area, of, points: None, changed, pieces: None, limit: None, param_warnings: Vec::new() };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
 
@@ -307,6 +307,9 @@ fn combined(s: &Session, scan: &str, count: usize, found: &[bool], mode: Mode) -
 
 pub(super) fn select(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.select";
+    if p.get("cloud").is_some_and(|v| !v.is_null()) {
+        return cloud::select(s, p, cmd);
+    }
     let ways = ["brush", "polygon", "region", "shape", "saved", "triangles", "all", "none", "invert", "grow", "shrink", "unexplained"];
     let given: Vec<&str> = ways.iter().copied().filter(|k| p.get(*k).is_some_and(|v| !v.is_null() && *v != json!(false))).collect();
     let [way] = given[..] else {
@@ -650,6 +653,9 @@ pub(super) fn curve_from_selection(s: &mut Session, p: &Value) -> Result<Value> 
     };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }
+
+#[path = "scan_select_cloud.rs"]
+pub mod cloud;
 
 #[cfg(test)]
 #[path = "scan_select_tests.rs"]

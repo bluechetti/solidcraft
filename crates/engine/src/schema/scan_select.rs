@@ -109,6 +109,23 @@ pub struct ScanSelectParams {
     /// of triangles added round it, 0 to 1000).
     #[serde(default)]
     pub unexplained: Option<Value>,
+    /// Select a point cloud's points instead of a scan's triangles: its name or id. Then give one
+    /// of `brush` (the points within its radius of its places), `box`, `all`, `none` or `invert`.
+    #[serde(default)]
+    pub cloud: Option<String>,
+    /// With `cloud`: the points inside this box (corners in mm, both ends included).
+    #[serde(default, rename = "box")]
+    pub bounds: Option<ScanBox>,
+}
+
+/// A box of places in the design, for selecting a point cloud's points.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanBox {
+    /// Its least corner, in mm.
+    pub min: Point3,
+    /// Its greatest corner, in mm.
+    pub max: Point3,
 }
 
 /// A piece of a scan that a solid built from it does not explain: its triangles farther from
@@ -137,6 +154,10 @@ pub struct ScanSelectResult {
     pub triangles: usize,
     pub area: f64,
     pub of: usize,
+    /// With `cloud`: how many points are selected (`body` is the cloud, `of` its points; no
+    /// triangles).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub points: Option<usize>,
     /// Whether the selection is other than it was.
     pub changed: bool,
     /// With `unexplained`: every piece of the scan the solid does not explain, largest first
@@ -261,7 +282,7 @@ mod tests {
     fn the_selection_commands_take_these_keys() {
         assert_keys(
             input_schema_for::<ScanSelectParams>(),
-            &["all", "body", "brush", "grow", "invert", "mode", "none", "polygon", "region", "saved", "shape", "shrink", "triangles", "unexplained"],
+            &["all", "body", "box", "brush", "cloud", "grow", "invert", "mode", "none", "polygon", "region", "saved", "shape", "shrink", "triangles", "unexplained"],
         );
         assert_keys(input_schema_for::<ScanSelectInsideParams>(), &["body", "curves", "mode", "sketch"]);
         assert_keys(input_schema_for::<ScanKeepSelectionParams>(), &["name"]);

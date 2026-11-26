@@ -240,9 +240,8 @@ pub(super) fn denoise_scan(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
-/// The cloud `p` names (or the only one): its name, its points in the design, and the normals it
-/// states, turned with it.
-pub(super) fn cloud_points(s: &Session, p: &Value, cmd: &str) -> Result<(String, Vec<Vec3>, Option<Vec<Vec3>>)> {
+/// The cloud `p` names (by `cloud`, an id or a name) or the only one.
+pub(super) fn find_cloud<'a>(s: &'a Session, p: &Value, cmd: &str) -> Result<&'a solidcraft_doc::point_cloud::PointCloud> {
     let clouds = &s.doc.point_clouds;
     let cloud = match p.get("cloud").filter(|v| !v.is_null()) {
         Some(Value::Number(n)) => clouds.iter().find(|c| c.id.to_string() == n.to_string()),
@@ -254,7 +253,13 @@ pub(super) fn cloud_points(s: &Session, p: &Value, cmd: &str) -> Result<(String,
             _ => return Err(bad(cmd, "name the point cloud with `cloud`")),
         },
     };
-    let cloud = cloud.ok_or_else(|| bad(cmd, "no such point cloud"))?;
+    cloud.ok_or_else(|| bad(cmd, "no such point cloud"))
+}
+
+/// The cloud `p` names (or the only one): its name, its points in the design, and the normals it
+/// states, turned with it.
+pub(super) fn cloud_points(s: &Session, p: &Value, cmd: &str) -> Result<(String, Vec<Vec3>, Option<Vec<Vec3>>)> {
+    let cloud = find_cloud(s, p, cmd)?;
     let points: Vec<Vec3> = (0..cloud.len()).filter_map(|i| cloud.world_point(i)).collect();
     // Normals the file states, turned with the cloud.
     let column = |name: &str| cloud.complex.column(name, solidcraft_doc::point_cloud::On::Point).map(|c| c.values.0.clone());

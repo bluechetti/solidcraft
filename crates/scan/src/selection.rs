@@ -986,10 +986,36 @@ impl Topology {
     }
 }
 
+/// Which of `points` lie within `radius` of any of `places` (a point cloud's brush: one flag a
+/// point). A grid of cells one radius wide keeps it near the cloud's size, not its size times the
+/// places'.
+pub fn points_near(points: &[Vec3], places: &[Vec3], radius: f64) -> Vec<bool> {
+    let mut near = vec![false; points.len()];
+    if points.is_empty() || places.is_empty() || !(radius.is_finite() && radius > 0.0) {
+        return near;
+    }
+    let grid = crate::poisson::PointGrid::new(points, radius);
+    for &place in places {
+        grid.within(place, radius, |k, _| near[k as usize] = true);
+    }
+    near
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_meshes::{fine_cuboid, revolved};
+
+    #[test]
+    fn a_brush_takes_the_points_within_its_radius_of_a_place() {
+        let points: Vec<Vec3> = (0..100).map(|i| Vec3::new(f64::from(i), 0.0, 0.0)).collect();
+        let near = points_near(&points, &[Vec3::new(10.0, 0.5, 0.0), Vec3::new(50.2, 0.0, 0.0)], 2.0);
+        let at: Vec<usize> = (0..100).filter(|&i| near[i]).collect();
+        assert_eq!(at, vec![9, 10, 11, 49, 50, 51, 52]);
+        assert!(points_near(&points, &[], 2.0).iter().all(|n| !n));
+        assert!(points_near(&points, &[Vec3::ZERO], 0.0).iter().all(|n| !n));
+        assert!(points_near(&[], &[Vec3::ZERO], 1.0).is_empty());
+    }
 
     /// A ball of radius 20 about the origin, its poles on Z.
     fn ball() -> (Vec<Vec3>, Vec<[u32; 3]>) {
