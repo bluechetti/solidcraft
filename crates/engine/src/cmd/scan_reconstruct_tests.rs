@@ -477,6 +477,57 @@ fn a_size_measured_on_the_part_checks_and_scales_the_scan() {
     assert!(neither.contains("give `between`"), "{neither}");
 }
 
+/// A scan with no true scale (here twice the part's size, as a phone's can be) is scaled by a size measured on the part and a
+/// second one that checks it. One size alone is refused beyond 5 %, and says to give a second. With the second, read before
+/// anything is scaled: it agrees (the end to end length scaled by the thickness's factor is the length measured), and `apply`
+/// scales the scan to an eighth of its volume. A second size that disagrees refuses it, and nothing is scaled.
+#[test]
+fn a_second_size_lets_a_scan_with_no_true_scale_be_scaled_by_more_than_five_percent() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 40, "width": 30, "height": 10}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.fillet", json!({"edges": [[0, 0, 5], [40, 0, 5], [40, 30, 5], [0, 30, 5]], "radius": 5}));
+    let (mut s, scan) = scanned(&part, &body, 3, "block-twice");
+    run(&mut s, "solid.scale", json!({"bodies": [scan], "factor": 2.0, "origin": [0, 0, 0]}));
+    let (thickness, ends) = (json!([[40, 30, 20], [40, 30, 0]]), json!([[0, 30, 10], [80, 30, 10]]));
+    let before = volume(&s, &scan);
+
+    let alone = run_err(&mut s, "scan.known_size", json!({"scan": scan, "between": thickness, "value": 10, "apply": true}));
+    assert!(alone.contains("more than a scanner's scale error") && alone.contains("`check`"), "{alone}");
+
+    let read = run(&mut s, "scan.known_size", json!({"scan": scan, "between": thickness, "value": 10, "check": {"between": ends, "value": 40}}));
+    assert!((read["factor"].as_f64().unwrap() - 0.5).abs() < 0.01 && read["applied"] == false, "{read}");
+    assert_eq!(read["check"]["agrees"], true, "{read}");
+    assert!((read["check"]["predicted"].as_f64().unwrap() - 40.0).abs() < 0.2, "{read}");
+
+    let disagrees = run_err(
+        &mut s,
+        "scan.known_size",
+        json!({"scan": scan, "between": thickness, "value": 10, "check": {"between": ends, "value": 50}, "apply": true}),
+    );
+    assert!(disagrees.contains("does not agree") && disagrees.contains("nothing was scaled"), "{disagrees}");
+    assert_eq!(volume(&s, &scan), before, "a refusal scales nothing");
+    // An allowance above the most (0.1) is refused: a loose check would pass a wrong reading.
+    let loose = run_err(
+        &mut s,
+        "scan.known_size",
+        json!({"scan": scan, "between": thickness, "value": 10, "check": {"between": ends, "value": 50}, "check_within": 0.25}),
+    );
+    assert!(loose.contains("`check_within`"), "{loose}");
+
+    let applied = run(
+        &mut s,
+        "scan.known_size",
+        json!({"scan": scan, "between": thickness, "value": 10, "check": {"between": ends, "value": 40}, "apply": true}),
+    );
+    assert_eq!(applied["applied"], true, "{applied}");
+    assert!((volume(&s, &scan) / before - 0.125).abs() < 0.001, "scaled by a half in each direction");
+    // About its middle, (40, 30, 10): the same faces are now 10 and 40 apart.
+    let (thickness, ends) = (json!([[40, 30, 15], [40, 30, 5]]), json!([[20, 30, 10], [60, 30, 10]]));
+    let again = run(&mut s, "scan.known_size", json!({"scan": scan, "between": thickness, "value": 10, "check": {"between": ends, "value": 40}}));
+    assert!(again["off"].as_f64().unwrap().abs() < 0.002 && again["check"]["agrees"] == true, "{again}");
+}
+
 /// Regions the user marks: a region kept from a selection with its extent; "ignore" leaves its
 /// part of the scan out of the verdict's share (a boss the model does not have, read worn), "keep"
 /// (don't touch) stops an agent rewriting the scan there, and the plan says what the model is for.
