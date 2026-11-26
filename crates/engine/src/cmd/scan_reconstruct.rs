@@ -86,12 +86,12 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("auto_constrain")
         .contract(&TO_CAD_CONTRACT)
         .output(output_schema_for::<ScanToCadResult>)
-        .params("body? (or scan?): mesh body (default: the selected or only one); clean?: bool (default true: the clean steps scan.survey names first: repair, remove floating, its tolerance, and denoise or fill holes when it names them); tolerance?: mm (set before Find All, instead of Survey's); rest?: 0 to 20 rounds of scan.reconstruct_rest after the proposed steps (default 6; 0: none): the automatic route in one command, as the scripted benchmark runs it: scan.find_all, scan.reconstruct, each step it proposes run into `<scan> Reconstructed` (a step whose fit verdict is worse, or that is refused, taken back), the rest rounds, then scan.verdict; one undo step. A scan in the wrong unit, or a wall or panel, builds nothing and says what to run in `next`. Run it first, then work on the verdict's places → body, solid?, steps [{command, kept, verdict?, explained?, why?}], kept, rest?, verdict?, next"),
+        .params("body? (or scan?): mesh body (default: the selected or only one); clean?: bool (default true: the clean steps scan.survey names first: repair, remove floating, its tolerance, and denoise or fill holes when it names them); tolerance?: mm (set before Find All, instead of Survey's); rest?: 0 to 20 rounds of scan.reconstruct_rest after the proposed steps (default 6; 0: none): the automatic route in one command, as the scripted benchmark runs it: scan.find_all, scan.reconstruct, each step it proposes run into `<scan> Reconstructed` (a step whose fit verdict is worse, or that is refused, taken back), the rest rounds, then scan.verdict; one undo step. A scan in the wrong unit, or a wall or panel, builds nothing and says what to run in `next`. Run it first, then work on the verdict's places What it builds is edited by name: the base prism's depth is the parameter `thickness` (a plate) or `length`, each hole's size `hole1_diameter` (`hole1_cb_diameter`, `hole1_cb_depth`, `hole1_csk_diameter`) and so on, `_2` after a name that is taken; change one with parameters.change. → body, solid?, steps [{command, kept, verdict?, explained?, why?}], kept, rest?, verdict?, next"),
     CommandSpec::new("scan.extrude_it", "Extrude It", crate::checked!("scan.extrude_it", fitted_extrude_it))
         .icon("extrude")
         .contract(&EXTRUDE_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
-        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); prism?: index of scan.reconstruct's prisms (default 0); into?: body to join (default: `<scan> Reconstructed`, made new when there is none); pattern?: bool (default true: a new prism whose outline repeats round its middle with lands on its tip circle, a gear, is the circle extruded, one gap cut through and the cut patterned, `count` in the reply; false: the whole outline in one sketch): the prism's profile sketched halfway along it off its walls exactly as fitted (lines and arcs from crossing to crossing, joins held tangent) and extruded symmetric to its depth; a drafted prism (its `draft` not 0) sketched at its low end and extruded tapered by its draft; one undo step → sketch, feature, solid, operation, lines, arcs, tangents, depth, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); prism?: index of scan.reconstruct's prisms (default 0); into?: body to join (default: `<scan> Reconstructed`, made new when there is none); pattern?: bool (default true: a new prism whose outline repeats round its middle with lands on its tip circle, a gear, is the circle extruded, one gap cut through and the cut patterned, `count` in the reply; false: the whole outline in one sketch): the prism's profile sketched halfway along it off its walls exactly as fitted (lines and arcs from crossing to crossing, joins held tangent) and extruded symmetric to its depth; a drafted prism (its `draft` not 0) sketched at its low end and extruded tapered by its draft; one undo step A straight prism that starts a body has its depth as a parameter: `thickness` when it is no deeper than its outline is wide, else `length` (`_2` after a name that is taken); a joined or drafted prism keeps a number. → sketch, feature, solid, operation, lines, arcs, tangents, depth, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
     CommandSpec::new("scan.revolve_it", "Revolve It", crate::checked!("scan.revolve_it", fitted_revolve_it))
         .icon("revolve")
         .contract(&REVOLVE_IT_CONTRACT)
@@ -106,7 +106,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("hole")
         .contract(&HOLE_IT_CONTRACT)
         .output(output_schema_for::<ScanBuildResult>)
-        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); hole?: index of scan.reconstruct's holes (default: the first with a `form`); thread?: bool (default true: a bore the size of a tap drill drilled as tapped, its thread listed; false: plain); into?: body to drill (default: `<scan> Reconstructed`): a hole read as a Hole feature makes it (its `form`: counterbore, countersink, drilled blind with its drill point or a flat bottom, tapped) drilled with Hole at its mouth along its axis, through or as deep as the scan has it, the sizes read as designed; one undo step → feature, solid, operation, depth, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
+        .params("body?: mesh body; selected?: bool (default false; true: the reading of the part of the scan selected, as scan.reconstruct with selected gave it); hole?: index of scan.reconstruct's holes (default: the first with a `form`); thread?: bool (default true: a bore the size of a tap drill drilled as tapped, its thread listed; false: plain); into?: body to drill (default: `<scan> Reconstructed`): a hole read as a Hole feature makes it (its `form`: counterbore, countersink, drilled blind with its drill point or a flat bottom, tapped) drilled with Hole at its mouth along its axis, through or as deep as the scan has it, the sizes read as designed; one undo step The hole's size is a parameter, `hole1_diameter` for hole 0 (`hole1_cb_diameter` and `hole1_cb_depth` for a counterbore, `hole1_csk_diameter` for a countersink); its depth stays a number. → feature, solid, operation, depth, fit {solid, before?, after: {within, explained, rms, points}, verdict: first|better|same|worse, note?} (the body measured against a sample of the scan before and after the step)"),
     CommandSpec::new("scan.loft_it", "Loft It", crate::checked!("scan.loft_it", fitted_loft_it))
         .icon("loft")
         .contract(&SHAPE_IT_CONTRACT)
@@ -1379,6 +1379,33 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
     let round = solidcraft_scan::hole_form::SNAP_SHARE * view.outcome().tolerance;
     let depth = solidcraft_scan::hole_form::snapped(prism.depth(), round);
     let (draft, name) = (prism.draft, format!("Extrude It {}", index + 1));
+    // A straight prism that starts a body is edited by its size: its depth is a parameter, `thickness` for a
+    // plate (shallower than its outline is wide), `length` otherwise. A joined prism, a drafted one and a
+    // part the scan has no outline for keep a plain number.
+    let distance = (draft == 0.0 && how == "new")
+        .then(|| {
+            // The outline's extent, an arc counted as the whole circle it is part of (a round plate has one corner).
+            let mut points: Vec<Vec2> = Vec::new();
+            for o in &outlines {
+                for (corner, piece) in o.corners.iter().zip(&o.pieces) {
+                    points.push(*corner);
+                    if let Piece::Arc { center, .. } = piece {
+                        let d = *corner - *center;
+                        let r = d.x.hypot(d.y);
+                        points.extend([Vec2::new(center.x - r, center.y - r), Vec2::new(center.x + r, center.y + r)]);
+                    }
+                }
+            }
+            let width = |axis: fn(&Vec2) -> f64| {
+                let (lo, hi) = points.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), c| (lo.min(axis(c)), hi.max(axis(c))));
+                hi - lo
+            };
+            let least = width(|c| c.x).min(width(|c| c.y));
+            let base = if least.is_finite() && depth <= least { "thickness" } else { "length" };
+            user_parameter(s, base, depth)
+        })
+        .flatten()
+        .map_or_else(|| json!(depth), |name| json!(name));
     // A join is measured: one that adds no more than a skin the scan's tolerance thick over its
     // outline, a prism the body already holds, is taken back (its walls a hair off the body's
     // would leave slivers whose stray faces a later cut trips on).
@@ -1389,7 +1416,7 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
     let build = |s: &mut Session, outlines: &[Outline], drawn: &mut Drawn| -> Result<(u64, Value)> {
         let sketch = sketch_outlines(s, &plane, &format!("Prism Profile {}", index + 1), outlines, &|_, _, _| None, drawn, round, false)?;
         let mut extrude = if draft == 0.0 {
-            json!({"sketch": sketch, "distance": depth, "direction": "symmetric", "name": name})
+            json!({"sketch": sketch, "distance": distance, "direction": "symmetric", "name": name})
         } else {
             // Sketched at the low end, the walls leaning in (a positive draft) as it goes up.
             json!({"sketch": sketch, "distance": depth, "direction": "positive", "taper": format!("{} deg", -drafted(draft)),
@@ -2155,6 +2182,15 @@ fn hole_name(index: usize) -> String {
     format!("Hole It {}", index + 1)
 }
 
+/// A user parameter holding `value` mm, named `base` (`base_2`, `base_3` ... when the name is taken), so that
+/// what Scan to CAD builds can be edited by name: the first free name, or `None` when none of twenty is.
+fn user_parameter(s: &mut Session, base: &str, value: f64) -> Option<String> {
+    (1..=20).find_map(|k| {
+        let name = if k == 1 { base.to_owned() } else { format!("{base}_{k}") };
+        run(s, "parameters.add", json!({"name": name, "expression": format!("{value} mm")})).ok().map(|_| name)
+    })
+}
+
 /// A hole's form as the reply lists it.
 fn hole_form(f: &solidcraft_scan::hole_form::Formed) -> ScanHoleForm {
     let kind = if f.counterbore.is_some() {
@@ -2267,17 +2303,21 @@ pub(super) fn hole_it(s: &mut Session, p: &Value) -> Result<Value> {
     let start = entry_on_body(s, &solid, form.mouth, form.inward, reach)
         .ok_or_else(|| bad(cmd, format!("the hole's axis does not run into `{solid}` near its mouth on the scan: build the part it is in first")))?;
     let mut params = json!({"position": at(start), "direction": at(form.inward), "targets": [solid], "name": free_hole_name(s, index)});
+    // A size as the parameter that holds it, or as the number when no name is free.
+    let size =
+        |s: &mut Session, base: &str, value: f64| user_parameter(s, base, value).map_or_else(|| json!(format!("{value} mm")), |name| json!(name));
     match bool_(p, "thread").unwrap_or(true).then_some(form.thread).flatten() {
         Some(thread) => params["thread"] = json!(thread),
-        None => params["diameter"] = json!(format!("{} mm", 2.0 * form.radius)),
+        // Its size is a parameter, `hole1_diameter` for the first hole, so it is edited by name.
+        None => params["diameter"] = size(s, &format!("hole{}_diameter", index + 1), 2.0 * form.radius),
     }
     if let Some((r, depth)) = form.counterbore {
         params["type"] = json!("counterbore");
-        params["cb_diameter"] = json!(format!("{} mm", 2.0 * r));
-        params["cb_depth"] = json!(format!("{depth} mm"));
+        params["cb_diameter"] = size(s, &format!("hole{}_cb_diameter", index + 1), 2.0 * r);
+        params["cb_depth"] = size(s, &format!("hole{}_cb_depth", index + 1), depth);
     } else if let Some((r, angle)) = form.countersink {
         params["type"] = json!("countersink");
-        params["cs_diameter"] = json!(format!("{} mm", 2.0 * r));
+        params["cs_diameter"] = size(s, &format!("hole{}_csk_diameter", index + 1), 2.0 * r);
         params["cs_angle"] = json!(format!("{} deg", angle.to_degrees()));
     }
     if let Some(depth) = form.depth {

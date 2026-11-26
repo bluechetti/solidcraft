@@ -1813,17 +1813,23 @@ fn a_profile_running_well_past_the_scan_is_refused() {
     assert!((by - 75.0).abs() < 1e-9 && (at.x + 121.0).abs() < 1e-9, "{at:?} {by}");
 }
 
-/// How far Scan to CAD's rebuilt volume is from the scan's own, as a share of it, for one of the known-answer
-/// parts in `tests/fixtures/rulercraft-known` (RulerCraft's, MIT OR Apache-2.0). Clean meshes of parts
-/// whose answers are fixed in advance; a part nothing was built from is infinitely far.
-fn known_part_off(name: &str) -> f64 {
+/// One of the known-answer parts in `tests/fixtures/rulercraft-known` (RulerCraft's, MIT OR Apache-2.0) as a scan,
+/// run through Scan to CAD: the design, the rebuilt body's name and the scan's own volume. Clean meshes of parts
+/// whose answers are fixed in advance.
+fn known_part_rebuilt(name: &str) -> (Session, String, f64) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../tests/fixtures/rulercraft-known/{name}.stl"));
     let mut s = Session::default();
     run(&mut s, "file.insert_mesh", json!({"path": path.to_string_lossy()}));
     let scan = s.model.state().bodies.iter().find(|b| b.body.is_mesh()).map(|b| b.name.clone()).unwrap();
     let scan_volume = volume(&s, &scan);
     run(&mut s, "scan.to_cad", json!({}));
-    let built = format!("{scan} Reconstructed");
+    (s, format!("{scan} Reconstructed"), scan_volume)
+}
+
+/// How far Scan to CAD's rebuilt volume is from the scan's own, as a share of it, for a known-answer part; a part
+/// nothing was built from is infinitely far.
+fn known_part_off(name: &str) -> f64 {
+    let (s, built, scan_volume) = known_part_rebuilt(name);
     match s.model.state().body(&built).and_then(|b| b.body.volume_at(0.01)) {
         Some(v) => ((v - scan_volume) / scan_volume).abs(),
         None => f64::INFINITY,
@@ -1851,4 +1857,22 @@ fn scan_to_cad_rebuilds_the_known_chamfers_extra_holes_and_steps() {
         ["chamfer", "l-chamfer", "hole-block", "stepped-cylinder"].into_iter().map(|name| (name, known_part_off(name))).collect();
     let wrong: Vec<_> = off.iter().filter(|(_, o)| *o >= 0.0025).collect();
     assert!(wrong.is_empty(), "off by more than 0.25 % of the scan's volume: {wrong:?}");
+}
+
+/// What Scan to CAD builds is edited by name: a plate's depth is `thickness`, a hole's size `hole1_diameter`. An L
+/// bracket's thickness read as 5 and then 10 mm gives exactly twice the volume; a smaller `hole1_diameter` leaves
+/// more of the counterbore plate: each name drives the feature it names.
+#[test]
+fn scan_to_cad_names_a_plates_thickness_and_a_holes_diameter() {
+    let (mut s, built, _) = known_part_rebuilt("l-plate");
+    run(&mut s, "parameters.change", json!({"name": "thickness", "expression": "5 mm"}));
+    let thin = volume(&s, &built);
+    run(&mut s, "parameters.change", json!({"name": "thickness", "expression": "10 mm"}));
+    let thick = volume(&s, &built);
+    assert!((thick / thin - 2.0).abs() < 1e-6, "{thin} then {thick}");
+
+    let (mut s, built, _) = known_part_rebuilt("counterbore");
+    let before = volume(&s, &built);
+    run(&mut s, "parameters.change", json!({"name": "hole1_diameter", "expression": "1 mm"}));
+    assert!(volume(&s, &built) > before, "a smaller hole leaves more of the plate");
 }
