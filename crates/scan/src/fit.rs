@@ -583,8 +583,8 @@ impl<'a> Facings<'a> {
 /// How noisy the scan is round the triangles `start`, and its typical edge there: a quadric fitted
 /// to each of a few small patches spread over them, the lower middle of how far their points
 /// stray from it (a patch over an edge strays far, and does not count); `None` with no patch to
-/// read. A patch drawn exactly (a CAD mesh's: at least [`DRAWN_PATCH`] of its vertices,
-/// [`denoise::drawn_share`]) is read off its sharp edges instead ([`denoise::noise_off_creases`]),
+/// read. A CAD mesh's patch (drawn exactly, and quiet where it is not:
+/// [`crate::survey::cad_drawn`]) is read off its sharp edges instead ([`denoise::noise_off_creases`]),
 /// as no noise when nothing there lies off one: every quadric on a coarse CAD mesh reaches over
 /// its rims, and read millimetres of noise where there is none.
 fn noise_round(scan: &Scan, neighbours: &EdgeNeighbours, start: &[usize]) -> Option<(f64, f64)> {
@@ -604,7 +604,7 @@ fn noise_round(scan: &Scan, neighbours: &EdgeNeighbours, start: &[usize]) -> Opt
         edges.extend(patch.iter().filter_map(|&t| scan.corners(t)).flat_map(|[a, b, c]| [a.dist(b), b.dist(c), c.dist(a)]));
         let (positions, triangles) = crate::survey::piece_of(scan, &patch);
         let piece = Scan::new(&positions, &triangles);
-        if denoise::drawn_share(&piece) >= DRAWN_PATCH {
+        if crate::survey::cad_drawn(&piece, crate::remesh::typical_edge(&piece), true) {
             spreads.push(denoise::noise_off_creases(&piece).unwrap_or(0.0));
             continue;
         }
@@ -626,7 +626,7 @@ fn noise_round(scan: &Scan, neighbours: &EdgeNeighbours, start: &[usize]) -> Opt
 }
 
 /// The share of a patch's vertices drawn exactly that makes it a CAD mesh's, not a scan's.
-const DRAWN_PATCH: f64 = 0.25;
+pub(crate) const DRAWN_PATCH: f64 = 0.25;
 
 /// The connected triangles from `seeds` (each of them taken, on the shape or not) that lie on
 /// `shape` by `rules`, and only those `open` allows when it is given.
@@ -1657,6 +1657,89 @@ mod tests {
             assert!((fitted.area - expected).abs() < 1e-6 * expected, "{pick:?}: {} against {expected}", fitted.area);
             assert!(fitted.max < 1e-9, "{}", fitted.max);
         }
+    }
+
+    /// A noisy flat patch stored in 0.05 mm steps: over a quarter of its vertices are drawn by the
+    /// rounding alone, but it was measured. Read as a CAD mesh's it had no noise, and a plane
+    /// picked on it was refused.
+    #[test]
+    fn a_plane_fits_noise_stored_in_coarse_steps() {
+        let (n, edge, sigma, step) = (40u32, 0.5, 0.1, 0.05);
+        let mut seed = 7u64;
+        let mut uniform = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut positions = Vec::new();
+        for j in 0..=n {
+            for i in 0..=n {
+                let (u, v) = (uniform().max(1e-12), uniform());
+                let gaussian = (-2.0 * u.ln()).sqrt() * (std::f64::consts::TAU * v).cos();
+                let z = (sigma * gaussian / step).round() * step;
+                positions.push(Vec3::new(f64::from(i) * edge, f64::from(j) * edge, z));
+            }
+        }
+        let mut triangles = Vec::new();
+        for j in 0..n {
+            for i in 0..n {
+                let k = j * (n + 1) + i;
+                triangles.push([k, k + 1, k + n + 2]);
+                triangles.push([k, k + n + 2, k + n + 1]);
+            }
+        }
+        let scan = Scan::new(&positions, &triangles);
+        let all: Vec<usize> = (0..scan.triangle_count()).collect();
+        let (noise, _) = noise_round(&scan, &edge_neighbours(&scan), &all).unwrap();
+        assert!((0.7..=1.3).contains(&(noise / sigma)), "{noise}");
+        let pick = nearest_triangle(&scan, Vec3::new(10.0, 10.0, 0.0)).unwrap();
+        let fitted = fit(&scan, pick, Kind::Plane, None).unwrap();
+        // Most of the 20 × 20 patch.
+        assert!(fitted.area > 300.0, "{}", fitted.area);
+    }
+
+    /// The same plate turned off the axes and stored in single precision, as an STL has it: its
+    /// faces on one plane differ by the rounding. Told apart only to the last bits it read as a
+    /// noisy scan, and Fit Plane took only part of the face (1121 of 1400 mm² at the first pick).
+    #[test]
+    fn a_plane_on_a_tilted_cad_mesh_in_single_precision_takes_the_whole_face() {
+        let (square, triangles) = crate::test_meshes::holed_plate(40.0, 5.0, 8.0, 48);
+        let (axis, shift) = (Vec3::new(0.3, 0.5, 0.8).normalized().unwrap(), Vec3::new(23.0, -11.0, 17.0));
+        let single = |v: f64| f64::from(v as f32);
+        let positions: Vec<Vec3> =
+            crate::test_meshes::turned(&square, axis, 0.7, shift).iter().map(|q| Vec3::new(single(q.x), single(q.y), single(q.z))).collect();
+        let scan = Scan::new(&positions, &triangles);
+        for pick in [Vec3::new(14.0, 3.0, 5.0), Vec3::new(-17.0, -17.0, 5.0), Vec3::new(0.0, 12.0, 5.0)] {
+            let at = crate::test_meshes::turned(&[pick], axis, 0.7, shift)[0];
+            let seed = nearest_triangle(&scan, at).unwrap();
+            let fitted = fit(&scan, seed, Kind::Plane, None).unwrap_or_else(|e| panic!("{pick:?}: {e}"));
+            // 40 × 40 less the 48-sided hole of radius 8.
+            let expected = 1600.0 - 24.0 * 64.0 * (PI / 24.0).sin();
+            assert!((fitted.area - expected).abs() < 1e-3 * expected, "{pick:?}: {} against {expected}", fitted.area);
+            assert!(fitted.max < 1e-4, "{pick:?}: {}", fitted.max);
+        }
+    }
+
+    /// A turned CAD part off the axes: on a patch at its step no vertex that is not drawn can be
+    /// read. That says nothing of noise, and the patch stays a CAD mesh's; taken for noisy, the pick
+    /// on its wall was refused.
+    #[test]
+    fn a_cad_patch_with_nothing_to_read_still_fits() {
+        use crate::test_meshes::{revolved, steps, turned};
+        let mut profile = vec![[0.0, 0.0]];
+        profile.extend(steps([0.0, 8.0], [3.0, 8.0], 2));
+        profile.extend(steps([3.0, 5.0], [6.0, 5.0], 2));
+        profile.push([6.0, 0.0]);
+        let (square, triangles) = revolved(&profile, 48, false);
+        let single = |v: f64| f64::from(v as f32);
+        let positions: Vec<Vec3> = turned(&square, Vec3::new(0.3, 0.5, 0.8).normalized().unwrap(), 0.7, Vec3::new(23.0, -11.0, 17.0))
+            .iter()
+            .map(|q| Vec3::new(single(q.x), single(q.y), single(q.z)))
+            .collect();
+        let scan = Scan::new(&positions, &triangles);
+        let fitted = fit(&scan, 112, Kind::Cylinder, None).unwrap();
+        assert!(fitted.area > 140.0, "{}", fitted.area);
     }
 
     #[test]

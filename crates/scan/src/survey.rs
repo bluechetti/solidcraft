@@ -7,6 +7,7 @@ use solidcore_record::Vec3;
 use solidcraft_geom::prelude::*;
 
 use crate::base::{self, BaseKind};
+use crate::fit::DRAWN_PATCH;
 use crate::{Scan, denoise, holes, pieces, place, remesh};
 
 /// How many places the noise is read at.
@@ -24,6 +25,12 @@ const PATCH_LEAST: usize = 200;
 const READ_ENOUGH: f64 = 0.75;
 /// The quadric's patches reach this many typical edges (some 80 triangles).
 const QUADRIC_EDGES: f64 = 3.0;
+/// On a place drawn exactly, noise off the vertices not drawn ([`denoise::noise_off_drawn`]) up to
+/// this share of a typical edge is a CAD mesh's. Where fewer than [`READ_ENOUGH`] points are read,
+/// CAD meshes with flat quads down their walls read up to 0.03 (12 sides or more, tilted, in single
+/// precision), and noisy grids stored in steps about as fine as their noise 0.15 or more. Walls of
+/// triangles alone (rings turned half a step) at two radii can read more, and are taken as noisy.
+const DRAWN_QUIET: f64 = 0.1;
 /// The most points sampled for the scan's size along its own directions.
 const SIZE_SAMPLE: usize = 200_000;
 
@@ -203,9 +210,11 @@ fn noise_places(scan: &Scan, area: f64) -> Vec<(f64, f64)> {
             // a point as far as a sharp edge does: the noisiest points are passed over as edges
             // (0.3 mm on 0.5 mm triangles read 0.15, with a quarter of the points read). Where
             // fewer than [`READ_ENOUGH`] were read, the quadric fitted to a few dozen points round
-            // each place is read too (Find All's reading), and the larger kept.
+            // each place is read too (Find All's reading), and the larger kept. Not on a CAD mesh's
+            // place ([`cad_drawn`]): a coarse one's rims are many of its points, and every quadric
+            // reaching over them read millimetres of noise.
             let edge = remesh::typical_edge(&piece);
-            let noise = if read < READ_ENOUGH && edge > 0.0 {
+            let noise = if read < READ_ENOUGH && edge > 0.0 && !cad_drawn(&piece, edge, false) {
                 crate::segment::noise_within(&piece, QUADRIC_EDGES * edge).map_or(noise, |q| q.max(noise))
             } else {
                 noise
@@ -213,6 +222,17 @@ fn noise_places(scan: &Scan, area: f64) -> Vec<(f64, f64)> {
             (noise.is_finite() && study.suggested.is_finite()).then_some((noise, study.suggested))
         })
         .collect()
+}
+
+/// Whether `piece`, of typical edge `edge`, is a CAD mesh's: drawn, as stored (at least
+/// [`DRAWN_PATCH`] of its vertices, [`denoise::drawn_share_stored`]), and the noise read at the
+/// vertices not drawn (the spread of how far they stand off their neighbours) at most
+/// [`DRAWN_QUIET`] of `edge`. Rounding alone draws many faces of a noisy mesh on one plane, so the
+/// share drawn is not enough. Where that noise cannot be read the answer is `unread`: Survey says
+/// no (on its large places a CAD mesh's can be read), Fit says yes (on its small patches they often
+/// all lie on sharp edges).
+pub(crate) fn cad_drawn(piece: &Scan, edge: f64, unread: bool) -> bool {
+    denoise::drawn_share_stored(piece) >= DRAWN_PATCH && denoise::noise_off_drawn(piece).map_or(unread, |noise| noise <= DRAWN_QUIET * edge)
 }
 
 /// The triangles `list` of `scan` as a mesh of their own.
@@ -301,6 +321,77 @@ mod tests {
         let look = look(&scan, 0.02).unwrap();
         assert!(look.noise.is_none_or(|n| n < 0.01), "{:?}", look.noise);
         assert_eq!(super::noise(&scan), look.noise);
+    }
+
+    /// A coarse CAD mesh of a stepped shaft, its walls in rings 2 mm apart, square to the axes and
+    /// tilted, in an STL's single precision: no noise. So many of its points lie on rims that the
+    /// quadric reading was taken too, and read 1 mm, which set Scan to CAD's tolerance to 3 mm.
+    #[test]
+    fn a_coarse_cad_shaft_reads_no_noise() {
+        use crate::test_meshes::{revolved, steps, turned};
+        let mut profile = vec![[0.0, 0.0]];
+        profile.extend(steps([0.0, 10.0], [10.0, 10.0], 5));
+        profile.extend(steps([10.0, 6.0], [20.0, 6.0], 5));
+        profile.push([20.0, 0.0]);
+        let (square, t) = revolved(&profile, 64, false);
+        let tilted = turned(&square, Vec3::new(0.3, 0.5, 0.8).normalized().unwrap(), 0.7, Vec3::new(23.0, -11.0, 17.0));
+        for (pose, p) in [("square", square), ("tilted", tilted)] {
+            let single = |v: f64| f64::from(v as f32);
+            let p: Vec<Vec3> = p.iter().map(|q| Vec3::new(single(q.x), single(q.y), single(q.z))).collect();
+            let scan = Scan::new(&p, &t);
+            let read = denoise::noise_off_creases_read(&scan).unwrap().1;
+            assert!(read < READ_ENOUGH, "{pose}: the case has its points on rims: {read}");
+            let look = look(&scan, 0.02).unwrap();
+            assert!(look.noise.is_some_and(|n| n < 0.01), "{pose}: {:?}", look.noise);
+            assert_eq!(super::noise(&scan), look.noise);
+        }
+    }
+
+    /// A noisy flat patch stored in 0.1 mm steps: many faces fall on one exact plane by the
+    /// rounding alone, but it was measured, and its noise is read.
+    #[test]
+    fn noise_stored_in_coarse_steps_is_still_read() {
+        noisy_grid_in_steps_reads_its_noise(0.1);
+    }
+
+    /// The same in 0.5 mm steps: most faces fall on one plane, and every vertex that does not reads
+    /// as on a sharp edge, so nothing says the mesh is quiet there.
+    #[test]
+    fn noise_stored_in_steps_past_it_is_still_read() {
+        noisy_grid_in_steps_reads_its_noise(0.5);
+    }
+
+    fn noisy_grid_in_steps_reads_its_noise(step: f64) {
+        let (n, edge, sigma) = (40u32, 0.5, 0.3);
+        let mut seed = 7u64;
+        let mut uniform = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut positions = Vec::new();
+        for j in 0..=n {
+            for i in 0..=n {
+                let (u, v) = (uniform().max(1e-12), uniform());
+                let gaussian = (-2.0 * u.ln()).sqrt() * (std::f64::consts::TAU * v).cos();
+                let z = (sigma * gaussian / step).round() * step;
+                positions.push(Vec3::new(f64::from(i) * edge, f64::from(j) * edge, z));
+            }
+        }
+        let mut triangles = Vec::new();
+        for j in 0..n {
+            for i in 0..n {
+                let k = j * (n + 1) + i;
+                triangles.push([k, k + 1, k + n + 2]);
+                triangles.push([k, k + n + 2, k + n + 1]);
+            }
+        }
+        let scan = Scan::new(&positions, &triangles);
+        let drawn = denoise::drawn_share(&scan);
+        assert!(drawn >= DRAWN_PATCH, "the case has the faces of a drawn mesh: {drawn}");
+        let noise = look(&scan, 0.02).unwrap().noise;
+        assert!(noise.is_some_and(|read| (0.8..=1.2).contains(&(read / sigma))), "{noise:?}");
     }
 
     /// Nothing to look at is no look, not a panic.
