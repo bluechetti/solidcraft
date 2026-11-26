@@ -317,15 +317,20 @@ fn chamfers(faces: &[Face], middles: &[Vec3], size: f64, skip: &BTreeSet<usize>)
                 let rows = [[na.x, na.y, na.z], [nb.x, nb.y, nb.z], [e.x, e.y, e.z]];
                 let Some(x) = crate::symmetry::solve3(&rows, [na.dot(pa), nb.dot(pb), e.dot(c)]) else { continue };
                 let p0 = Vec3::new(x[0], x[1], x[2]);
-                // The leg along each face: from the sharp edge, across the face towards its middle,
-                // to where the chamfer's plane cuts it.
-                let leg = |n: Vec3, face: usize| -> Option<(f64, Vec3)> {
-                    let along = e.cross(n).normalized()?;
-                    let along = if along.dot(middles[face] - p0) < 0.0 { -along } else { along };
+                // The leg along each face: from the sharp edge, across the face the way the chamfer
+                // lies (its middle is between its two legs), to where the chamfer's plane cuts it.
+                // Not the way the face's own middle lies: an L's top has its middle across its
+                // inner edge, and a hole's many small triangles pull a face's middle about.
+                // The way is judged with the other face's part of the middle taken off: at an
+                // obtuse corner a middle near one face lies behind the edge as the other sees it.
+                let (Some(across_a), Some(across_b)) = (e.cross(na).normalized(), e.cross(nb).normalized()) else { continue };
+                let leg = |along: Vec3, other: Vec3| -> Option<(f64, Vec3)> {
+                    let own = (c - p0) - other * other.dot(c - p0);
+                    let along = if along.dot(own) < 0.0 { -along } else { along };
                     let cuts = along.dot(nk);
                     (cuts.abs() > 0.1).then(|| (((c - p0).dot(nk)) / cuts, along))
                 };
-                let (Some((ta, ua)), Some((tb, ub))) = (leg(na, a), leg(nb, b)) else { continue };
+                let (Some((ta, ua)), Some((tb, ub))) = (leg(across_a, across_b), leg(across_b, across_a)) else { continue };
                 let (longer, shorter) = (ta.max(tb), ta.min(tb));
                 if shorter < CHAMFER_LEAST * size || longer > CHAMFER_MOST * size || (longer - shorter) > CHAMFER_LEGS_EVEN * longer {
                     continue;
@@ -2529,6 +2534,49 @@ mod tests {
 
     fn cylinder(point: Vec3, axis: Vec3, radius: f64) -> Face {
         Face { shape: Shape::Cylinder { point, axis, radius }, area: 100.0 }
+    }
+
+    /// An L-shaped plate 8 thick, its inner top edge (along X at y = 20) chamfered 1.5: the
+    /// chamfer is read whichever side of that edge the top's middle lies. A CAD export's top has
+    /// its triangles' corners crowded round a hole in the L's other leg, so their middle lies at
+    /// y ≈ 26, across the edge (the plate in RulerCraft's fixtures, its chamfer missed).
+    #[test]
+    fn an_ls_inner_chamfer_is_read_wherever_the_tops_middle_lies() {
+        let slope = Vec3::new(0.0, 1.0, 1.0).normalized().unwrap();
+        let faces = [
+            plane_at(Vec3::new(0.0, 0.0, 8.0), Vec3::Z, 1421.8),
+            plane_at(Vec3::new(0.0, 20.0, 0.0), Vec3::Y, 260.0),
+            plane_at(Vec3::new(40.0, 19.25, 7.25), slope, 84.9),
+            plane_at(Vec3::new(0.0, 0.0, 0.0), -Vec3::Z, 1571.8),
+        ];
+        let chamfer_middle = Vec3::new(40.0, 19.25, 7.25);
+        for top_middle in [Vec3::new(15.26, 26.2, 8.0), Vec3::new(30.0, 10.0, 8.0)] {
+            let middles = [top_middle, Vec3::new(40.0, 20.0, 3.25), chamfer_middle, Vec3::new(20.0, 15.0, 0.0)];
+            let found = chamfers(&faces, &middles, 80.0, &BTreeSet::new());
+            assert_eq!(found.len(), 1, "top's middle at {top_middle:?}: {found:?}");
+            assert_eq!(found[0].face, 2);
+            assert!((found[0].distance - 1.5).abs() < 1e-9, "{found:?}");
+            assert!(found[0].edge.dist(Vec3::new(40.0, 20.0, 8.0)) < 1e-9, "on the sharp edge: {found:?}");
+        }
+    }
+
+    /// Two faces meeting along Z at 150°, the corner chamfered 1.5 each way. Uneven triangles move
+    /// the chamfer's middle off halfway across it: toward one face it lies behind the edge as the
+    /// other face sees it, and the chamfer is read all the same.
+    #[test]
+    fn an_obtuse_corners_chamfer_is_read_with_its_middle_near_either_face() {
+        let (u, v) = (Vec3::X, Vec3::new(-0.75f64.sqrt(), 0.5, 0.0));
+        let slope = Vec3::new(0.5, 1.0 + 0.75f64.sqrt(), 0.0).normalized().unwrap();
+        for share in [0.25, 0.5, 0.75] {
+            let middle = (u * share + v * (1.0 - share)) * 1.5;
+            let faces = [plane_at(u * 20.0, -Vec3::Y, 400.0), plane_at(v * 20.0, v.cross(Vec3::Z), 400.0), plane_at(middle, slope, 30.0)];
+            let middles = [u * 20.0, v * 20.0, middle];
+            let found = chamfers(&faces, &middles, 80.0, &BTreeSet::new());
+            assert_eq!(found.len(), 1, "middle {share} of the way to u: {found:?}");
+            assert_eq!(found[0].face, 2);
+            assert!((found[0].distance - 1.5).abs() < 1e-9, "{found:?}");
+            assert!(found[0].edge.dist(Vec3::ZERO) < 1e-9, "on the sharp edge: {found:?}");
+        }
     }
 
     /// A box seen from the side is no prism of its own. Faces: the box's front, back, left, right,
