@@ -318,6 +318,8 @@ pub struct ViewportBuilder {
     pub maximize_button: Option<bool>,
 
     pub window_level: Option<WindowLevel>,
+    /// The viewport whose native window should own this window in the WGPU backend.
+    pub native_owner: Option<ViewportId>,
 
     pub mouse_passthrough: Option<bool>,
 
@@ -510,6 +512,13 @@ impl ViewportBuilder {
     #[inline]
     pub fn with_taskbar(mut self, show: bool) -> Self {
         self.taskbar = Some(show);
+        self
+    }
+
+    /// Set this viewport's owner in the native WGPU backend.
+    #[inline]
+    pub fn with_native_owner(mut self, owner: ViewportId) -> Self {
+        self.native_owner = Some(owner);
         self
     }
 
@@ -731,6 +740,7 @@ impl ViewportBuilder {
             minimize_button: new_minimize_button,
             maximize_button: new_maximize_button,
             window_level: new_window_level,
+            native_owner: new_native_owner,
             mouse_passthrough: new_mouse_passthrough,
             taskbar: new_taskbar,
             window_type: new_window_type,
@@ -905,7 +915,14 @@ impl ViewportBuilder {
             recreate_window = true;
         }
 
-        if new_fullsize_content_view.is_some() && self.fullsize_content_view != new_fullsize_content_view {
+        if new_native_owner.is_some() && self.native_owner != new_native_owner {
+            self.native_owner = new_native_owner;
+            recreate_window = true;
+        }
+
+        if new_fullsize_content_view.is_some()
+            && self.fullsize_content_view != new_fullsize_content_view
+        {
             self.fullsize_content_view = new_fullsize_content_view;
             recreate_window = true;
         }

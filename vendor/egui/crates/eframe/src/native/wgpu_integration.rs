@@ -158,8 +158,22 @@ impl<'app> WgpuWinitApp<'app> {
         let mut shared = running.shared.borrow_mut();
         let SharedState { viewports, painter, viewport_from_window, clipboard_shortcuts, .. } = &mut *shared;
 
-        for viewport in viewports.values_mut() {
-            viewport.initialize_window(event_loop, &running.integration.egui_ctx, viewport_from_window, painter, *clipboard_shortcuts);
+        let pending: Vec<_> = viewports
+            .iter()
+            .filter(|(_, viewport)| viewport.window.is_none())
+            .map(|(&id, viewport)| (id, native_owner_window(viewports, &viewport.builder)))
+            .collect();
+        for (id, owner) in pending {
+            if let Some(viewport) = viewports.get_mut(&id) {
+                viewport.initialize_window(
+                    event_loop,
+                    &running.integration.egui_ctx,
+                    viewport_from_window,
+                    painter,
+                    *clipboard_shortcuts,
+                    owner.as_ref(),
+                );
+            }
         }
     }
 
@@ -167,8 +181,22 @@ impl<'app> WgpuWinitApp<'app> {
     fn recreate_window(&self, event_loop: &ActiveEventLoop, running: &WgpuWinitRunning<'app>) {
         let SharedState { egui_ctx, viewports, viewport_from_window, painter, clipboard_shortcuts, .. } = &mut *running.shared.borrow_mut();
 
-        initialize_or_update_viewport(viewports, ViewportIdPair::ROOT, ViewportClass::Root, self.native_options.viewport.clone(), None, painter)
-            .initialize_window(event_loop, egui_ctx, viewport_from_window, painter, *clipboard_shortcuts);
+        initialize_or_update_viewport(
+            viewports,
+            ViewportIdPair::ROOT,
+            ViewportClass::Root,
+            self.native_options.viewport.clone(),
+            None,
+            painter,
+        )
+        .initialize_window(
+            event_loop,
+            egui_ctx,
+            viewport_from_window,
+            painter,
+            *clipboard_shortcuts,
+            None,
+        );
     }
 
     #[cfg(target_os = "android")]
@@ -888,6 +916,7 @@ impl Viewport {
         windows_id: &mut HashMap<WindowId, ViewportId>,
         painter: &mut egui_wgpu::winit::Painter,
         clipboard_shortcuts: bool,
+        native_owner: Option<&Arc<Window>>,
     ) {
         if self.window.is_some() {
             return; // we already have one
@@ -897,7 +926,19 @@ impl Viewport {
 
         let viewport_id = self.ids.this;
 
-        match egui_winit::create_window(egui_ctx, event_loop, &self.builder) {
+        let owner = if viewport_id != ViewportId::ROOT
+            && self.builder.native_owner.is_some_and(|id| id != viewport_id)
+        {
+            // Keep this viewport pending until we can create it with its owner.
+            let Some(owner) = native_owner else {
+                return;
+            };
+            Some(owner)
+        } else {
+            None
+        };
+
+        match egui_winit::create_window_with_owner(egui_ctx, event_loop, &self.builder, owner) {
             Ok(window) => {
                 windows_id.insert(window.id(), viewport_id);
 
@@ -962,7 +1003,15 @@ fn is_viewport_or_descendant_visible(viewports: &Viewports, viewport_id: Viewpor
         .any(|child| child.ids.parent == viewport_id && child.ids.this != viewport_id && is_viewport_or_descendant_visible(viewports, child.ids.this))
 }
 
-fn render_immediate_viewport(beginning: Instant, shared: &RefCell<SharedState>, immediate_viewport: ImmediateViewport<'_>) {
+fn native_owner_window(viewports: &Viewports, builder: &ViewportBuilder) -> Option<Arc<Window>> {
+    viewports.get(&builder.native_owner?)?.window.clone()
+}
+
+fn render_immediate_viewport(
+    beginning: Instant,
+    shared: &RefCell<SharedState>,
+    immediate_viewport: ImmediateViewport<'_>,
+) {
     profiling::function_scope!();
 
     let ImmediateViewport { ids, builder, mut viewport_ui_cb } = immediate_viewport;
@@ -970,10 +1019,25 @@ fn render_immediate_viewport(beginning: Instant, shared: &RefCell<SharedState>, 
     let input = {
         let SharedState { egui_ctx, viewports, painter, viewport_from_window, clipboard_shortcuts, .. } = &mut *shared.borrow_mut();
 
-        let viewport = initialize_or_update_viewport(viewports, ids, ViewportClass::Immediate, builder, None, painter);
+        let owner = native_owner_window(viewports, &builder);
+        let viewport = initialize_or_update_viewport(
+            viewports,
+            ids,
+            ViewportClass::Immediate,
+            builder,
+            None,
+            painter,
+        );
         if viewport.window.is_none() {
             event_loop_context::with_current_event_loop(|event_loop| {
-                viewport.initialize_window(event_loop, egui_ctx, viewport_from_window, painter, *clipboard_shortcuts);
+                viewport.initialize_window(
+                    event_loop,
+                    egui_ctx,
+                    viewport_from_window,
+                    painter,
+                    *clipboard_shortcuts,
+                    owner.as_ref(),
+                );
             });
         }
 
