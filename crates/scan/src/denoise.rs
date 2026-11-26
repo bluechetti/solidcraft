@@ -200,6 +200,14 @@ impl Mesh {
         (MAD_TO_SIGMA * deviations[deviations.len() / 2] / (1.0 + 1.0 / self.mean_degree).sqrt(), residuals.len())
     }
 
+    /// Whether every vertex a roughness could be read at is drawn exactly ([`drawn`]).
+    fn all_drawn(&self, positions: &[Vec3]) -> bool {
+        let faces = self.faces_at(positions);
+        (0..positions.len())
+            .filter(|&v| !self.fixed[v] && slice(&self.ring_start, &self.ring, v).len() >= 3)
+            .all(|v| drawn(slice(&self.face_start, &self.faces, v).iter().map(|&f| faces[f as usize].0)))
+    }
+
     /// One pass: the face normals filtered bilaterally, then the vertices moved to lie square to them.
     fn pass(&self, positions: &[Vec3], spacing: f64) -> Vec<Vec3> {
         let faces = self.faces_at(positions);
@@ -420,14 +428,18 @@ pub fn noise_off_creases_read(scan: &Scan) -> Option<(f64, f64)> {
     (read > 0).then(|| (noise, read as f64 / free.max(1) as f64))
 }
 
-/// [`noise_off_creases`] read only at the vertices that are not drawn exactly ([`drawn_share`]);
-/// `None` when there is none to read. On a CAD mesh these mostly stand off their neighbours alike,
-/// so they spread little; a measured mesh stored in coarse steps has many vertices drawn by the
-/// rounding alone, and the rest still show its noise.
+/// [`noise_off_creases`] read only at the vertices that are not drawn exactly ([`drawn_share`]):
+/// 0 when every vertex is drawn, `None` when there are others but fewer than two of them can be
+/// read (the rest lie at what reads as a sharp edge), which says nothing. On a CAD mesh these mostly
+/// stand off their neighbours alike, so they spread little; a measured mesh stored in coarse steps
+/// has many vertices drawn by the rounding alone, and the rest still show its noise.
 pub(crate) fn noise_off_drawn(scan: &Scan) -> Option<f64> {
     let run = Run::new(scan)?;
     let (noise, read) = run.mesh.roughness_where(&run.original, true, None);
-    (read > 0).then_some(noise)
+    if read >= 2 {
+        return Some(noise);
+    }
+    run.mesh.all_drawn(&run.original).then_some(0.0)
 }
 
 /// The share of `scan`'s vertices with two faces on one exact plane: drawn (a CAD mesh, or a region
