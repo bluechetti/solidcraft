@@ -1812,3 +1812,53 @@ fn a_profile_running_well_past_the_scan_is_refused() {
     let (at, by) = super::past_scan(&plane, &[stray], bounds).expect("refused");
     assert!((by - 75.0).abs() < 1e-9 && (at.x + 121.0).abs() < 1e-9, "{at:?} {by}");
 }
+
+/// A plate 80 × 50 × 8 with a round boss (diameter 10, 6 high) standing on it, scanned and rebuilt
+/// by Extrude It for each prism: the plate's thickness is changed, and the plate keeps its lower
+/// face where it was (z = 0) while the boss stands on the plate's new top, not at the old number.
+/// (Before, each prism was sketched at a world number: the plate grew both ways and the boss
+/// stayed put.)
+#[test]
+fn a_boss_stands_on_the_plate_when_the_plate_is_made_thicker() {
+    let mut part = Session::default();
+    run(&mut part, "solid.box", json!({"corner": [0, 0, 0], "length": 80, "width": 50, "height": 8, "body_name": "Part"}));
+    run(&mut part, "solid.cylinder", json!({"diameter": 10, "height": 6, "base": [20, 25, 8], "operation": "join", "targets": ["Part"]}));
+    let (mut s, scan) = scanned_with_noise(&part, "Part", 0.0, "boss-on-plate");
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    let prisms = read["prisms"].as_array().unwrap().len();
+    for k in 0..prisms {
+        run(&mut s, "scan.extrude_it", json!({"prism": k}));
+    }
+    let built = format!("{scan} Reconstructed");
+    let span = |s: &Session| {
+        let state = s.model.state();
+        let b = state.body(&built).unwrap();
+        let m = solidcraft_kernel::measure(&b.body).unwrap();
+        (m.bbox.min.z, m.bbox.max.z)
+    };
+    let (lo, hi) = span(&s);
+    assert!(lo.abs() < 0.05 && (hi - 14.0).abs() < 0.05, "as scanned: {lo} to {hi} ({prisms} prisms)");
+    // Every prism's plane is an expression of the thicknesses now, not numbers.
+    let expressed = s
+        .doc
+        .features
+        .iter()
+        .filter(|f| matches!(f.kind, solidcraft_doc::FeatureKind::Sketch { plane: solidcraft_doc::PlaneRef::Placed { .. }, .. }))
+        .count();
+    assert_eq!(expressed, prisms, "every prism is anchored");
+    // The plate is the first extrude: its thickness parameter.
+    let thick = s
+        .doc
+        .features
+        .iter()
+        .find(|f| matches!(f.kind, solidcraft_doc::FeatureKind::Extrude { .. }))
+        .and_then(|f| f.param_names.first().cloned())
+        .unwrap();
+    run(&mut s, "parameters.change", json!({"name": thick, "expression": "10 mm"}));
+    let (lo, hi) = span(&s);
+    assert!(lo.abs() < 0.05, "the plate's lower face stayed: {lo}");
+    assert!((hi - 16.0).abs() < 0.05, "the boss stands on the new top, 10 + 6: {hi}");
+    let v = volume(&s, &built);
+    let expected = 80.0 * 50.0 * 10.0 + std::f64::consts::PI * 25.0 * 6.0;
+    assert!((v - expected).abs() < 0.01 * expected, "{v} against {expected}");
+}

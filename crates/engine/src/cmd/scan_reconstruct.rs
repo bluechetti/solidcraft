@@ -1496,10 +1496,15 @@ pub(super) fn extrude_it(s: &mut Session, p: &Value) -> Result<Value> {
         }
         None => None,
     };
+    let plain = patterned.is_none() && sharply.is_none() && draft == 0.0;
     let (sketch, feature) = match patterned.or(sharply) {
         Some(made) => made,
         None => build(s, &outlines, &mut drawn)?,
     };
+    // Standing where its thickness parameters say, not at a world number: see `anchor`.
+    if plain {
+        anchor::anchor_prism(s, sketch, &solid, depth, view.outcome().tolerance);
+    }
     // A prism whose profile is in pieces (a cylinder head's gasket flange in two lobes) is
     // extruded into a body for each, and a prism joined to a body it does not touch (a boss the
     // scan shows apart from the flange, the casting between them freeform) into a body of its
@@ -2800,3 +2805,6 @@ use shapes::{coil_it, loft_it, pipe_it, tubes_it};
 
 #[path = "scan_reconstruct_rest.rs"]
 mod rest;
+
+#[path = "scan_reconstruct_anchor.rs"]
+mod anchor;
