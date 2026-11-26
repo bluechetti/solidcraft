@@ -604,7 +604,7 @@ fn noise_round(scan: &Scan, neighbours: &EdgeNeighbours, start: &[usize]) -> Opt
         edges.extend(patch.iter().filter_map(|&t| scan.corners(t)).flat_map(|[a, b, c]| [a.dist(b), b.dist(c), c.dist(a)]));
         let (positions, triangles) = crate::survey::piece_of(scan, &patch);
         let piece = Scan::new(&positions, &triangles);
-        if crate::survey::cad_drawn(&piece, crate::remesh::typical_edge(&piece)) {
+        if crate::survey::cad_drawn(&piece, crate::remesh::typical_edge(&piece), true) {
             spreads.push(denoise::noise_off_creases(&piece).unwrap_or(0.0));
             continue;
         }

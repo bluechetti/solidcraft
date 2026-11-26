@@ -214,7 +214,7 @@ fn noise_places(scan: &Scan, area: f64) -> Vec<(f64, f64)> {
             // place ([`cad_drawn`]): a coarse one's rims are many of its points, and every quadric
             // reaching over them read millimetres of noise.
             let edge = remesh::typical_edge(&piece);
-            let noise = if read < READ_ENOUGH && edge > 0.0 && !cad_drawn(&piece, edge) {
+            let noise = if read < READ_ENOUGH && edge > 0.0 && !cad_drawn(&piece, edge, false) {
                 crate::segment::noise_within(&piece, QUADRIC_EDGES * edge).map_or(noise, |q| q.max(noise))
             } else {
                 noise
@@ -227,9 +227,11 @@ fn noise_places(scan: &Scan, area: f64) -> Vec<(f64, f64)> {
 /// Whether `piece`, of typical edge `edge`, is a CAD mesh's: drawn exactly (as Fit tells it by
 /// [`DRAWN_PATCH`]), and the noise read at the vertices not drawn (the spread of how far they stand
 /// off their neighbours) at most [`DRAWN_QUIET`] of `edge`. Rounding alone draws many faces of a
-/// noisy mesh on one plane, so the share drawn is not enough.
-pub(crate) fn cad_drawn(piece: &Scan, edge: f64) -> bool {
-    denoise::drawn_share(piece) >= DRAWN_PATCH && denoise::noise_off_drawn(piece).is_some_and(|noise| noise <= DRAWN_QUIET * edge)
+/// noisy mesh on one plane, so the share drawn is not enough. Where that noise cannot be read the
+/// answer is `unread`: Survey says no (on its large places a CAD mesh's can be read), Fit says yes
+/// (on its small patches they often all lie on sharp edges).
+pub(crate) fn cad_drawn(piece: &Scan, edge: f64, unread: bool) -> bool {
+    denoise::drawn_share(piece) >= DRAWN_PATCH && denoise::noise_off_drawn(piece).map_or(unread, |noise| noise <= DRAWN_QUIET * edge)
 }
 
 /// The triangles `list` of `scan` as a mesh of their own.
