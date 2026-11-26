@@ -597,6 +597,28 @@ pub struct ScanToCadStep {
     pub why: Option<String>,
 }
 
+/// Something the scan shows that the model does not hold, or holds worse: one line of Scan to CAD's loss report.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ScanLoss {
+    /// What kind of loss, as a fixed word: `nothing_built`, `step_refused`, `step_taken_back`, `set_aside`,
+    /// `rest_step_not_kept`, `unexplained_piece`, `out_of_tolerance`, `not_on_the_scan`, `feature_failed`,
+    /// `missing_feature`, `extra_material`, `coarse_tolerance`.
+    pub code: String,
+    /// `lost`: a feature the scan shows is not in the model. `degraded`: it is there, partly or off. `note`: a
+    /// reading that may hide a loss, or a step taken back that may have been redundant.
+    pub severity: String,
+    /// Where: a step's target (`hole 2`, `prism 1`), a command, or `model`.
+    pub subject: String,
+    /// What happened, in words, with the sizes.
+    pub message: String,
+    /// The size of the place in mm², when the loss is one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub area: Option<f64>,
+    /// A point at it, when the loss is a place.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at: Option<[f64; 3]>,
+}
+
 /// What Scan to CAD did.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ScanToCadResult {
@@ -615,6 +637,10 @@ pub struct ScanToCadResult {
     pub verdict: Option<serde_json::Value>,
     /// What to do next, in words: why nothing was built, or that the verdict lists what is open.
     pub next: String,
+    /// What the scan shows that the model does not hold, or holds worse, each with a code, a severity and where
+    /// (absent when nothing was lost). Shown whatever the verdict says: a verdict reads against a target.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub losses: Vec<ScanLoss>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
 }

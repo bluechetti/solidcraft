@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 
 use super::{built_name, reply, run};
 use crate::params::bad;
-use crate::schema::scan_reconstruct::{ScanRestResult, ScanRestRound, ScanToCadResult, ScanToCadStep};
+use crate::schema::scan_reconstruct::{ScanLoss, ScanRestResult, ScanRestRound, ScanToCadResult, ScanToCadStep};
 use crate::{Result, Session};
 
 /// Rounds at most, and the default; pieces passed over in a row before it stops.
@@ -96,6 +96,107 @@ fn record(command: &str, kept: bool, why: Option<String>) -> ScanToCadStep {
     ScanToCadStep { command: command.to_owned(), kept, verdict: None, explained: None, why }
 }
 
+/// A tolerance this share of the part's size or more hides features: Find All holds no shape closer than it, and
+/// every check reads against it (a 5 mm tolerance on a 67 mm plate smoothed its 3 and 5 mm holes away, and the
+/// verdict, read at that tolerance, saw nothing wrong).
+const COARSE_TOLERANCE_SHARE: f64 = 0.025;
+
+fn loss(code: &str, severity: &str, subject: impl Into<String>, message: impl Into<String>) -> ScanLoss {
+    ScanLoss { code: code.to_owned(), severity: severity.to_owned(), subject: subject.into(), message: message.into(), area: None, at: None }
+}
+
+/// What a step builds, as a loss names it: `hole 2`, `prism 1`, or the command when it names nothing.
+pub(super) fn subject_of(command: &str, params: &Value) -> String {
+    let index = |key: &str| params.get(key).and_then(Value::as_u64);
+    match command {
+        "scan.hole_it" | "scan.cut_it" | "scan.pattern_it" => index("hole").map(|k| format!("hole {}", k + 1)),
+        "scan.extrude_it" => index("prism").map(|k| format!("prism {}", k + 1)),
+        _ => None,
+    }
+    .unwrap_or_else(|| command.to_owned())
+}
+
+/// The loss, when the tolerance every step and check read against is a large share of the part's size.
+pub(super) fn coarse_tolerance(tolerance: f64, size: f64) -> Option<ScanLoss> {
+    (size > 0.0 && tolerance.is_finite() && tolerance >= COARSE_TOLERANCE_SHARE * size).then(|| {
+        loss(
+            "coarse_tolerance",
+            "note",
+            "scan",
+            format!(
+                "the tolerance is {tolerance:.2} mm, {:.1} % of the part's {size:.0} mm across: a feature smaller than that is not seen by Find All or by any check, so the verdict cannot say it is missing; give the scanner's accuracy with scan.tolerance, or a smaller one, and run Scan to CAD again",
+                100.0 * tolerance / size
+            ),
+        )
+    })
+}
+
+/// The losses the rest rounds and the verdict show, as the verdict gives them whatever its target: each round that
+/// proposed a step and kept none, a piece nothing could be proposed for, each issue that is a loss and each place
+/// the scan and the model differ by a feature's width.
+pub(super) fn losses_after(rest: Option<&Value>, verdict: Option<&Value>) -> Vec<ScanLoss> {
+    let mut out = Vec::new();
+    let names = |v: Option<&Value>| -> Vec<String> {
+        v.and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_owned).collect()).unwrap_or_default()
+    };
+    for round in rest.and_then(|r| r.get("rounds")).and_then(Value::as_array).into_iter().flatten() {
+        let (proposed, kept) = (names(round.get("proposed")), names(round.get("kept")));
+        if !kept.is_empty() {
+            continue;
+        }
+        let subject = round.get("piece").and_then(Value::as_u64).map_or_else(|| "piece".to_owned(), |k| format!("piece {}", k + 1));
+        let mut one = if proposed.is_empty() {
+            let note = round.get("note").and_then(Value::as_str).unwrap_or("nothing could be proposed for it");
+            loss("unexplained_piece", "lost", subject, format!("a piece of the scan the model does not hold, and no step builds it: {note}"))
+        } else {
+            loss(
+                "rest_step_not_kept",
+                "lost",
+                subject,
+                format!(
+                    "a piece of the scan the model does not hold: {} was tried and none of it kept (taken back as worse, or refused)",
+                    proposed.join(", ")
+                ),
+            )
+        };
+        one.area = round.get("area").and_then(Value::as_f64);
+        out.push(one);
+    }
+    let Some(verdict) = verdict else { return out };
+    for issue in verdict.get("issues").and_then(Value::as_array).into_iter().flatten() {
+        let (code, detail) =
+            (issue.get("code").and_then(Value::as_str).unwrap_or_default(), issue.get("detail").and_then(Value::as_str).unwrap_or_default());
+        let severity = match code {
+            "out_of_tolerance" | "feature_failed" => "lost",
+            "not_on_the_scan" => "degraded",
+            _ => continue,
+        };
+        out.push(loss(code, severity, "model", detail));
+    }
+    for place in verdict.get("places").and_then(Value::as_array).into_iter().flatten() {
+        let (Some(area), Some(depth)) = (place.get("area").and_then(Value::as_f64), place.get("depth").and_then(Value::as_f64)) else { continue };
+        let at = place.get("at").and_then(Value::as_array).and_then(|a| Some([a.first()?.as_f64()?, a.get(1)?.as_f64()?, a.get(2)?.as_f64()?]));
+        let missing = place.get("kind").and_then(Value::as_str) != Some("extra");
+        let (code, severity, what) = if missing {
+            ("missing_feature", "lost", "of the scan the model does not reach")
+        } else {
+            ("extra_material", "degraded", "of the model the scan does not have")
+        };
+        let mut one = loss(
+            code,
+            severity,
+            "model",
+            format!(
+                "{area:.0} mm² {what}, {depth:.2} mm off{}",
+                at.map_or(String::new(), |p| format!(", at [{:.1}, {:.1}, {:.1}]", p[0], p[1], p[2]))
+            ),
+        );
+        (one.area, one.at) = (Some(area), at);
+        out.push(one);
+    }
+    out
+}
+
 /// The clean steps Survey may name that Scan to CAD runs, as the scripted benchmark does.
 const CLEAN: [&str; 5] = ["scan.repair", "scan.remove_floating", "scan.fill_holes", "scan.tolerance", "scan.denoise"];
 
@@ -129,6 +230,7 @@ pub(super) fn to_cad(s: &mut Session, p: &Value) -> Result<Value> {
         kept: 0,
         rest: None,
         verdict: None,
+        losses: vec![loss("nothing_built", "lost", "scan", why.clone())],
         next: why,
         param_warnings: Vec::new(),
     };
@@ -176,9 +278,11 @@ pub(super) fn to_cad(s: &mut Session, p: &Value) -> Result<Value> {
         Err(e) => (Vec::new(), Some(e.to_string())),
     };
     let mut kept = 0;
+    let mut losses: Vec<ScanLoss> = Vec::new();
     for step in proposals {
         let Some(command) = step.get("command").and_then(Value::as_str).map(str::to_owned) else { continue };
         let mark = s.checkpoint();
+        let subject = subject_of(&command, step.get("params").unwrap_or(&Value::Null));
         match run(s, &command, step.get("params").cloned().unwrap_or(json!({}))) {
             Ok(r) => {
                 let fit = r.get("fit");
@@ -189,13 +293,30 @@ pub(super) fn to_cad(s: &mut Session, p: &Value) -> Result<Value> {
                 let worse = verdict.as_deref() == Some("worse");
                 if worse {
                     s.restore_checkpoint(mark)?;
+                    // Only a note: a step that does not help is often one the model needs no more (a fillet the
+                    // profile already holds); the verdict and the rest rounds say whether anything is missing.
+                    losses.push(loss(
+                        "step_taken_back",
+                        "note",
+                        subject,
+                        format!("{command} left the model further from the scan, so it was taken back; if it was to build something the scan shows, that is not in the model"),
+                    ));
                 } else {
                     kept += 1;
+                    if let Some(n) = r.get("set_aside").and_then(Value::as_u64).filter(|n| *n > 0) {
+                        losses.push(loss(
+                            "set_aside",
+                            "degraded",
+                            subject,
+                            format!("{command} set {n} of what the scan shows aside: the kernel refused them"),
+                        ));
+                    }
                 }
                 steps.push(ScanToCadStep { command, kept: !worse, verdict, explained, why: worse.then(|| "worse".to_owned()) });
             }
             Err(e) => {
                 s.restore_checkpoint(mark)?;
+                losses.push(loss("step_refused", "lost", subject, format!("{command} was refused: {e}")));
                 steps.push(record(&command, false, Some(e.to_string())));
             }
         }
@@ -214,5 +335,15 @@ pub(super) fn to_cad(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         format!("`{solid}` is built but not done: the verdict's issues, places and next say what is open; work on those places")
     };
-    reply(ScanToCadResult { body: scan, solid: built.then_some(solid), steps, kept, rest, verdict, next, param_warnings: Vec::new() })
+    if !built {
+        losses.push(loss("nothing_built", "lost", "scan", next.clone()));
+    }
+    losses.extend(losses_after(rest.as_ref(), verdict.as_ref()));
+    // The tolerance goes first when it is coarse: it can be why the rest is missing.
+    let size =
+        survey.get("own_size").and_then(Value::as_array).map_or(0.0, |a| a.iter().filter_map(Value::as_f64).map(|v| v * v).sum::<f64>().sqrt());
+    if let Some(note) = coarse_tolerance(super::super::tolerance::of(s, &scan), size) {
+        losses.insert(0, note);
+    }
+    reply(ScanToCadResult { body: scan, solid: built.then_some(solid), steps, kept, rest, verdict, next, losses, param_warnings: Vec::new() })
 }

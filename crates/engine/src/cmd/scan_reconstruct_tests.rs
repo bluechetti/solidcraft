@@ -1817,13 +1817,19 @@ fn a_profile_running_well_past_the_scan_is_refused() {
 /// run through Scan to CAD: the design, the rebuilt body's name and the scan's own volume. Clean meshes of parts
 /// whose answers are fixed in advance.
 fn known_part_rebuilt(name: &str) -> (Session, String, f64) {
+    let (s, built, scan_volume, _) = known_part_to_cad(name, json!({}));
+    (s, built, scan_volume)
+}
+
+/// [`known_part_rebuilt`] with `params` for Scan to CAD, and its reply.
+fn known_part_to_cad(name: &str, params: Value) -> (Session, String, f64, Value) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../tests/fixtures/rulercraft-known/{name}.stl"));
     let mut s = Session::default();
     run(&mut s, "file.insert_mesh", json!({"path": path.to_string_lossy()}));
     let scan = s.model.state().bodies.iter().find(|b| b.body.is_mesh()).map(|b| b.name.clone()).unwrap();
     let scan_volume = volume(&s, &scan);
-    run(&mut s, "scan.to_cad", json!({}));
-    (s, format!("{scan} Reconstructed"), scan_volume)
+    let reply = run(&mut s, "scan.to_cad", params);
+    (s, format!("{scan} Reconstructed"), scan_volume, reply)
 }
 
 /// How far Scan to CAD's rebuilt volume is from the scan's own, as a share of it, for a known-answer part; a part
@@ -1836,31 +1842,30 @@ fn known_part_off(name: &str) -> f64 {
     }
 }
 
+/// The known-answer parts of `tests/fixtures/rulercraft-known`.
+const KNOWN_PARTS: [&str; 14] = [
+    "bracket",
+    "chamfer",
+    "counterbore",
+    "countersink",
+    "fillet",
+    "hole-block",
+    "l-chamfer",
+    "l-fillet",
+    "l-plate",
+    "parallel-bracket",
+    "round-plate",
+    "sphere-seat",
+    "stepped-cylinder",
+    "window",
+];
+
 /// Scan to CAD on every known-answer part: the rebuilt volume within a quarter of a percent of the scan's. Plates with
 /// holes, pockets, bosses and a window; chamfers of one distance and of two; a plate with three holes of three sizes
 /// (a coarse CAD mesh's long triangles read as noise, and its small holes were smoothed away); a stepped cylinder.
 #[test]
 fn scan_to_cad_rebuilds_the_known_parts_to_their_volume() {
-    let wrong: Vec<(&str, f64)> = [
-        "bracket",
-        "chamfer",
-        "counterbore",
-        "countersink",
-        "fillet",
-        "hole-block",
-        "l-chamfer",
-        "l-fillet",
-        "l-plate",
-        "parallel-bracket",
-        "round-plate",
-        "sphere-seat",
-        "stepped-cylinder",
-        "window",
-    ]
-    .into_iter()
-    .map(|name| (name, known_part_off(name)))
-    .filter(|(_, off)| *off >= 0.0025)
-    .collect();
+    let wrong: Vec<(&str, f64)> = KNOWN_PARTS.into_iter().map(|name| (name, known_part_off(name))).filter(|(_, off)| *off >= 0.0025).collect();
     assert!(wrong.is_empty(), "off by more than 0.25 % of the scan's volume: {wrong:?}");
 }
 
@@ -1894,4 +1899,49 @@ fn scan_to_cad_names_a_plates_thickness_and_a_holes_diameter() {
     let before = volume(&s, &built);
     run(&mut s, "parameters.change", json!({"name": "hole1_diameter", "expression": "1 mm"}));
     assert!(volume(&s, &built) > before, "a smaller hole leaves more of the plate");
+}
+
+/// Scan to CAD's loss report is built from what the steps, the rest rounds and the verdict say, each loss with a code, a
+/// severity and where, and a tolerance that is a large share of the part's size is named (a verdict read at it cannot
+/// see what it hides).
+#[test]
+fn the_loss_report_lists_steps_pieces_places_and_a_coarse_tolerance() {
+    let rest = json!({"rounds": [
+        {"piece": 0, "area": 31.5, "proposed": ["scan.cut_it"], "kept": []},
+        {"piece": 1, "area": 9.0, "proposed": [], "kept": [], "note": "the shapes make no prism"},
+        {"piece": 2, "area": 5.0, "proposed": ["scan.cut_it"], "kept": ["scan.cut_it"], "note": "built"},
+    ]});
+    let verdict = json!({
+        "issues": [{"code": "no_plan", "detail": "no plan"}, {"code": "out_of_tolerance", "detail": "78 % of the scan is within"}],
+        "places": [{"at": [1, 2, 3], "depth": 0.9, "area": 40.0, "kind": "missing"}, {"at": [4, 5, 6], "depth": 0.3, "area": 10.0, "kind": "extra"}],
+    });
+    let losses = super::rest::losses_after(Some(&rest), Some(&verdict));
+    let codes: Vec<&str> = losses.iter().map(|l| l.code.as_str()).collect();
+    assert_eq!(codes, ["rest_step_not_kept", "unexplained_piece", "out_of_tolerance", "missing_feature", "extra_material"]);
+    assert_eq!((losses[0].area, losses[0].subject.as_str()), (Some(31.5), "piece 1"));
+    assert_eq!((losses[3].at, losses[3].severity.as_str()), (Some([1.0, 2.0, 3.0]), "lost"));
+    assert_eq!(losses[4].severity, "degraded");
+    assert!(super::rest::losses_after(None, None).is_empty());
+    assert!(super::rest::coarse_tolerance(5.1, 67.0).is_some(), "5.1 mm on a 67 mm plate hides its small holes");
+    assert!(super::rest::coarse_tolerance(0.1, 67.0).is_none());
+    assert_eq!(super::rest::subject_of("scan.hole_it", &json!({"hole": 1})), "hole 2");
+    assert_eq!(super::rest::subject_of("scan.extrude_it", &json!({})), "scan.extrude_it");
+}
+
+/// A part Scan to CAD rebuilds has no losses to list. The plate with three holes read at a tolerance of 5 mm (what
+/// Survey advised before it stopped reading a CAD mesh's long triangles as noise) loses two of them, and the report
+/// says why first: the tolerance is too coarse to see them.
+#[test]
+fn scan_to_cad_reports_no_losses_on_a_clean_rebuild_and_a_coarse_tolerance_on_a_lossy_one() {
+    // Every known part: nothing lost or degraded (a step taken back that the model did not need is only a note).
+    for name in KNOWN_PARTS {
+        let (_, _, _, reply) = known_part_to_cad(name, json!({}));
+        let serious: Vec<&Value> = reply["losses"].as_array().into_iter().flatten().filter(|l| l["severity"] != "note").collect();
+        assert!(serious.is_empty(), "{name}: {serious:?}");
+    }
+    let (s, built, scan_volume, reply) = known_part_to_cad("hole-block", json!({"tolerance": 5.0}));
+    assert_eq!(reply["losses"][0]["code"], "coarse_tolerance", "{reply}");
+    assert_eq!(reply["losses"][0]["severity"], "note", "{reply}");
+    let off = (volume(&s, &built) - scan_volume).abs() / scan_volume;
+    assert!(off > 0.01, "the holes are lost at that tolerance ({off}), which the note names");
 }
