@@ -153,18 +153,39 @@ fn extend_error(call: &'static str, e: solidcore_ops::Error, detail: Option<Stri
 }
 
 /// For each point, the face of the body nearest it, as its index in the body's face order (as
-/// [`face_points`]): by the exact closest point on each face, inside its trims
-/// (`SmApiFaceClosestPoint`, as [`face_at`]); `None` where no face answers.
+/// [`face_points`]): by the exact distance to each face as it is trimmed
+/// ([`solidcore_ops::Body::face_distances_within`], the first of equal ones); `None` where no
+/// face answers.
 pub(crate) fn nearest_faces(body: &Body, points: &[[f64; 3]]) -> Result<Vec<Option<usize>>> {
-    super::with_body("smlib_brep_nearest_faces", body, |k, b| {
-        let faces = b.face_list().to_vec();
-        let mut out = Vec::with_capacity(points.len());
-        for p in points {
-            let found = face_at(k, b, p3(*p), f64::INFINITY)?;
-            out.push(found.and_then(|f| faces.iter().position(|g| *g == f)));
-        }
-        Ok(out)
-    })
+    if !points.iter().flatten().all(|x| x.is_finite()) {
+        return Err(Error::Argument);
+    }
+    if points.is_empty() {
+        return Ok(Vec::new());
+    }
+    let (lo, hi) = super::measure::bounds(body)?;
+    let diagonal = lo.iter().zip(&hi).map(|(a, b)| (b - a) * (b - a)).sum::<f64>().sqrt();
+    // Every face lies inside the box: no face is farther from a point than the point is from the
+    // box's least corner, plus the box's diagonal.
+    let reach = points
+        .iter()
+        .map(|p| p.iter().zip(&lo).map(|(a, b)| (a - b) * (a - b)).sum::<f64>().sqrt() + diagonal)
+        .fold(1.0, f64::max);
+    let order = body.own_order();
+    let rows = ops_as("smlib_brep_nearest_faces", &[("brep", body)], refused, || body.face_distances_within(&order, points, reach))?;
+    Ok((0..points.len())
+        .map(|i| {
+            let mut best: Option<(f64, usize)> = None;
+            for (f, row) in rows.iter().enumerate() {
+                if let Some(d) = row.get(i).copied().flatten().filter(|d| d.is_finite())
+                    && best.is_none_or(|(b, _)| d < b)
+                {
+                    best = Some((d, f));
+                }
+            }
+            best.map(|(_, f)| f)
+        })
+        .collect())
 }
 
 /// A point inside each face, in the body's face order (`smlib_brep_face_points`:

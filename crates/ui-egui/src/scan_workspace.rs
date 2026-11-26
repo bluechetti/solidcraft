@@ -183,6 +183,8 @@ mod tests {
             "scan.combine",
             "scan.align_pairs",
             "scan.align_to_model",
+            "scan.align_datum",
+            "scan.wall_thickness",
             "scan.fillet",
             "scan.radius",
             "scan.flatten",

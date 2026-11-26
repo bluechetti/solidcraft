@@ -188,7 +188,6 @@
     "ui.scan_slice_hint": "Pick the plane to slice with: a construction plane, such as a symmetry plane, or a flat face. Front keeps the side the plane faces."
   },
   "de": {
-    "ALIGN": "AUSRICHTEN",
     "CLEAN": "BEREINIGEN",
     "FIT": "EINPASSEN",
     "cmd.scan_deviation": "Scan-Abweichung",

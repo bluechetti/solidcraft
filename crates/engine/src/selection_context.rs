@@ -396,11 +396,130 @@ pub fn current_sels(session: &Session, entry: &Entry, names: &mut NameCache) -> 
     lit
 }
 
-/// Describe what the session has selected, as what was clicked: see [`clicked`].
+/// Describe what the session has selected, as what was clicked: see [`clicked`]; and what is
+/// selected on a scan, as one more item ([`scan_selection`]).
 pub fn describe_selection(session: &mut Session) -> Context {
     // A whole-body selection (Select All) is described as the bodies it covers.
     let groups = clicked(session, &session.selected_items().unwrap_or_default());
-    describe_groups(session, &groups)
+    let mut context = describe_groups(session, &groups);
+    if let Some(item) = scan_selection(session) {
+        context.merge(Context { items: vec![item], ..Context::default() });
+    }
+    context
+}
+
+/// What is selected on a scan (painted, brushed or grown on its triangles) as one item, the way
+/// the scan commands take it (`selected: true`), with its size and a place on it where the scan
+/// shows; `None` when nothing is, or the scan changed since.
+pub fn scan_selection(session: &Session) -> Option<Entry> {
+    let picked = session.scan_selection.as_ref().filter(|k| k.count > 0 && k.current(session))?;
+    let mesh = crate::cmd::scan::shown_mesh(session, &picked.scan)?;
+    let corners =
+        || mesh.triangles.iter().zip(picked.selected.iter()).filter(|(_, on)| **on).filter_map(|(t, _)| mesh.positions.get(t[0] as usize).copied());
+    let (sum, n) = corners().fold((Vec3::ZERO, 0.0_f64), |(s, n), p| (s + p, n + 1.0));
+    let middle = sum / n.max(1.0);
+    // A corner of the selection, the one nearest its middle: on the scan, unlike the middle of a
+    // curved patch.
+    let far = |p: &Vec3| {
+        let d = *p - middle;
+        d.x * d.x + d.y * d.y + d.z * d.z
+    };
+    let at = corners().min_by(|a, b| far(a).total_cmp(&far(b)))?;
+    let mut detail = format!(
+        "selected on the scan, {} mm², around {}; scan commands work on it with `\"selected\": true` (scan.fit_plane, scan.reconstruct_selection, scan.denoise, …), `scan.keep_selection {{}}` keeps it",
+        num(picked.area),
+        point3(&json!([at.x, at.y, at.z]))
+    );
+    // What is known of it already, so the agent starts there: the shapes it lies on and the
+    // deviation on it, from the readings the session holds (nothing is measured here).
+    if let Some(read) = crate::cmd::scan::select::region_reading(session) {
+        detail.push_str(&region_words(&read));
+    }
+    let mut entry = Entry::new(Kind::Element, format!("{} triangles · {}", picked.count, picked.scan), detail);
+    entry.sels = vec![Sel::Body { name: picked.scan.clone() }];
+    Some(entry)
+}
+
+/// A region reading (`region_reading`) in words for the agent: its box, the shapes it lies on and
+/// the deviation on it, each only when the session has read it.
+fn region_words(read: &Value) -> String {
+    let mut out = String::new();
+    if let (Some(low), Some(high)) = (read.get("low"), read.get("high")) {
+        out.push_str(&format!("; box {} to {}", point3(low), point3(high)));
+    }
+    let shapes: Vec<String> = read
+        .get("shapes")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(3)
+        .map(|v| {
+            let kind = v.get("kind").and_then(Value::as_str).unwrap_or("?");
+            let share = v.get("share").and_then(Value::as_f64).map_or(String::new(), |x| format!(" {:.0} %", x * 100.0));
+            let radius = v.get("radius").and_then(Value::as_f64).map_or(String::new(), |r| format!(" r {}", num(r)));
+            format!("{kind}{radius}{share}")
+        })
+        .collect();
+    if !shapes.is_empty() {
+        out.push_str(&format!("; Find All reads it as {}", shapes.join(", ")));
+    }
+    match read.get("deviation") {
+        Some(d) if d.get("within").is_some() => {
+            let n = |k: &str| d.get(k).and_then(Value::as_f64).unwrap_or(0.0);
+            out.push_str(&format!(
+                "; against `{}`: {:.0} % within {} mm, from {} to +{} mm",
+                d.get("body").and_then(Value::as_str).unwrap_or("?"),
+                n("within") * 100.0,
+                num(n("tolerance")),
+                num(n("max_below")),
+                num(n("max_above"))
+            ));
+        }
+        Some(d) => out.push_str(&format!("; `{}` does not reach it", d.get("body").and_then(Value::as_str).unwrap_or("?"))),
+        None => out.push_str("; `scan.deviation {\"selected\": true}` measures the model on it alone"),
+    }
+    out
+}
+
+/// The rest of what the user is looking at, as items of their own: the dialog open (and on which
+/// ribbon tab) with the commands its OK would run as it is set now, and Find All's shapes coloured
+/// on a scan. Nothing when neither is. `dialog` is the open dialog's label and those commands, or why they are not ready yet.
+pub fn on_screen(session: &Session, tab: &str, dialog: Option<(String, Result<Vec<(String, Value)>, String>)>) -> Context {
+    let mut items = Vec::new();
+    if let Some((label, commands)) = dialog {
+        let open = if tab.is_empty() { "open".to_string() } else { format!("open on the {} tab", capitalised(&tab.to_lowercase())) };
+        let detail = match commands {
+            Ok(commands) if !commands.is_empty() => {
+                let run: Vec<String> = commands.iter().map(|(id, p)| format!("{id} {}", shortened(&p.to_string(), MAX_PARAMS_TEXT))).collect();
+                format!("{open}, set so that OK would run: {}", run.join("; "))
+            }
+            Ok(_) => open,
+            Err(why) => format!("{open}, not ready for OK: {why}"),
+        };
+        items.push(Entry::new(Kind::Other, format!("{label} dialog"), detail));
+    }
+    if let Some(shapes) = session.scan_shapes.as_ref().filter(|k| k.shown && k.current(session)) {
+        let detail = format!(
+            "{} regions of the scan coloured by Find All; `scan.find_all {{}}` lists them, each with a point on it",
+            shapes.outcome.segments.len()
+        );
+        items.push(Entry::new(Kind::Other, format!("Find All · {}", shapes.scan), detail));
+    }
+    Context { items, ..Context::default() }
+}
+
+/// The most characters of a dialog's command parameters the agent is told: a list of picked
+/// triangles or points can run to megabytes.
+const MAX_PARAMS_TEXT: usize = 600;
+
+/// `text` cut to `most` characters, `…` marking the cut.
+fn shortened(text: &str, most: usize) -> String {
+    if text.chars().count() <= most {
+        return text.to_string();
+    }
+    let mut cut: String = text.chars().take(most).collect();
+    cut.push('…');
+    cut
 }
 
 /// How many things were clicked to make a selection: the pieces a click on a rim or on a surface

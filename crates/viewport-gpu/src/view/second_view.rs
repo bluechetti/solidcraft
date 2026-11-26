@@ -82,7 +82,7 @@ impl Renderer {
         if target.as_ref().is_none_or(|t| t.frame.size != size || t.samples != samples || t.reversed != self.target.reversed_depth()) {
             // The old picture goes before the new one is asked for.
             *target = None;
-            match allocated(device, || self.supersampled(device, size, true)) {
+            match allocated(device, || self.supersampled(device, size)) {
                 Ok(made) => {
                     clear_resolve_targets(&mut encoder, made.resolve.as_ref());
                     *target = Some(ViewTarget { frame: made, samples, reversed: self.target.reversed_depth(), oit: None });
@@ -128,7 +128,7 @@ impl Renderer {
         // Bodies drawn moved (a joint drag) are drawn and culled where the frame moves them, as in
         // the window; the table is written only when the motions changed since the window's.
         self.motions.set(queue, &frame.motions);
-        self.pic.model.cull(device, queue, &frame.view_proj, [w, h], &frame.motions, frame.edge_px);
+        self.pic.model.cull(device, queue, &mut encoder, &frame.view_proj, [w, h], &frame.motions, frame.edge_px, None, None);
         queue.write_buffer(&self.uniform, 0, &uniform_bytes(frame, w, h, self.linear_out, reversed));
 
         let [sx, sy] = [scissor[0].min(size[0]), scissor[1].min(size[1])];

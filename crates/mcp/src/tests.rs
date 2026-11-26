@@ -2024,12 +2024,12 @@ fn batch_steps_use_earlier_results_and_check_their_own_expect() {
 /// steps), inside one checkpoint, instead of as one `engine.batch` request.
 #[test]
 fn a_bridged_batch_with_references_runs_step_by_step() {
-    let steps = json!([{"command": "a.one"}, {"command": "a.two", "params": {"from": "$0.ran", "all": ["$0"]}}]);
+    let steps = json!([{"command": "solid.box"}, {"command": "solid.cylinder", "params": {"from": "$0.ran", "all": ["$0"]}}]);
     let (b, body, is_error) = recorded_batch(Ok(json!({})), json!({"commands": steps}));
     assert!(!is_error, "{body}");
     assert!(!methods(&b).contains(&"engine.batch"), "{:?}", methods(&b));
-    let sent: Vec<&Value> = b.calls.iter().filter(|(_, p)| p["command"] == "a.two").map(|(_, p)| &p["params"]).collect();
-    assert_eq!(sent, [&json!({"from": "a.one", "all": [{"ran": "a.one"}]})]);
+    let sent: Vec<&Value> = b.calls.iter().filter(|(_, p)| p["command"] == "solid.cylinder").map(|(_, p)| &p["params"]).collect();
+    assert_eq!(sent, [&json!({"from": "solid.box", "all": [{"ran": "solid.box"}]})]);
     assert_eq!(body["completed"], 2, "{body}");
 }
 
@@ -5237,12 +5237,14 @@ fn auto_session_stays_headless_after_new_design() {
     let mut s = Server::new(Box::new(crate::Auto::new(Headless::default(), Box::new(move || seen.get()), None)));
     let r = raw_tool(&mut s, "execute", json!({"command": "solid.box", "params": {"length": 10, "width": 10, "height": 10}}));
     assert_ne!(r["result"]["isError"], json!(true), "{r}");
+    // The fork says the notice on the first reply after it appears, not on every reply.
+    assert!(text(&r).contains("headless session because the SolidCraft app was not found"), "{r}");
     let r = raw_tool(&mut s, "new_design", json!({"name": "PartB"}));
     assert_ne!(r["result"]["isError"], json!(true), "{r}");
     port.set(Some(1));
     let r = raw_tool(&mut s, "inspect_design", json!({}));
     assert!(!s.backend().has_ui());
-    assert!(text(&r).contains("headless session because the SolidCraft app was not found"), "{r}");
+    assert!(!text(&r).contains("headless session because the SolidCraft app was not found"), "said once: {r}");
 
     // 2) Calling `new_design` directly from a fresh headless session also commits the session to headless.
     let port = Rc::new(Cell::new(None::<u16>));
@@ -5250,10 +5252,11 @@ fn auto_session_stays_headless_after_new_design() {
     let mut s = Server::new(Box::new(crate::Auto::new(Headless::default(), Box::new(move || seen.get()), None)));
     let r = raw_tool(&mut s, "new_design", json!({}));
     assert_ne!(r["result"]["isError"], json!(true), "{r}");
+    assert!(text(&r).contains("headless session because the SolidCraft app was not found"), "{r}");
     port.set(Some(1));
     let r = raw_tool(&mut s, "inspect_design", json!({}));
     assert!(!s.backend().has_ui());
-    assert!(text(&r).contains("headless session because the SolidCraft app was not found"), "{r}");
+    assert!(!text(&r).contains("headless session because the SolidCraft app was not found"), "said once: {r}");
 
     // 3) A failing `engine.script` that already ran `file.new` before a later step failed
     // still commits the session to headless (its `file.new` effect was kept on the session).
@@ -6222,7 +6225,7 @@ fn the_instructions_tell_the_agent_to_use_the_selection() {
 /// Counts, positions and volumes are specified independently of inspect.measure (#21797).
 #[test]
 fn inspect_design_lists_repeated_body_placements_and_filters_their_world_names() {
-    for opts in [crate::Options::default(), crate::Options { compact: true }] {
+    for opts in [crate::Options::default(), crate::Options { compact: true, ..Default::default() }] {
         let mut s = Server::new(Box::new(Headless::default())).with_options(opts);
         let exec = |s: &mut Server, command: &str, params: Value| tool(s, "execute", json!({"command":command, "params":params}));
         let part = exec(&mut s, "component.create", json!({"name":"Part", "grounded":false}));
@@ -6270,8 +6273,11 @@ fn inspect_design_lists_repeated_body_placements_and_filters_their_world_names()
                 }
             }
         } else {
-            let refused = raw_tool(&mut s, "inspect_design", json!({"bodies":["Box (Part:2)"]}));
-            assert_eq!(refused["error"]["code"], -32602, "noncompact arguments are unchanged: {refused}");
+            // The fork takes a list of body names without compact output too (docs/mcp.md): the
+            // one body, where upstream refuses the argument.
+            let listed = tool(&mut s, "inspect_design", json!({"bodies":["Box (Part:2)"], "measure":false, "sketches":false, "joints":false}));
+            assert_eq!(listed["bodies"].as_array().unwrap().len(), 1, "{listed}");
+            assert_eq!(listed["bodies"][0]["name"], "Box (Part:2)", "{listed}");
         }
         exec(&mut s, "browser.visibility", json!({"paths":[[second]], "visible":false}));
         exec(&mut s, "occurrence.move", json!({"occurrence":third, "to_matrix":[[0,-1,0,0],[1,0,0,50],[0,0,1,7]], "capture":false}));

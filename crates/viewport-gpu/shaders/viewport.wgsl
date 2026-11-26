@@ -250,11 +250,11 @@ fn vs_tri_inst(
     @location(6) word: u32,
     @location(9) s: u32,
 ) -> TOut {
-    return inst_vertex(p, n, r0, r1, r2, c, s);
+    return inst_vertex(p, n, r0, r1, r2, word, s);
 }
 
 /// `vs_tri_inst`'s vertex (an entry point cannot be called; this can).
-fn inst_vertex(p: vec3<f32>, n: vec3<f32>, r0: vec4<f32>, r1: vec4<f32>, r2: vec4<f32>, c: u32, s: u32) -> TOut {
+fn inst_vertex(p: vec3<f32>, n: vec3<f32>, r0: vec4<f32>, r1: vec4<f32>, r2: vec4<f32>, word: u32, s: u32) -> TOut {
     let q = vec4<f32>(p, 1.0);
     let c = word & ~HOVER_FLAG;
     let e = palette_entry(c);
@@ -285,11 +285,11 @@ fn vs_tri_inst_painted(
     @location(3) r0: vec4<f32>,
     @location(4) r1: vec4<f32>,
     @location(5) r2: vec4<f32>,
-    @location(6) c: u32,
+    @location(6) word: u32,
     @location(7) paint: u32,
     @location(9) s: u32,
 ) -> TOut {
-    var o = inst_vertex(p, n, r0, r1, r2, c, s);
+    var o = inst_vertex(p, n, r0, r1, r2, word, s);
     o.c = painted(o.c, paint);
     return o;
 }
@@ -316,7 +316,7 @@ fn vs_tri_inst_flat(
     @location(6) word: u32,
     @location(9) s: u32,
 ) -> FOut {
-    return flat_inst_vertex(p, r0, r1, r2, c, s);
+    return flat_inst_vertex(p, r0, r1, r2, word, s);
 }
 
 /// `vs_tri_inst_flat` with a colour painted on each vertex (vertex buffer 2).
@@ -326,17 +326,17 @@ fn vs_tri_inst_flat_painted(
     @location(3) r0: vec4<f32>,
     @location(4) r1: vec4<f32>,
     @location(5) r2: vec4<f32>,
-    @location(6) c: u32,
+    @location(6) word: u32,
     @location(7) paint: u32,
     @location(9) s: u32,
 ) -> FOut {
-    var o = flat_inst_vertex(p, r0, r1, r2, c, s);
+    var o = flat_inst_vertex(p, r0, r1, r2, word, s);
     o.c = painted(o.c, paint);
     return o;
 }
 
 /// `vs_tri_inst_flat`'s vertex (an entry point cannot be called; this can).
-fn flat_inst_vertex(p: vec3<f32>, r0: vec4<f32>, r1: vec4<f32>, r2: vec4<f32>, c: u32, s: u32) -> FOut {
+fn flat_inst_vertex(p: vec3<f32>, r0: vec4<f32>, r1: vec4<f32>, r2: vec4<f32>, word: u32, s: u32) -> FOut {
     let q = vec4<f32>(p, 1.0);
     let c = word & ~HOVER_FLAG;
     let e = palette_entry(c);

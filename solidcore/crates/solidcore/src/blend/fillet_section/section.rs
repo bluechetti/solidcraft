@@ -25,7 +25,7 @@ use super::certificate::{
 };
 use super::definition_box::{definition_enclosable, gn_def_face_of, GnDefs};
 use super::form::{gn_form, gn_form_normalized, hermite_knots, hermite_points_sided};
-use super::series::{Trunc, VSer};
+use super::series::{Ser, Trunc, VSer};
 use super::station::{
     feet_on_knots, gn_solve_station_with, smax, surface_partials, vec3, GnStation, Nurbs,
     StationOptions,
@@ -729,6 +729,7 @@ impl StationSystem<'_> {
             self.law,
         )?;
         if self.equal_area {
+            let law_r = law_series(self.law, s, self.tr.s(), false)?;
             let rr = radii_product(self.r, law_r.as_ref());
             gn_station_thumbweight(k, self.n, &rr, &mut st)?;
         }
@@ -757,6 +758,7 @@ impl StationSystem<'_> {
             self.law,
         )?;
         if self.equal_area {
+            let law_r = law_series(self.law, st.s, self.tr.s(), true)?;
             let rr = radii_product(self.r, law_r.as_ref());
             gn_station_thumbweight(k, self.n, &rr, &mut before)?;
             st.wdsl = before.wds;
@@ -2412,6 +2414,7 @@ impl GnSectionFsg {
                     k, faces, center, mid, seed, r, side, tr, tol_mid, n, None, false, law,
                 )?;
                 if equal_area {
+                    let law_r = law_series(law, mid, tr.s(), false)?;
                     let rr = radii_product(r, law_r.as_ref());
                     gn_station_thumbweight(k, n, &rr, &mut st)?;
                 }

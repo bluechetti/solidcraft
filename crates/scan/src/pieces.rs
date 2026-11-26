@@ -117,4 +117,57 @@ mod tests {
         assert_eq!(kept.len(), block);
         assert!(kept_points.iter().all(|p| p.x <= 30.0));
     }
+
+    /// `floating` reads only `sizes`; build one leaving the fields it ignores empty.
+    fn with_sizes(sizes: Vec<usize>) -> Pieces {
+        Pieces { of: Vec::new(), sizes, areas: Vec::new() }
+    }
+
+    /// No pieces: nothing to float.
+    #[test]
+    fn no_pieces_means_nothing_floats() {
+        assert_eq!(with_sizes(Vec::new()).floating(0.5), Vec::<bool>::new());
+    }
+
+    /// The largest piece never floats, even at a full share: `sizes[0]` is skipped by `i > 0`.
+    #[test]
+    fn the_largest_piece_never_floats() {
+        assert_eq!(with_sizes(vec![1]).floating(1.0), vec![false]);
+    }
+
+    /// A share past 1.0 clamps to 1.0, so `below` is the largest piece itself (10): the two of 10 are
+    /// kept, the 9 floats.
+    #[test]
+    fn a_share_beyond_one_counts_as_one() {
+        assert_eq!(with_sizes(vec![10, 10, 9]).floating(5.0), vec![false, false, true]);
+    }
+
+    /// A negative or NaN share clamps to 0 and the floor of two keeps a single triangle: the piece of
+    /// two stays, the one floats. NaN survives as a finite threshold because `f64::max` yields the
+    /// non-NaN 2.0.
+    #[test]
+    fn a_negative_or_nan_share_still_floats_a_single_triangle() {
+        let p = with_sizes(vec![10, 2, 1]);
+        assert_eq!(p.floating(-1.0), vec![false, false, true]);
+        assert_eq!(p.floating(f64::NAN), vec![false, false, true]);
+    }
+
+    /// The threshold scales with the largest piece: half of 100 is 50, so 49 and 10 float but 50 does
+    /// not (50 is not strictly below).
+    #[test]
+    fn a_share_scales_with_the_largest_piece() {
+        assert_eq!(with_sizes(vec![100, 49, 50, 10]).floating(0.5), vec![false, true, false, true]);
+    }
+
+    /// An empty scan has no pieces, and keeping nothing keeps nothing.
+    #[test]
+    fn an_empty_scan_has_no_pieces_and_keeping_nothing_keeps_nothing() {
+        let scan = Scan::new(&[], &[]);
+        let found = pieces(&scan);
+        assert!(found.sizes.is_empty());
+        assert!(found.of.is_empty());
+        let (kept_points, kept) = keeping(&scan, |_| true);
+        assert!(kept_points.is_empty());
+        assert!(kept.is_empty());
+    }
 }

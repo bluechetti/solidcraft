@@ -124,6 +124,9 @@ pub(crate) fn test_frame() -> Frame {
         moving: None,
         motions: Default::default(),
         ground: None,
+        hover_body: None,
+        occlusion: false,
+        selection_all: false,
     }
 }
 

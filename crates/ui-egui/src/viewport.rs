@@ -7859,7 +7859,7 @@ fn build_highlight_with_projection(app: &SolveApp, projection: impl FnOnce() -> 
                             app,
                             b,
                             &active_bodies,
-                            WholeBody { selected: true, colour: c4(t.sel_face) },
+                            WholeBody { selected: true, colour: c4(t.sel_face), alone: false },
                             &body_slots,
                             &mut feedback,
                             &mut selected_instances,
@@ -8180,7 +8180,7 @@ fn build_highlight_with_projection(app: &SolveApp, projection: impl FnOnce() -> 
                         app,
                         b,
                         &active_bodies,
-                        WholeBody { selected: false, colour },
+                        WholeBody { selected: false, colour, alone: false },
                         &body_slots,
                         &mut feedback,
                         &mut hover_instances,
@@ -9880,6 +9880,7 @@ fn show_view(app: &mut SolveApp, ui: &mut egui::Ui) {
         && let Some(p) = resp.interact_pointer_pos()
     {
         crate::dialogs_scan_free_form::click(app, &proj, p);
+    }
     // Box selection: a primary drag on the model when no navigation mode is on.
     if app.tool.is_none()
         && !crate::dialogs_scan::drawing_guide(app)

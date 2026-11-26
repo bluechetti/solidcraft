@@ -1023,9 +1023,19 @@ impl RegularityForms {
     fn new(s: &Patch, d: f64, b: &Binomials) -> Result<Self> {
         let (p, w) = own_frame(s)?;
         let w = w.as_ref();
-        let (au, av) = homogeneous_tangents_bounded(&p, w, b)?;
         let ax = reduced_normal_bounded(&p, w, b)?;
         let x2 = dot_bounded(&ax, &ax, b)?;
+        // No offset: `Q = X'^4`, positive exactly where the surface's own normal does not
+        // vanish; the curvature forms are multiplied by `d` and drop out. `X'^2` has the sign of
+        // `X'^4` at half its degree, so it stands for `Q`.
+        if d == 0.0 {
+            return Ok(Self {
+                q0: x2.clone(),
+                q1: Bounded::exact(Bernstein2::constant(0.0)),
+                x2,
+            });
+        }
+        let (au, av) = homogeneous_tangents_bounded(&p, w, b)?;
         let second = |pdd: Bounded3, wdd: Option<Bounded>| -> Result<Bounded> {
             let v = match (w, wdd) {
                 (Some(w), Some(wdd)) => {
@@ -1217,7 +1227,10 @@ fn patches_in(s: &Nurb, uv_box: Option<[f64; 4]>) -> Result<Vec<Patch>> {
 }
 
 /// Whether the offset of `s` by `d` (along its NURB normal) is regular over the
-/// parameter box `uv_box` (`[u0, u1, v0, v1]`; `None`: the whole domain).
+/// parameter box `uv_box` (`[u0, u1, v0, v1]`; `None`: the whole domain). With `d = 0` it is
+/// whether `s` itself is: its normal `S_u x S_v` never vanishes there, so it does not fold
+/// over itself; such a surface is [`Regularity::Regular`] or, its normal vanishing somewhere,
+/// [`Regularity::NotCertified`] (no fold of an offset to prove).
 ///
 /// # Errors
 ///
@@ -1229,7 +1242,25 @@ pub fn certify_regular(
     d: f64,
     uv_box: Option<[f64; 4]>,
 ) -> Result<Regularity> {
-    certify_regular_knowing(k, s, d, uv_box, None)
+    certify_regular_inner(k, s, d, uv_box, MAX_REGULARITY_PATCHES, None)
+}
+
+/// [`certify_regular`] examining at most `budget` subdivided patches (at most
+/// [`MAX_REGULARITY_PATCHES`]): past it, [`Regularity::NotCertified`]. For a caller that mends
+/// what is not certified (a patch laid again more simply), where a surface whose normal comes
+/// near vanishing is worth no more time than one whose normal does vanish.
+///
+/// # Errors
+///
+/// Those of [`certify_regular`].
+pub fn certify_regular_within(
+    k: &Kernel,
+    s: &Nurb,
+    d: f64,
+    uv_box: Option<[f64; 4]>,
+    budget: usize,
+) -> Result<Regularity> {
+    certify_regular_inner(k, s, d, uv_box, budget, None)
 }
 
 /// [`certify_regular`], given what [`least_wall`] found for the same `s`, `d` and
@@ -1247,6 +1278,18 @@ pub fn certify_regular_knowing(
     uv_box: Option<[f64; 4]>,
     least: Option<f64>,
 ) -> Result<Regularity> {
+    certify_regular_inner(k, s, d, uv_box, MAX_REGULARITY_PATCHES, least)
+}
+
+fn certify_regular_inner(
+    k: &Kernel,
+    s: &Nurb,
+    d: f64,
+    uv_box: Option<[f64; 4]>,
+    budget: usize,
+    least: Option<f64>,
+) -> Result<Regularity> {
+    let budget = budget.min(MAX_REGULARITY_PATCHES);
     let b = Binomials::new();
     let region = patches_in(s, uv_box)?;
     // the face's net, for the fold witness (none: no fold is proved)
@@ -1271,7 +1314,7 @@ pub fn certify_regular_knowing(
             folds = true;
             break;
         }
-        if examined > MAX_REGULARITY_PATCHES {
+        if examined > budget {
             // the budget spent: not certified, and no fold proved
             return Ok(Regularity::NotCertified);
         }
@@ -1807,6 +1850,39 @@ mod tests {
                 assert!((r - (10.0 + d)).abs() <= 1e-7, "{r}");
             }
         }
+    }
+
+    /// At no offset the test is the surface's own: its normal never vanishes. The parabola's
+    /// cylinder is regular; so is the bilinear patch over the square (0, 0), (10, 0), (10, 10),
+    /// (0, 10). Over the dart (0, 0), (10, 0), (2, 2), (0, 10), its corner at (2, 2) reflex, the
+    /// patch folds: `S_u x S_v` is `10 x 10 = +100` along z at (0, 0) and
+    /// `(2, -8) x (-8, 2) = 4 - 64 = -60` at (1, 1), so it vanishes between them and nothing can
+    /// certify it.
+    #[test]
+    fn at_no_offset_a_surface_is_regular_exactly_when_its_normal_never_vanishes() {
+        let k = Kernel::default();
+        for two in [false, true] {
+            assert_eq!(
+                certify_regular(&k, &parabola(two), 0.0, None).unwrap(),
+                Regularity::Regular
+            );
+        }
+        let bilinear = |p11: (f64, f64)| {
+            let c = |x: f64, y: f64| CPoint::new(x, y, 0.0, NOW);
+            let net = vec![
+                vec![c(0.0, 0.0), c(0.0, 10.0)],
+                vec![c(10.0, 0.0), c(p11.0, p11.1)],
+            ];
+            Nurb::new(net, 1, 1, vec![0., 0., 1., 1.], vec![0., 0., 1., 1.]).unwrap()
+        };
+        assert_eq!(
+            certify_regular(&k, &bilinear((10.0, 10.0)), 0.0, None).unwrap(),
+            Regularity::Regular
+        );
+        assert_eq!(
+            certify_regular(&k, &bilinear((2.0, 2.0)), 0.0, None).unwrap(),
+            Regularity::NotCertified
+        );
     }
 
     #[test]

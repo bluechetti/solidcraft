@@ -6404,7 +6404,7 @@ impl Renderer {
             }
             // The old frame goes before the new one is asked for.
             self.pic.ss = None;
-            match allocated(device, || self.supersampled(device, size, false)) {
+            match allocated(device, || self.supersampled(device, size)) {
                 Ok(ss) => {
                     let _cleared = clear_resolve_targets(encoder, ss.resolve.as_ref());
                     #[cfg(test)]
@@ -6530,7 +6530,7 @@ impl Renderer {
     }
 
     /// Textures for a supersampled frame of `size` pixels.
-    fn supersampled(&self, device: &wgpu::Device, size: [u32; 2], readable_depth: bool) -> Supersampled {
+    fn supersampled(&self, device: &wgpu::Device, size: [u32; 2]) -> Supersampled {
         let t = self.target;
         let make = |label: &str, format: wgpu::TextureFormat, samples: u32, usage: wgpu::TextureUsages| {
             device.create_texture(&wgpu::TextureDescriptor {
@@ -9415,6 +9415,7 @@ mod glass_tests {
                 levels: Vec::new(),
                 closed: true,
                 edges: None,
+                paint: None,
             };
             // One placement behind the other, so the last frame's depth has something to hide.
             for z in [-30.0, -210.0] {

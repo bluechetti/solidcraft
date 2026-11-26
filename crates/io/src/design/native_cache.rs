@@ -179,6 +179,12 @@ struct Encoded {
     parts: Vec<usize>,
 }
 
+/// What a decoded body must share with the one encoded: its faces, edges, vertices and shells.
+fn same_topology(a: &solidcraft_kernel::Body, b: &solidcraft_kernel::Body) -> bool {
+    let counts = |x: &solidcraft_kernel::Body| (x.face_count(), x.edge_count(), x.vertex_count(), x.shell_count());
+    counts(a) == counts(b)
+}
+
 /// The start of a mesh body's slice. A mesh body (an imported STL or 3MF) has no B-rep for the
 /// native encoding: its slice is its triangles as they are, with its colour and paint, which is
 /// all a mesh body holds. A B-rep slice starts with the native encoding's own tag.

@@ -621,6 +621,7 @@ mod tests {
                     levels: vec![(Arc::new(SharedTris::new(&mesh)), 0.05), (Arc::new(SharedTris::new(&mesh)), 1.0)],
                     closed: true,
                     edges: Some(Arc::new(SharedEdges::new(&mesh, |_| true, vec![(0.05, coarse.clone()), (1.0, coarse.clone())]))),
+                    paint: None,
                 };
                 for i in 0..400u32 {
                     let (x, y) = ((i % 20) as f32 * 40.0 - 400.0, (i / 20) as f32 * 40.0 - 400.0);
@@ -893,6 +894,7 @@ fn fs() -> @builtin(frag_depth) f32 {
             levels: Vec::new(),
             closed: true,
             edges: None,
+            paint: None,
         };
         for z in [-30.0, -210.0] {
             part.place([[1.0, 0.0, 0.0, -5.0], [0.0, 1.0, 0.0, -5.0], [0.0, 0.0, 1.0, z]], PaletteIndex(0));
@@ -1024,6 +1026,7 @@ fn fs() -> @builtin(frag_depth) f32 {
                 levels: Vec::new(),
                 closed: true,
                 edges: None,
+                paint: None,
             };
             part.place(rows, PaletteIndex(0));
             let mut batches = Batches::default();

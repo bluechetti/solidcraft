@@ -950,7 +950,10 @@ fn a_curvature_round_takes_each_wedges_equal_area_in_one_call() {
         assert!(rails.iter().all(|o| *o >= Some(2)), "{both:?}: every rail G2: {rails:?}");
     }
     let corner = [a, [40.0, 27.5, 17.5]];
-    assert!(blend(&chamfered, Blend::Curvature, &corner, &[r], TOL, &[], &[], Corners::Filled).is_err());
+    // Upstream refuses this corner; the fork's G2 corner patch builds it, as a valid body.
+    let at_corner = blend(&chamfered, Blend::Curvature, &corner, &[r], TOL, &[], &[], Corners::Filled).unwrap();
+    let (rec, _) = native(&to_arrays(&at_corner).unwrap()).unwrap();
+    solidcore_ops::record_check::validate(&rec).unwrap();
     // Edges of one wedge go together.
     let two = blend(&chamfered, Blend::Curvature, &[b, [20.0, 0.0, 20.0]], &[r], TOL, &[], &[], Corners::Filled).unwrap();
     assert!(rel(v0 - volume(&two, 1e-8).unwrap(), 80.0 * cut(0.5 * PI)) < 1e-6);

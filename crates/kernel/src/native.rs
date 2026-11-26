@@ -102,7 +102,7 @@ pub(crate) fn body_from_smlib_ordered(brep: &solidcraft_smlib::Brep) -> Result<(
     let (record, order, report) = brep.to_native_ordered_report().map_err(|e| KernelError::Failed(e.to_string()))?;
     let body = Body::from_smlib_record(record)?;
     if (report.reversed_faces > 0 || report.unsure_turns > 0)
-        && !crate::validation::checks_off()
+        && !crate::validation::skipped()
         && let Some(failure) = crate::validation::failing_check(&body)?
     {
         return Err(KernelError::Failed(format!(

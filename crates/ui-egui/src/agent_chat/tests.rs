@@ -4204,7 +4204,7 @@ fn a_scan_selection_and_the_open_dialog_go_with_the_message() {
     assert_eq!(selected_count(&mut app), 1, "the scan's selection counts");
     app.start("scan.fit_plane");
     assert!(app.dialog.is_some(), "Fit Plane is open");
-    app.agent_chat.attach_selection = true;
+    *app.agent_chat.attach_selection = true;
     send(&mut app, &ctx, "fit this".into());
     let prompt = script.calls().pop().expect("a prompt");
     for want in [

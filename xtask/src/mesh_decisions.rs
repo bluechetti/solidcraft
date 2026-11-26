@@ -122,6 +122,10 @@ pub const SKIPPED_FUNCTIONS: &[(&str, &str)] = &[
     ("crates/doc/src/model_cache.rs:has_legacy_names", "mesh bodies: a mesh import's triangles left out of a search for names"),
     ("crates/doc/src/placement_reuse.rs:same_feature", "mesh bodies: compares imported mesh source-array identities"),
     ("crates/doc/src/project3d.rs:flat_outline", "mesh bodies: the flat patch of an imported mesh's triangles that a face pick on it means"),
+    (
+        "crates/engine/src/selection_context.rs:scan_selection",
+        "mesh bodies: where on a scan the triangles the user selected lie, named to the agent",
+    ),
     ("crates/engine/src/cmd/component_link.rs:session_bodies", "mesh bodies: copies a linked mesh body's data"),
     ("crates/engine/src/cmd/file.rs:mesh_data", "mesh bodies: copies a linked mesh body's data"),
     ("crates/engine/src/cmd/file.rs:mesh_to_origin", "mesh bodies: a mesh import moved so its points' box sits on the origin"),
