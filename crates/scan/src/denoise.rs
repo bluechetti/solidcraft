@@ -436,10 +436,22 @@ pub(crate) fn noise_off_drawn(scan: &Scan) -> Option<f64> {
     (read > 0).then_some(noise)
 }
 
-/// The share of `scan`'s vertices with two faces on one plane, as stored ([`STORED`]): drawn (a CAD
-/// mesh, or a region Flatten laid flat), not measured as a scanner measures. A real scan has few
-/// such vertices; a CAD mesh has most of its vertices so, however it is turned.
+/// The share of `scan`'s vertices with two faces on one exact plane: drawn (a CAD mesh, or a region
+/// Flatten laid flat), not measured as a scanner measures. A real scan has a few such vertices
+/// (a thousandth at most in the T-LESS scans); a CAD mesh square to the axes has most of its
+/// vertices so.
 pub fn drawn_share(scan: &Scan) -> f64 {
+    share_on_one_plane(scan, EXACT)
+}
+
+/// [`drawn_share`] with the faces on one plane as a file stores them ([`STORED`]), so that a CAD
+/// mesh turned off the axes still counts. Noisy meshes stored in coarse steps count more here too:
+/// whoever uses it must also look at the vertices not drawn ([`crate::survey::cad_drawn`]).
+pub(crate) fn drawn_share_stored(scan: &Scan) -> f64 {
+    share_on_one_plane(scan, STORED)
+}
+
+fn share_on_one_plane(scan: &Scan, same: f64) -> f64 {
     let mesh = Mesh::new(scan);
     let faces = mesh.faces_at(scan.positions);
     let (mut drawn_count, mut count) = (0usize, 0usize);
@@ -449,7 +461,7 @@ pub fn drawn_share(scan: &Scan) -> f64 {
             continue;
         }
         count += 1;
-        drawn_count += usize::from(drawn(around.iter().map(|&f| faces[f as usize].0), STORED));
+        drawn_count += usize::from(drawn(around.iter().map(|&f| faces[f as usize].0), same));
     }
     if count == 0 { 0.0 } else { drawn_count as f64 / count as f64 }
 }

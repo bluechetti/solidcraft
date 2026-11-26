@@ -224,12 +224,13 @@ fn noise_places(scan: &Scan, area: f64) -> Vec<(f64, f64)> {
         .collect()
 }
 
-/// Whether `piece`, of typical edge `edge`, is a CAD mesh's: drawn exactly (as Fit tells it by
-/// [`DRAWN_PATCH`]), and the noise read at the vertices not drawn (the spread of how far they stand
-/// off their neighbours) at most [`DRAWN_QUIET`] of `edge`. Rounding alone draws many faces of a
-/// noisy mesh on one plane, so the share drawn is not enough.
+/// Whether `piece`, of typical edge `edge`, is a CAD mesh's: drawn, as stored (at least
+/// [`DRAWN_PATCH`] of its vertices, [`denoise::drawn_share_stored`]), and the noise read at the
+/// vertices not drawn (the spread of how far they stand off their neighbours) at most
+/// [`DRAWN_QUIET`] of `edge`. Rounding alone draws many faces of a noisy mesh on one plane, so the
+/// share drawn is not enough.
 pub(crate) fn cad_drawn(piece: &Scan, edge: f64) -> bool {
-    denoise::drawn_share(piece) >= DRAWN_PATCH && denoise::noise_off_drawn(piece).is_none_or(|noise| noise <= DRAWN_QUIET * edge)
+    denoise::drawn_share_stored(piece) >= DRAWN_PATCH && denoise::noise_off_drawn(piece).is_none_or(|noise| noise <= DRAWN_QUIET * edge)
 }
 
 /// The triangles `list` of `scan` as a mesh of their own.
