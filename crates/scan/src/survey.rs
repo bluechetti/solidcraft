@@ -229,7 +229,7 @@ fn noise_places(scan: &Scan, area: f64) -> Vec<(f64, f64)> {
 /// off their neighbours) at most [`DRAWN_QUIET`] of `edge`. Rounding alone draws many faces of a
 /// noisy mesh on one plane, so the share drawn is not enough.
 fn cad_drawn(piece: &Scan, edge: f64) -> bool {
-    denoise::drawn_share(piece) >= DRAWN_PATCH && denoise::noise_off_drawn(piece).is_none_or(|noise| noise <= DRAWN_QUIET * edge)
+    denoise::drawn_share(piece) >= DRAWN_PATCH && denoise::noise_off_drawn(piece).is_some_and(|noise| noise <= DRAWN_QUIET * edge)
 }
 
 /// The triangles `list` of `scan` as a mesh of their own.
@@ -348,7 +348,18 @@ mod tests {
     /// rounding alone, but it was measured, and its noise is read.
     #[test]
     fn noise_stored_in_coarse_steps_is_still_read() {
-        let (n, edge, sigma, step) = (40u32, 0.5, 0.3, 0.1);
+        noisy_grid_in_steps_reads_its_noise(0.1);
+    }
+
+    /// The same in 0.5 mm steps: most faces fall on one plane, and every vertex that does not reads
+    /// as on a sharp edge, so nothing says the mesh is quiet there.
+    #[test]
+    fn noise_stored_in_steps_past_it_is_still_read() {
+        noisy_grid_in_steps_reads_its_noise(0.5);
+    }
+
+    fn noisy_grid_in_steps_reads_its_noise(step: f64) {
+        let (n, edge, sigma) = (40u32, 0.5, 0.3);
         let mut seed = 7u64;
         let mut uniform = || {
             seed ^= seed << 13;
