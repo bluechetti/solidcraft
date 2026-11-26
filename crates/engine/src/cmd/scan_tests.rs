@@ -4088,3 +4088,85 @@ fn reconstruct_proposes_wrap_scan_when_it_has_no_route() {
     let wrapped = run(&mut s, "scan.wrap_scan", read["proposals"][0]["params"].clone());
     assert_eq!(wrapped["solid"], true, "{wrapped}");
 }
+
+/// A session holding a point cloud named `Capture` of the given points (mm, no transform).
+fn session_with_a_cloud(points: &[Vec3]) -> Session {
+    use solidcraft_doc::point_cloud::{ColorBy, Colors, Complex, PointCloud, Points};
+    let mut s = Session::default();
+    let flat: Vec<f32> = points.iter().flat_map(|p| [p.x as f32, p.y as f32, p.z as f32]).collect();
+    let identity = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]];
+    s.doc_mut().point_clouds.push(PointCloud {
+        id: 1,
+        name: "Capture".into(),
+        file: "capture.ply".into(),
+        origin: Vec3::ZERO,
+        points: Points::new(flat.into()),
+        colors: Colors::default(),
+        source_points: points.len() as u64,
+        units: "mm".into(),
+        transform: identity,
+        point_size: 2.0,
+        color_by: ColorBy::File,
+        color: None,
+        height_range: None,
+        visible: true,
+        complex: Complex::default(),
+        color_property: None,
+        filters: Vec::new(),
+        source: String::new(),
+        max_points: None,
+    });
+    s
+}
+
+/// Fit commands take a point cloud's points as they are, with no surface made first: a cylinder
+/// round Z (radius 10, 40 long) with a table of points under it, and a plate of points.
+#[test]
+fn the_fits_run_on_a_point_cloud_directly() {
+    let mut points = Vec::new();
+    for j in 0..30 {
+        for i in 0..90 {
+            let (z, a) = (40.0 * f64::from(j) / 29.0, std::f64::consts::TAU * f64::from(i) / 90.0);
+            points.push(Vec3::new(10.0 * a.cos(), 10.0 * a.sin(), z));
+        }
+    }
+    let part = points.len();
+    // A table of stray points 30 mm to one side, a quarter as many again as the part's.
+    points.extend((0..700).map(|k| Vec3::new(30.0, f64::from(k % 35) * 1.5 - 20.0, f64::from(k / 35) * 2.0)));
+    let mut s = session_with_a_cloud(&points);
+
+    let loose = run(&mut s, "scan.fit_cylinder", json!({"cloud": "Capture", "keep": false, "point": [0, 0, 20], "radius": 25}));
+    let radius = loose["cylinder"]["radius"].as_f64().unwrap();
+    assert!((radius - 10.0).abs() < 0.05, "a region round the part only: {loose}");
+    assert_eq!(loose["points"].as_u64(), Some(part as u64), "{loose}");
+    assert_eq!(loose["body"], "Capture");
+    assert!(loose["coverage_deg"].as_f64().unwrap() > 350.0, "{loose}");
+    assert_eq!(loose["triangles"], 0);
+    assert!(loose.get("warning").is_none(), "{loose}");
+
+    // The whole cloud, table and all, with the tolerance asked for (`robust`): the cylinder, the
+    // table's points left out and said so.
+    let firm = run(&mut s, "scan.fit_cylinder", json!({"cloud": "Capture", "keep": false, "robust": true, "tolerance": 0.1}));
+    let radius = firm["cylinder"]["radius"].as_f64().unwrap();
+    assert!((radius - 10.0).abs() < 0.05, "{firm}");
+    assert_eq!(firm["inliers"].as_u64(), Some(part as u64), "{firm}");
+    assert_eq!(firm["points"].as_u64(), Some(points.len() as u64), "{firm}");
+    assert!(firm["warning"].as_str().unwrap().contains("lie on it"), "{firm}");
+
+    // Kept as a construction axis, as a mesh's fit keeps it.
+    let kept = run(&mut s, "scan.fit_cylinder", json!({"cloud": "Capture", "point": [0, 0, 20], "radius": 25}));
+    assert!(kept["feature"].is_object(), "{kept}");
+}
+
+#[test]
+fn a_fit_on_a_point_cloud_says_what_it_cannot_do() {
+    let mut s = session_with_a_cloud(&(0..400).map(|k| Vec3::new(f64::from(k % 20), f64::from(k / 20), 0.0)).collect::<Vec<_>>());
+    let refused = |s: &mut Session, p: Value| s.execute("scan.fit_plane", &p).unwrap_err().to_string();
+    assert!(refused(&mut s, json!({"cloud": "Capture", "make": "face"})).contains("scan mesh"));
+    assert!(refused(&mut s, json!({"cloud": "Capture", "radius": 5})).contains("`point`"));
+    assert!(refused(&mut s, json!({"cloud": "Nope"})).contains("no such point cloud"));
+    // A plane of points is a plane; a cylinder is not on it.
+    let plane = run(&mut s, "scan.fit_plane", json!({"cloud": "Capture", "keep": false}));
+    assert!(plane["rms"].as_f64().unwrap() < 1e-9, "{plane}");
+    assert!(s.execute("scan.fit_cylinder", &json!({"cloud": "Capture", "keep": false})).is_err());
+}

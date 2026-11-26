@@ -12,6 +12,9 @@ use solidcraft_geom::prelude::*;
 use crate::base::{EdgeNeighbours, edge_neighbours};
 use crate::{Scan, denoise, in_plane};
 
+mod points;
+pub use points::{PointsFitted, fit_points, normals_of};
+
 /// A fitted shape.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Shape {

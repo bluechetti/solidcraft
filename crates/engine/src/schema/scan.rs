@@ -261,6 +261,15 @@ pub struct ScanFitParams {
     /// surface of the shape trimmed to the region the scan has of it) or `both`.
     #[serde(default)]
     pub make: Option<ScanFitMake>,
+    /// Fit a point cloud's points directly, with no surface made first: the cloud's name or id.
+    /// With `point` and `radius` the points within the radius of the point, else all of them.
+    /// Only a construction shape is kept (`make` face needs a mesh).
+    #[serde(default)]
+    pub cloud: Option<String>,
+    /// With `cloud`: the shape most points lie on within `tolerance` (a random-sample consensus),
+    /// so stray points (the table under a part) do not pull it. Default false.
+    #[serde(default)]
+    pub robust: Option<bool>,
 }
 
 /// What a fitted shape is kept as.
@@ -334,7 +343,7 @@ pub struct ScanFittedTorus {
 /// `scan.fit_torus` return.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ScanFitResult {
-    /// The mesh body.
+    /// The mesh body, or with `cloud` the point cloud's name.
     pub body: String,
     /// The plane fitted (`scan.fit_plane`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -351,9 +360,15 @@ pub struct ScanFitResult {
     /// The torus fitted (`scan.fit_torus`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub torus: Option<ScanFittedTorus>,
-    /// How many triangles the region holds, and its area in mm².
+    /// How many triangles the region holds (0 for a point cloud), and its area in mm².
     pub triangles: usize,
     pub area: f64,
+    /// With `cloud`: how many points were fitted to, and how many of them lie on the shape (all
+    /// of them unless `robust`; the figures below are of those).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub points: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inliers: Option<usize>,
     /// The region's points' distance from the shape: root mean square and largest, in mm.
     pub rms: f64,
     pub max: f64,
