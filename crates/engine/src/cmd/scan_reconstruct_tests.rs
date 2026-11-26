@@ -1812,3 +1812,43 @@ fn a_profile_running_well_past_the_scan_is_refused() {
     let (at, by) = super::past_scan(&plane, &[stray], bounds).expect("refused");
     assert!((by - 75.0).abs() < 1e-9 && (at.x + 121.0).abs() < 1e-9, "{at:?} {by}");
 }
+
+/// How far Scan to CAD's rebuilt volume is from the scan's own, as a share of it, for one of the known-answer
+/// parts in `tests/fixtures/rulercraft-known` (RulerCraft's, MIT OR Apache-2.0). Clean meshes of parts
+/// whose answers are fixed in advance; a part nothing was built from is infinitely far.
+fn known_part_off(name: &str) -> f64 {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../tests/fixtures/rulercraft-known/{name}.stl"));
+    let mut s = Session::default();
+    run(&mut s, "file.insert_mesh", json!({"path": path.to_string_lossy()}));
+    let scan = s.model.state().bodies.iter().find(|b| b.body.is_mesh()).map(|b| b.name.clone()).unwrap();
+    let scan_volume = volume(&s, &scan);
+    run(&mut s, "scan.to_cad", json!({}));
+    let built = format!("{scan} Reconstructed");
+    match s.model.state().body(&built).and_then(|b| b.body.volume_at(0.01)) {
+        Some(v) => ((v - scan_volume) / scan_volume).abs(),
+        None => f64::INFINITY,
+    }
+}
+
+/// Scan to CAD on the known-answer parts it rebuilds: within a quarter of a percent of the scan's volume.
+#[test]
+fn scan_to_cad_rebuilds_the_known_plates_with_holes_pockets_bosses_and_a_window() {
+    let off: Vec<(&str, f64)> =
+        ["bracket", "counterbore", "countersink", "fillet", "l-fillet", "l-plate", "parallel-bracket", "round-plate", "sphere-seat", "window"]
+            .into_iter()
+            .map(|name| (name, known_part_off(name)))
+            .collect();
+    let wrong: Vec<_> = off.iter().filter(|(_, o)| *o >= 0.0025).collect();
+    assert!(wrong.is_empty(), "off by more than 0.25 % of the scan's volume: {wrong:?}");
+}
+
+/// The known-answer parts Scan to CAD does not yet rebuild to within a quarter of a percent of the scan's
+/// volume (2026-11-26): the chamfers on a plate and on an L are left square, `hole-block` loses two of its three
+/// holes and still reads as met, and `stepped-cylinder` is built too small. Listed in tests/KNOWN_FAILING_TESTS.
+#[test]
+fn scan_to_cad_rebuilds_the_known_chamfers_extra_holes_and_steps() {
+    let off: Vec<(&str, f64)> =
+        ["chamfer", "l-chamfer", "hole-block", "stepped-cylinder"].into_iter().map(|name| (name, known_part_off(name))).collect();
+    let wrong: Vec<_> = off.iter().filter(|(_, o)| *o >= 0.0025).collect();
+    assert!(wrong.is_empty(), "off by more than 0.25 % of the scan's volume: {wrong:?}");
+}
