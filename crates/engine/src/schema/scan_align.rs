@@ -259,3 +259,87 @@ pub struct ScanCombineResult {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,
 }
+
+/// One datum plane of `scan.align_datum`: a point on it, and either a direction (an exact plane,
+/// such as a construction plane's) or none, when the plane is fitted to the face of the scan the
+/// point is on.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanDatumPlaneParams {
+    /// A point on the plane; without `normal`, a point on the face of the scan to fit it to.
+    pub point: Point3,
+    /// The plane's direction, either way. Default: the plane fitted to the face at `point`.
+    #[serde(default)]
+    pub normal: Option<Point3>,
+}
+
+/// Lay a scan in the frame of three datum planes: the first plane (the one the part rests on)
+/// becomes Z = 0, the second, turned square to the first, X = 0, and the third Y = 0, so the part
+/// stands in the frame's positive corner when the planes are the faces of a box it sits in. One
+/// undo step, kept as a Move of the scan.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanAlignDatumParams {
+    /// The scan to move. Default: the selected or only one.
+    #[serde(default)]
+    pub body: Option<String>,
+    /// The three planes, primary first.
+    pub planes: Vec<ScanDatumPlaneParams>,
+    /// A point on the part's side of all three planes. Default: the middle of the scan's box.
+    #[serde(default)]
+    pub inside: Option<Point3>,
+    /// How far from a fitted plane a point of the scan may lie to belong to its face, a length.
+    /// Default: by the scan's size.
+    #[serde(default)]
+    pub tolerance: Option<Value>,
+}
+
+/// A datum plane as used, in the scan's own coordinates before the move.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanDatumPlane {
+    /// A point on the plane.
+    pub point: [f64; 3],
+    /// Its direction, toward the part.
+    pub normal: [f64; 3],
+    /// Fitted to the scan (true) or given exactly.
+    pub fitted: bool,
+    /// For a fitted plane: the triangles and area (mm²) of the face it was fitted to, and how far
+    /// that face lies from the plane, root mean square and worst (mm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub triangles: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub area: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rms: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+}
+
+/// What `scan.align_datum` returns.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanAlignDatumResult {
+    pub body: String,
+    /// The three planes as used, in the scan's coordinates before the move.
+    pub planes: Vec<ScanDatumPlane>,
+    /// The corner the planes met in (before the move), now the origin.
+    pub origin: [f64; 3],
+    /// The frame's X, Y and Z axes (before the move), now the world's.
+    pub axes: [[f64; 3]; 3],
+    /// The angles between the planes: first and second, first and third, second and third (degrees).
+    pub angles: [f64; 3],
+    /// How far the worst of them is from a right angle (degrees). The frame follows the first
+    /// plane exactly, the second to within this, and the third only for where the origin is.
+    pub off_square: f64,
+    /// Whether the part lies on the positive Y side of the third plane. False when the planes in
+    /// this order make a left-handed corner: the part then lies at negative Y.
+    pub third_inside: bool,
+    pub moved: bool,
+    /// Its Move feature, as `solid.move` replies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Option<FeatureResult>")]
+    pub feature: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_warnings: Vec<String>,
+}

@@ -248,3 +248,74 @@ fn a_scan_is_laid_onto_a_model_that_came_as_a_mesh() {
     let e = s.execute("scan.align_to_model", &json!({"body": cad, "model": scan})).unwrap_err().to_string();
     assert!(e.contains("is a scan") && e.contains("Align to Scan"), "{e}");
 }
+
+/// A block 50 × 30 × 10 meshed finely, turned and moved off the origin, as a scan of a part that
+/// was not set down square.
+fn tilted_block(s: &mut Session) -> (String, impl Fn(Vec3) -> Vec3 + use<>) {
+    let (positions, triangles) = solidcraft_scan_test_block();
+    let (axis, angle, shift) = (Vec3::new(1.0, 2.0, 0.5).normalized().unwrap(), 0.6, Vec3::new(40.0, -25.0, 17.0));
+    let moved = turned(&positions, axis, angle, shift);
+    let body = insert(s, &moved, &triangles, "block");
+    (body, move |p: Vec3| turned(&[p], axis, angle, shift)[0])
+}
+
+fn solidcraft_scan_test_block() -> (Vec<Vec3>, Vec<[u32; 3]>) {
+    let (lo, hi) = (Vec3::new(0.0, 0.0, 0.0), Vec3::new(50.0, 30.0, 10.0));
+    let p = |i: u32| Vec3::new(if i & 1 == 0 { lo.x } else { hi.x }, if i & 2 == 0 { lo.y } else { hi.y }, if i & 4 == 0 { lo.z } else { hi.z });
+    let triangles =
+        vec![[0, 2, 1], [1, 2, 3], [4, 5, 6], [5, 7, 6], [0, 1, 4], [1, 5, 4], [2, 6, 3], [3, 6, 7], [0, 4, 2], [2, 4, 6], [1, 3, 5], [3, 7, 5]];
+    subdivided((0..8).map(p).collect(), triangles, 4)
+}
+
+fn box_of(points: &[Vec3]) -> (Vec3, Vec3) {
+    points.iter().fold((Vec3::new(1e9, 1e9, 1e9), Vec3::new(-1e9, -1e9, -1e9)), |(lo, hi), p| {
+        (Vec3::new(lo.x.min(p.x), lo.y.min(p.y), lo.z.min(p.z)), Vec3::new(hi.x.max(p.x), hi.y.max(p.y), hi.z.max(p.z)))
+    })
+}
+
+#[test]
+fn a_scan_set_down_crooked_is_laid_in_its_datum_frame_by_three_faces() {
+    let mut s = Session::default();
+    let (body, place) = tilted_block(&mut s);
+    // Points on the middle of the bottom (z = 0), the end (x = 0) and the side (y = 0) faces.
+    let at = |x, y, z| place(Vec3::new(x, y, z));
+    let planes = json!([
+        {"point": [at(25.0, 15.0, 0.0).x, at(25.0, 15.0, 0.0).y, at(25.0, 15.0, 0.0).z]},
+        {"point": [at(0.0, 15.0, 5.0).x, at(0.0, 15.0, 5.0).y, at(0.0, 15.0, 5.0).z]},
+        {"point": [at(25.0, 0.0, 5.0).x, at(25.0, 0.0, 5.0).y, at(25.0, 0.0, 5.0).z]}
+    ]);
+    let r = run(&mut s, "scan.align_datum", json!({"body": body, "planes": planes}));
+    assert!(r["moved"] == true && r["third_inside"] == true && r["off_square"].as_f64().unwrap() < 0.5, "{r}");
+    assert!(r["planes"].as_array().unwrap().iter().all(|p| p["fitted"] == true && p["triangles"].as_u64().unwrap() > 10), "{r}");
+    let (lo, hi) = box_of(&positions_of(&s, &body));
+    assert!(lo.dist(Vec3::ZERO) < 0.05 && hi.dist(Vec3::new(50.0, 30.0, 10.0)) < 0.05, "{lo:?} {hi:?}");
+    // Laid already, it does not move again.
+    let again = run(
+        &mut s,
+        "scan.align_datum",
+        json!({"body": body, "planes": [
+        {"point": [25, 15, 0], "normal": [0, 0, 1]}, {"point": [0, 15, 5], "normal": [1, 0, 0]}, {"point": [25, 0, 5], "normal": [0, 1, 0]}]}),
+    );
+    assert_eq!(again["moved"], false, "{again}");
+}
+
+#[test]
+fn datum_planes_given_exactly_are_refused_when_they_make_no_corner() {
+    let mut s = Session::default();
+    let (body, _) = tilted_block(&mut s);
+    let flat = |z: f64| json!({"point": [0, 0, z], "normal": [0, 0, 1]});
+    let e = s
+        .execute("scan.align_datum", &json!({"body": body, "planes": [flat(0.0), flat(5.0), {"point": [0, 0, 0], "normal": [1, 0, 0]}]}))
+        .unwrap_err()
+        .to_string();
+    assert!(e.contains("nearly parallel"), "{e}");
+    for planes in [
+        json!([]),
+        json!([flat(0.0)]),
+        json!("x"),
+        json!([flat(0.0), flat(1.0), {"point": [0, 0, 0], "normal": [0, 0, 0]}]),
+        json!([{"point": [0, 0]}, flat(1.0), flat(2.0)]),
+    ] {
+        assert!(s.execute("scan.align_datum", &json!({"body": body, "planes": planes})).is_err(), "{planes}");
+    }
+}

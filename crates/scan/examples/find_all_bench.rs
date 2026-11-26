@@ -3,6 +3,7 @@
 //! scans and for replaying one read: `cargo run --example find_all_bench -p solidcraft-scan
 //! --profile <p> -- scan.stl [profile]` (a profile inheriting `release` reads 92M triangles in
 //! about four minutes).
+#![allow(clippy::print_stderr)]
 use solidcore_record::Vec3;
 use solidcraft_scan::Scan;
 

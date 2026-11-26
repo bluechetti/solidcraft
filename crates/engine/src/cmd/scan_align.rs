@@ -5,15 +5,17 @@
 
 use serde_json::{Value, json};
 use solidcore_record::Vec3;
+use solidcraft_geom::Vec3Geom as _;
 use solidcraft_scan::Scan;
 use solidcraft_scan::align::{self, AllSettings};
+use solidcraft_scan::metrology;
 use solidcraft_scan::register::{self, Settings};
 
 use super::{CommandSpec, Mesh, mesh, move_by};
 use crate::params::{bad, bool_, num, str_};
 use crate::schema::scan_align::{
-    ScanAlignAllParams, ScanAlignAllResult, ScanAlignLink, ScanAlignModelParams, ScanAlignModelResult, ScanAlignPairsParams, ScanAlignPairsResult,
-    ScanAlignPass, ScanCombineParams, ScanCombineResult,
+    ScanAlignAllParams, ScanAlignAllResult, ScanAlignDatumParams, ScanAlignDatumResult, ScanAlignLink, ScanAlignModelParams, ScanAlignModelResult,
+    ScanAlignPairsParams, ScanAlignPairsResult, ScanAlignPass, ScanCombineParams, ScanCombineResult, ScanDatumPlane,
 };
 use crate::schema::{TypedContract, output_schema_for};
 use crate::{EngineError, Result, Sel, Session};
@@ -23,6 +25,7 @@ const ALIGN_CONTRACT: TypedContract<crate::schema::scan_align::ScanAlignParams> 
 const PAIRS_CONTRACT: TypedContract<ScanAlignPairsParams> = TypedContract::new();
 const MODEL_CONTRACT: TypedContract<ScanAlignModelParams> = TypedContract::new();
 const COMBINE_CONTRACT: TypedContract<ScanCombineParams> = TypedContract::new();
+const DATUM_CONTRACT: TypedContract<ScanAlignDatumParams> = TypedContract::new();
 
 /// How finely a model is meshed to lay a scan on it: a hundredth of a millimetre off at most.
 const MODEL_CHORD: f64 = 0.01;
@@ -57,6 +60,11 @@ pub static COMMANDS: &[CommandSpec] = &[
         .contract(&MODEL_CONTRACT)
         .output(output_schema_for::<ScanAlignModelResult>)
         .params("body?: the scan to move (default: the selected or only one); model?: a solid or surface body (default: the selected one, else the only one); search?: bool (default true: from the ways the two could lie on each other too); ignored?: 0–0.6 (default 0.2: the share of the scan with no model under it, a fixture or the table): the scan fitted onto the model's surface (point-to-plane both ways, trimmed and robust), the model not moved, one undo step kept as a Move of the scan → body, model, moved, rms_before, rms_after, matched, start, converged, rival?, feature?"),
+    CommandSpec::new("scan.align_datum", "Align to Datum Planes", crate::checked!("scan.align_datum", align_datum))
+        .icon("align")
+        .contract(&DATUM_CONTRACT)
+        .output(output_schema_for::<ScanAlignDatumResult>)
+        .params("body?: the scan to move (default: the selected or only one); planes: [{point: [x,y,z], normal?: [x,y,z]}, …] three datum planes, primary first: with `normal` the plane is exact, without it the plane is fitted to the face of the scan `point` is on (as scan.fit_plane does); inside?: [x,y,z] a point on the part's side of all three planes (default: the middle of the scan's box); tolerance?: length (how far from a fitted plane a point of the scan may lie to belong to its face; default by the scan's size): the first plane becomes Z = 0, the second (turned square to the first) X = 0 and the third Y = 0, the planes' corner the origin, the part on the inner side of each, so a part that sits in a box's corner stands in the positive corner; squareness is reported, not forced; kept as a Move of the scan, one undo step → body, planes [{point, normal, fitted, triangles?, area?, rms?, max?}] (before the move), origin, axes, angles [1-2, 1-3, 2-3 degrees], off_square (degrees), third_inside (false: the part lies at negative Y, the three planes in this order make a left-handed corner), moved, feature?, note?"),
 ];
 
 /// The ways of aligning a scan, as `scan.align` names them, and the command each runs.
@@ -248,6 +256,95 @@ fn align_pairs(s: &mut Session, p: &Value) -> Result<Value> {
         matched,
         moved: feature.is_some(),
         feature,
+        param_warnings: Vec::new(),
+    })
+}
+
+/// Align to Datum Planes: the scan laid in the frame of three planes (see `metrology::datum`).
+fn align_datum(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "scan.align_datum";
+    let given = p
+        .get("planes")
+        .and_then(Value::as_array)
+        .filter(|a| a.len() == 3)
+        .ok_or_else(|| bad(cmd, "`planes` must list three planes {point, normal?}, primary first"))?;
+    let scan = mesh(s, p, cmd)?;
+    let tolerance =
+        p.get("tolerance").filter(|v| !v.is_null()).map(|v| super::fit_tolerance(s, &json!({ "tolerance": v }), cmd)).transpose()?.flatten();
+    let inside = match p.get("inside").filter(|v| !v.is_null()) {
+        Some(v) => crate::params::vec3(v).filter(|q| q.is_finite()).ok_or_else(|| bad(cmd, "`inside` must be a point [x, y, z] of numbers"))?,
+        None => scan.scan().bounds().map(|(lo, hi)| (lo + hi) * 0.5).ok_or_else(|| bad(cmd, "the scan has no points"))?,
+    };
+    let mut planes = Vec::with_capacity(3);
+    let mut used = Vec::with_capacity(3);
+    for (i, plane) in given.iter().enumerate() {
+        let point = plane
+            .get("point")
+            .and_then(crate::params::vec3)
+            .filter(|q| q.is_finite())
+            .ok_or_else(|| bad(cmd, format!("plane {} needs a `point` [x, y, z]", i + 1)))?;
+        match plane.get("normal").filter(|v| !v.is_null()) {
+            Some(n) => {
+                let normal = crate::params::vec3(n)
+                    .filter(|q| q.is_finite() && q.len() > 0.0)
+                    .ok_or_else(|| bad(cmd, format!("plane {}: `normal` must be a direction [x, y, z]", i + 1)))?;
+                planes.push(metrology::DatumPlane { point, normal });
+                used.push((false, None));
+            }
+            None => {
+                let mut ask = json!({ "body": scan.body, "point": [point.x, point.y, point.z] });
+                if let Some(t) = p.get("tolerance").filter(|v| !v.is_null()) {
+                    ask["tolerance"] = t.clone();
+                }
+                let (_, fitted) = super::fitted_shape(s, &ask, cmd, solidcraft_scan::fit::Kind::Plane, tolerance)
+                    .map_err(|e| bad(cmd, format!("plane {}: {e}", i + 1)))?;
+                let solidcraft_scan::fit::Shape::Plane { normal, .. } = fitted.shape else {
+                    return Err(bad(cmd, format!("plane {}: the face at the point is not flat", i + 1)));
+                };
+                planes.push(metrology::DatumPlane { point: fitted.middle, normal });
+                used.push((true, Some((fitted.triangles.len(), fitted.area, fitted.rms, fitted.max))));
+            }
+        }
+    }
+    let [a, b, c]: [metrology::DatumPlane; 3] = planes.try_into().map_err(|_| bad(cmd, "`planes` must list three planes"))?;
+    let found = metrology::datum(&[a, b, c], inside).map_err(|e| bad(cmd, e.to_string()))?;
+    let xyz = |v: Vec3| [v.x, v.y, v.z];
+    let planes_out: Vec<ScanDatumPlane> = [a, b, c]
+        .iter()
+        .zip(&found.normals)
+        .zip(&used)
+        .map(|((plane, normal), (fitted, stats))| ScanDatumPlane {
+            point: xyz(plane.point),
+            normal: xyz(*normal),
+            fitted: *fitted,
+            triangles: stats.map(|s| s.0),
+            area: stats.map(|s| s.1),
+            rms: stats.map(|s| s.2),
+            max: stats.map(|s| s.3),
+        })
+        .collect();
+    let feature = move_by(s, &scan, &found.moved)?;
+    let note = if !found.third_inside {
+        Some("the three planes in this order make a left-handed corner, so the part lies at negative Y: name them in another order (the second and third swapped) to have it at positive Y".to_owned())
+    } else if found.off_square > 1.0 {
+        Some(format!(
+            "the planes are {:.1}° off square to each other: the frame follows the first plane exactly, the second to within that, and the third only for where the origin is",
+            found.off_square
+        ))
+    } else {
+        None
+    };
+    reply(ScanAlignDatumResult {
+        body: scan.body.clone(),
+        planes: planes_out,
+        origin: xyz(found.origin),
+        axes: found.axes.map(xyz),
+        angles: found.angles,
+        off_square: found.off_square,
+        third_inside: found.third_inside,
+        moved: feature.is_some(),
+        feature,
+        note,
         param_warnings: Vec::new(),
     })
 }

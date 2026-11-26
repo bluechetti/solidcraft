@@ -6,29 +6,23 @@ description: Use when turning a scan (an STL, PLY or OBJ mesh measured off a rea
 # SolidCraft scan to CAD
 
 ## Overview
-A scan is a mesh body. Read it with `scan.survey {}`, clean and place it, choose a route by the kind of part, and check the result against the scan. `scan.survey {}` changes nothing and replies with `next`: the commands to run in order, each with `why` and `params`. Command shapes, routes and known problems are in `reference.md`.
+A scan is a mesh body. Read it with `scan.survey {}`, clean and place it, choose a route by the kind of part, and check the result against the scan. `scan.survey {}` changes nothing and replies with `next`: the commands to run in order, each with `why` and `params`. Command shapes and routes are in `reference.md`, under "Work in detail" for each step below.
 
 ## Before the first call
-1. Call `skill_reference {"skill":"solidcraft-scan-to-cad"}` (or read `reference.md`). Later, one part of it again: `{"skill":"solidcraft-scan-to-cad","section":"Known problems"}` (`"section":"contents"` lists them). Modeling after the scan is read follows `solidcraft-modeling`.
-2. `inspect_design {"measure":false,"sketches":false}`: the scans are the mesh bodies. Ask before `new_design` or `open`.
-3. No scan yet: `file.insert_mesh {"path": "…", "units": "m"}`. Give `units` when the file is not in millimetres.
+1. Call `skill_reference {"skill":"solidcraft-scan-to-cad"}` (or read `reference.md`)., or one part: `{"skill":"solidcraft-scan-to-cad","section":"Known problems"}`. Modeling follows `solidcraft-modeling`.
+2. `inspect_design {"measure":false,"sketches":false}`: scans are the mesh bodies. Ask before `new_design` or `open`.
+3. No scan yet: `file.insert_mesh {"path": "…", "units": "m"}`. Give `units` if not millimetres.
 
 ## Work in this order
-- **What the user knows, asked once:** when a person is in the conversation and their request does not say, ask in one short message, then go on: (1) what the part is (machined or turned, moulded or cast, 3D printed, sheet, worn, organic): `scan.plan {"process": …}`; (2) a replacement that must fit (mating sizes to design values: round them with `parameters.change`) or a copy as scanned (keep the sizes as measured); (3) any sizes they measured with callipers: `scan.known_size {"between": [[x,y,z],[x,y,z]], "value": 40}` or `{"diameter": [x,y,z], "value": 8}`, and `"apply": true` scales the scan when it is a scale error (within 5 %). A request that says to just build it, or no one to answer (a script, a benchmark), means no questions: go on with what the scan shows.
-0. **First, the automatic route:** `scan.to_cad {}` cleans, reads and builds the part in one call (seconds on most parts; one undo step) and ends with the verdict. When `verdict` says `met`, check it and you are done. Otherwise its `steps`, `verdict.places` and `next` say what is open: work on those places with the steps below (Reconstruct Selection, fits, sections, features by hand), not from scratch. It builds nothing on a scan in the wrong unit or a wall, and `next` says what to run. Give the user's tolerance with `{"tolerance": 0.2}`. Keep its body until yours measures better: build by hand into a new body (`edit.checkpoint` first), compare both with `scan.deviation`, and only then delete or undo the worse one; a session cut short then still holds a model.
-1. **Read:** `scan.survey {}`. Read every `why` before running its step: `next` is advice, not a script. Survey again after cleaning and after `scan.find_all {}`.
-2. **Units:** `units_hint` set → `mesh.units {"units":"m"}`.
-3. **Clean, before fitting anything** (fits are not redone after a clean): `scan.repair {}`, `scan.remove_floating {}`, `scan.denoise {}` (only when the noise is a real share of the tolerance), `scan.fill_holes {}` (never on a wall or panel: its holes are real).
-4. **Tolerance:** `scan.tolerance {"tolerance": 0.2}`: the user's accuracy, else about three times `noise`. Every check reads against it.
+- **Ask once, when a person is there and the request does not say:** what the part is (`scan.plan {"process": …}`), whether it is a fitting replacement or a copy as scanned, and any callipered sizes (`scan.known_size`). A script or "just build it": none.
+0. **First, the automatic route:** `scan.to_cad {}` cleans, reads and builds in one call and ends with a `verdict`. `met`: check it, done. Else work the open places in `verdict.places` and `next`, not from scratch., and accepts `{"tolerance": 0.2}`. Keep its body until your own measures better (`scan.deviation` on both).
+1. **Read:** `scan.survey {}`. `next` is advice, not a script: read each `why`. Survey again after cleaning and `scan.find_all {}`.
+2. **Units:** `units_hint` set: `mesh.units {"units":"m"}`.
+3. **Clean, before fitting anything:** `scan.repair {}`, `scan.remove_floating {}`, `scan.denoise {}` (only if noise is a real share of the tolerance), `scan.fill_holes {}` (never on a wall or panel: its holes are real).
+4. **Tolerance:** `scan.tolerance {"tolerance": 0.2}`: the user's accuracy, else about three times `noise`.
 5. **Place:** `scan.stand_on_base {}`, `scan.quick_align {}`, or `scan.symmetry {}` then `scan.square_to_symmetry {}`. Several passes: `scan.align_all {}` or `scan.combine {}`.
-6. **Route:** `scan.find_all {}`, then survey: by `shapes.in_shapes` and `sheet_like`:
-   - 0.6 or more: `scan.reconstruct {}`, then run its `proposals` one by one; undo a step whose `fit.verdict` is `worse`.
-     Then what is still missing: `scan.reconstruct_rest {}` (each piece the body leaves unexplained read and built, worse steps taken back, one undo step), or by hand: `scan.select {"unexplained": "<scan> Reconstructed"}`, `scan.reconstruct_selection {}`, run those proposals; repeat until `pieces` is empty or a piece adds nothing (then `"piece": 1`).
-   - 0.3 to 0.6: reconstruct, then `scan.fit_patches {}` over the freeform rest.
-   - under 0.3: `scan.fit_patches {}` or `scan.free_form {}`.
-   - `sheet_like`: `scan.flat_template {"outline":"scan"}`.
-   - Reconstruct misreads: fit by hand with `scan.fit_plane {}` and `scan.fit_cylinder {}`, read sizes off cuts with `scan.section {"plane":"XY","offset":12}` (outlines as data, nothing made, no undo), then model. `scan.section_sketch {}` only for a cut you will build from.
-7. **Verify** each stage with `scan.deviation {"body": "<model>"}`: `passes` (both ways; `why_not` says what failed), `max_above` (material missing), `max_below` (extra), `model_farthest_at` (made up). Compare `measure {}` with `own_size`.
+6. **Route:** `scan.find_all {}`, then survey, by `shapes.in_shapes` and `sheet_like`: 0.6 or more `scan.reconstruct {}`, then `scan.reconstruct_rest {}`; 0.3 to 0.6 reconstruct, then `scan.fit_patches {}`; under 0.3 `scan.fit_patches {}` or `scan.free_form {}`; `sheet_like` `scan.flat_template {"outline":"scan"}`. Undo a step whose `fit.verdict` is `worse`. Reconstruct misreads: `scan.fit_plane {}`, `scan.fit_cylinder {}`, `scan.section {}`, then model.
+7. **Verify** each stage with `scan.deviation {"body": "<model>"}` (`passes`, `why_not`, `max_above` missing, `max_below` extra), and `measure {}` against `own_size`.
 8. **Model by hand or edit:** `reference.md`, "Scans and native features together".
 
 ## Red flags
@@ -37,10 +31,6 @@ A scan is a mesh body. Read it with `scan.survey {}`, clean and place it, choose
 |---|---|
 | "Build it step by step from the start" | `scan.to_cad {}` first; refine where its verdict says. |
 | "Its model is poor, undo it" | Keep it until your own body measures better. |
-| "List the scan commands" | `scan.survey {}`, then `reference.md`. |
-| "Reconstruct proposed it, so it's right" | `scan.deviation {}` after each stage. |
+| "Reconstruct proposed it, so it's right" | `scan.deviation {}` each stage. |
 | "Fill the holes, it's cleaner" | Read `sheet_like` first. |
-| "The scan is tiny" | `units_hint`: saved in metres or inches. |
-| "Guess a point on the scan" | Use a `point` from `scan.find_all {}` shapes. |
-| "Section sketch, inspect it, undo" to read a size | `scan.section {}`: the cut as data in one call. |
-| "`measure` matches" | `scan.deviation {}` too. |
+| "The scan is tiny" | `units_hint`: metres or inches. |

@@ -670,6 +670,7 @@ fn gather_command_specs() -> Vec<&'static CommandSpec> {
     v.extend(scan::refit::COMMANDS.iter());
     v.extend(scan::section_read::COMMANDS.iter());
     v.extend(scan::select::COMMANDS.iter());
+    v.extend(scan::thickness::COMMANDS.iter());
     v.extend(scan::split::COMMANDS.iter());
     v.extend(scan::survey::COMMANDS.iter());
     v.extend(scan::template::COMMANDS.iter());

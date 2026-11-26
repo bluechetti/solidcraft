@@ -1,0 +1,34 @@
+{
+  "ar": {
+    "cmd.scan_align_datum": "محاذاة إلى مستويات المرجع",
+    "cmd.scan_wall_thickness": "سُمك الجدار"
+  },
+  "de": {
+    "cmd.scan_align_datum": "An Bezugsebenen ausrichten",
+    "cmd.scan_wall_thickness": "Wandstärke"
+  },
+  "en": {
+    "cmd.scan_align_datum": "Align to Datum Planes",
+    "cmd.scan_wall_thickness": "Wall Thickness"
+  },
+  "he": {
+    "cmd.scan_align_datum": "יישור למישורי ייחוס",
+    "cmd.scan_wall_thickness": "עובי דופן"
+  },
+  "ja": {
+    "cmd.scan_align_datum": "データム平面に整列",
+    "cmd.scan_wall_thickness": "壁厚"
+  },
+  "ko": {
+    "cmd.scan_align_datum": "데이텀 평면에 정렬",
+    "cmd.scan_wall_thickness": "벽 두께"
+  },
+  "vi": {
+    "cmd.scan_align_datum": "Căn theo mặt phẳng chuẩn",
+    "cmd.scan_wall_thickness": "Độ dày thành"
+  },
+  "zh": {
+    "cmd.scan_align_datum": "对齐到基准平面",
+    "cmd.scan_wall_thickness": "壁厚"
+  }
+}

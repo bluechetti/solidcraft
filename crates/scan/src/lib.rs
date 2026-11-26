@@ -81,6 +81,7 @@ pub mod inspect_plan;
 pub mod loft;
 pub mod markers;
 pub mod merge;
+pub mod metrology;
 pub mod mirror_fill;
 pub mod net;
 mod net_fit;

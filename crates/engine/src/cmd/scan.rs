@@ -2240,6 +2240,9 @@ pub mod survey;
 #[path = "scan_template.rs"]
 pub mod template;
 
+#[path = "scan_thickness.rs"]
+pub mod thickness;
+
 #[path = "scan_tolerance.rs"]
 pub mod tolerance;
 
