@@ -1876,6 +1876,47 @@ fn a_cloud_selection_grows_and_shrinks_by_rings() {
     }
 }
 
+/// The points selected on a cloud are kept in the design under a name, opened again (with a mode),
+/// replaced by name and deleted; they are the cloud's, not a scan's.
+#[test]
+fn a_cloud_selection_is_kept_opened_and_deleted() {
+    let mut points = Vec::new();
+    for i in 0..20 {
+        for j in 0..20 {
+            points.push(Vec3::new(f64::from(i), f64::from(j), 0.0));
+        }
+    }
+    let mut s = session_with_a_cloud(&points);
+    let pick = |s: &mut Session, lo: f64, hi: f64, mode: &str| {
+        run(s, "scan.select", json!({"cloud": 1, "box": {"min": [lo, lo, -1], "max": [hi, hi, 1]}, "mode": mode}))["points"].clone()
+    };
+    assert_eq!(pick(&mut s, 2.0, 5.0, "replace"), json!(16));
+    // With only a cloud selected on, it is the cloud's that is kept.
+    let kept = run(&mut s, "scan.keep_selection", json!({"name": "Block"}));
+    assert_eq!((kept["points"].clone(), kept["body"].clone(), kept["replaced"].clone()), (json!(16), json!("Capture"), json!(false)));
+    assert_eq!((s.doc.cloud_selections.len(), s.doc.scan_selections.len()), (1, 0));
+    // Opened again, alone and with a mode.
+    run(&mut s, "scan.select", json!({"cloud": 1, "none": true}));
+    assert_eq!(run(&mut s, "scan.select", json!({"cloud": 1, "saved": "Block"}))["points"], json!(16));
+    assert_eq!(pick(&mut s, 10.0, 11.0, "add"), json!(20));
+    assert_eq!(run(&mut s, "scan.select", json!({"cloud": 1, "saved": "Block", "mode": "remove"}))["points"], json!(4));
+    // Kept again under the same name, it is replaced.
+    let again = run(&mut s, "scan.keep_selection", json!({"cloud": 1, "name": "Block"}));
+    assert_eq!((again["points"].clone(), again["replaced"].clone()), (json!(4), json!(true)));
+    assert_eq!(s.doc.cloud_selections.len(), 1);
+    // Without a name, the first free number.
+    assert_eq!(run(&mut s, "scan.keep_selection", json!({"cloud": 1}))["name"], json!("Selection 1"));
+    // Refused: one that is not there, one of a scan's for a cloud's, deleting without the cloud.
+    assert!(s.execute("scan.select", &json!({"cloud": 1, "saved": "Nothing"})).is_err());
+    assert!(s.execute("scan.delete_selection", &json!({"name": "Block"})).is_err(), "a scan's kept selections do not hold it");
+    let left = run(&mut s, "scan.delete_selection", json!({"name": "Block", "cloud": 1}));
+    assert_eq!(left["left"], json!(1));
+    assert!(s.execute("scan.select", &json!({"cloud": 1, "saved": "Block"})).is_err(), "deleted");
+    // Nothing selected, nothing to keep.
+    run(&mut s, "scan.select", json!({"cloud": 1, "none": true}));
+    assert!(s.execute("scan.keep_selection", &json!({"cloud": 1})).is_err());
+}
+
 /// The points a command selected on a copy of the session (an agent's or the control channel's,
 /// off the window thread) are selected here when it is adopted, as a scan's triangles are.
 #[test]

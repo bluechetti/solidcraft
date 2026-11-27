@@ -4756,6 +4756,10 @@ pub struct Document {
     /// Selections of a scan's triangles kept to be opened again (Keep Selection).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scan_selections: Vec<crate::scan_selection::ScanSelection>,
+    /// Selections of a point cloud's points kept to be opened again (Keep Selection on a cloud):
+    /// as `scan_selections`, with the cloud's name for the scan and its points for the triangles.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cloud_selections: Vec<crate::scan_selection::ScanSelection>,
     /// What each Free Form keeps besides its faces: edges creased or smoothed by hand, its
     /// symmetry plane (Edit Surface).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -5175,6 +5179,7 @@ impl Document {
             canvases: Vec::new(),
             point_clouds: Vec::new(),
             scan_selections: Vec::new(),
+            cloud_selections: Vec::new(),
             free_forms: Vec::new(),
             scan_tolerances: Default::default(),
             scan_plans: Default::default(),

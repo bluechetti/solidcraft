@@ -11,7 +11,7 @@ use solidcore_record::Vec3;
 
 use super::{MOST_PLACES, MOST_RINGS, Mode, NEXT_STAMP, mode, points};
 use crate::params::bad;
-use crate::schema::scan_select::ScanSelectResult;
+use crate::schema::scan_select::{ScanDeleteSelectionResult, ScanKeepSelectionResult, ScanSelectResult};
 use crate::{EngineError, Result, Session};
 
 /// What is selected on a point cloud.
@@ -33,8 +33,8 @@ pub fn selected(s: &Session, id: u64, points: usize) -> Option<Arc<CloudSelected
 }
 
 pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
-    let ways = ["brush", "polygon", "box", "all", "none", "invert", "grow", "shrink"];
-    for other in ["region", "shape", "saved", "triangles", "unexplained", "body"] {
+    let ways = ["brush", "polygon", "box", "saved", "all", "none", "invert", "grow", "shrink"];
+    for other in ["region", "shape", "triangles", "unexplained", "body"] {
         if p.get(other).is_some_and(|v| !v.is_null() && *v != json!(false)) {
             return Err(bad(cmd, format!("`{other}` is for a scan's triangles: with `cloud`, give one of {}", ways.join(", "))));
         }
@@ -46,6 +46,7 @@ pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
     let mode = mode(p, cmd)?;
     let cloud = super::super::mesh::find_cloud(s, p, cmd)?;
     let (id, name, count) = (cloud.id, cloud.name.clone(), cloud.len());
+    let cloud_name = name.as_str();
     let places: Vec<Vec3> = (0..count).filter_map(|i| cloud.world_point(i)).collect();
     let before = selected(s, id, count);
     let current = || before.as_ref().map(|k| (*k.selected).clone()).unwrap_or_else(|| vec![false; count]);
@@ -54,6 +55,19 @@ pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         "all" => vec![true; count],
         "none" => vec![false; count],
         "invert" => current().into_iter().map(|f| !f).collect(),
+        "saved" => {
+            let name = v.as_str().ok_or_else(|| bad(cmd, "`saved` is the name of a kept selection"))?;
+            let kept = s
+                .doc
+                .cloud_selections
+                .iter()
+                .find(|k| k.name == name)
+                .ok_or_else(|| bad(cmd, format!("no kept selection `{name}` of a point cloud")))?;
+            if kept.body != cloud_name || kept.triangles as usize != count {
+                return Err(bad(cmd, format!("the kept selection `{name}` is of `{}` as it was, not of `{cloud_name}` as it is now", kept.body)));
+            }
+            kept.flags()
+        }
         "grow" | "shrink" => {
             let rings = v
                 .as_u64()
@@ -120,5 +134,45 @@ pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         limit: None,
         param_warnings: Vec::new(),
     };
+    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+/// Keep what is selected on a point cloud in the design (`scan.keep_selection`): the cloud `p`
+/// names, else the one a selection is held on.
+pub(super) fn keep(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
+    let pick = match p.get("cloud").filter(|v| !v.is_null()) {
+        Some(_) => p.clone(),
+        None => json!({"cloud": s.cloud_selection.as_ref().map(|k| k.id)}),
+    };
+    let cloud = super::super::mesh::find_cloud(s, &pick, cmd)?;
+    let (id, cloud_name, count) = (cloud.id, cloud.name.clone(), cloud.len());
+    let held = selected(s, id, count).ok_or_else(|| bad(cmd, "nothing is selected on the point cloud: select some of its points first"))?;
+    let name = match crate::params::str_(p, "name").map(str::trim).filter(|n| !n.is_empty()) {
+        Some(n) if n.chars().count() > solidcraft_doc::scan_selection::MAX_NAME => return Err(bad(cmd, "the name is too long")),
+        Some(n) => n.to_owned(),
+        None => (1..).map(|n| format!("Selection {n}")).find(|n| !s.doc.cloud_selections.iter().any(|k| k.name == *n)).unwrap_or_default(),
+    };
+    let kept = solidcraft_doc::scan_selection::ScanSelection::from_flags(&name, &cloud_name, &held.selected);
+    let replaced = s.doc.cloud_selections.iter().any(|x| x.name == name);
+    if !replaced && s.doc.cloud_selections.len() >= solidcraft_doc::scan_selection::MAX_SELECTIONS {
+        return Err(bad(cmd, "the design keeps as many selections as it can: delete one first"));
+    }
+    let points = kept.count();
+    let doc = s.doc_mut();
+    match doc.cloud_selections.iter_mut().find(|x| x.name == name) {
+        Some(old) => *old = kept,
+        None => doc.cloud_selections.push(kept),
+    }
+    let reply = ScanKeepSelectionResult { name, body: cloud_name, triangles: 0, points: Some(points), replaced, param_warnings: Vec::new() };
+    serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
+}
+
+/// Take a kept selection of a point cloud out of the design (`scan.delete_selection` with `cloud`).
+pub(super) fn delete(s: &mut Session, name: &str, cmd: &str) -> Result<Value> {
+    if !s.doc.cloud_selections.iter().any(|k| k.name == name) {
+        return Err(bad(cmd, format!("no kept selection `{name}` of a point cloud")));
+    }
+    s.doc_mut().cloud_selections.retain(|k| k.name != name);
+    let reply = ScanDeleteSelectionResult { name: name.to_owned(), left: s.doc.cloud_selections.len(), param_warnings: Vec::new() };
     serde_json::to_value(reply).map_err(|e| EngineError::Other(e.to_string()))
 }

@@ -179,6 +179,7 @@ fn same_geometry_inputs(a: &Document, b: &Document) -> bool {
         visibility,
         point_clouds,
         scan_selections,
+        cloud_selections,
         free_forms,
         scan_tolerances,
         scan_plans,
@@ -228,6 +229,7 @@ fn same_geometry_inputs(a: &Document, b: &Document) -> bool {
         && *visibility == b.visibility
         && *point_clouds == b.point_clouds
         && *scan_selections == b.scan_selections
+        && *cloud_selections == b.cloud_selections
         && *free_forms == b.free_forms
         && *scan_tolerances == b.scan_tolerances
         && *scan_plans == b.scan_plans

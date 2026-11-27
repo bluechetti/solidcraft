@@ -650,6 +650,7 @@ pub(crate) fn decode(
     }
     crate::point_cloud::check_all(&d.point_clouds)?;
     crate::scan_selection::check_all(&d.scan_selections)?;
+    crate::scan_selection::check_all(&d.cloud_selections)?;
     crate::free_form::check_all(&d.free_forms)?;
     crate::scan_tolerance::check_all(&d.scan_tolerances)?;
     crate::scan_plan::check_all(&d.scan_plans)?;

@@ -83,7 +83,7 @@ pub struct ScanSelectParams {
     /// `{point, like: true}`, every shape like it (holes of its size, faces facing its way).
     #[serde(default)]
     pub shape: Option<Value>,
-    /// A selection kept in the design, by name.
+    /// A selection kept in the design, by name (with `cloud`, one kept of that point cloud).
     #[serde(default)]
     pub saved: Option<String>,
     /// Triangles by number.
@@ -116,8 +116,8 @@ pub struct ScanSelectParams {
     #[serde(default)]
     pub unexplained: Option<Value>,
     /// Select a point cloud's points instead of a scan's triangles: its name or id. Then give one
-    /// of `brush` (the points within its radius of its places), `polygon`, `box`, `all`, `none`,
-    /// `invert`, `grow` or `shrink`.
+    /// of `brush` (the points within its radius of its places), `polygon`, `box`, `saved`, `all`,
+    /// `none`, `invert`, `grow` or `shrink`.
     #[serde(default)]
     pub cloud: Option<String>,
     /// With `cloud`: the points inside this box (corners in mm, both ends included).
@@ -206,14 +206,23 @@ pub struct ScanKeepSelectionParams {
     /// Its name. Default: `Selection n`, the first number free.
     #[serde(default)]
     pub name: Option<String>,
+    /// Keep the points selected on this point cloud (its name or id) instead of a scan's
+    /// triangles. Default: the scan's, else the cloud a selection is held on. Open it again with
+    /// `scan.select {cloud, saved}`.
+    #[serde(default)]
+    pub cloud: Option<String>,
 }
 
 /// What `scan.keep_selection` returns.
 #[derive(Debug, Serialize, JsonSchema)]
 pub struct ScanKeepSelectionResult {
     pub name: String,
+    /// The scan, or the point cloud.
     pub body: String,
     pub triangles: usize,
+    /// For a point cloud: how many points were kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub points: Option<usize>,
     /// Whether one of that name was replaced.
     pub replaced: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -225,6 +234,9 @@ pub struct ScanKeepSelectionResult {
 #[schemars(deny_unknown_fields)]
 pub struct ScanDeleteSelectionParams {
     pub name: String,
+    /// Delete the kept selection of this point cloud (its name or id) of that name, not a scan's.
+    #[serde(default)]
+    pub cloud: Option<String>,
 }
 
 /// What `scan.delete_selection` returns.
@@ -310,8 +322,8 @@ mod tests {
             ],
         );
         assert_keys(input_schema_for::<ScanSelectInsideParams>(), &["body", "curves", "mode", "sketch"]);
-        assert_keys(input_schema_for::<ScanKeepSelectionParams>(), &["name"]);
-        assert_keys(input_schema_for::<ScanDeleteSelectionParams>(), &["name"]);
+        assert_keys(input_schema_for::<ScanKeepSelectionParams>(), &["cloud", "name"]);
+        assert_keys(input_schema_for::<ScanDeleteSelectionParams>(), &["cloud", "name"]);
         assert_keys(input_schema_for::<ScanCurveFromSelectionParams>(), &["every", "sketch", "smooth", "tolerance"]);
     }
 }

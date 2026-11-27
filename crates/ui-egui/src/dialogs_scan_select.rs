@@ -370,6 +370,31 @@ fn cloud_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect, id: u64, po
             .response
         });
     }
+    // Keeping it in the design, and the ones kept of this cloud.
+    form_row(ui, tr("ui.scan_select_name"), |ui| ui_kit::text_field(ui, &mut k.name, tr("ui.scan_select_name_hint")).0);
+    if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_select_keep"), ui_kit::Button::Enabled(now.is_some()))).clicked() {
+        let name = k.name.trim().to_owned();
+        let mut p = json!({"cloud": id});
+        if !name.is_empty() {
+            p["name"] = json!(name);
+        }
+        k.asked = Some(("scan.keep_selection".into(), p));
+    }
+    let cloud_name = app.session.doc.point_clouds.iter().find(|c| c.id == id).map(|c| c.name.clone()).unwrap_or_default();
+    for kept in app.session.doc.cloud_selections.iter().filter(|kept| kept.body == cloud_name) {
+        let line = solidcraft_ui_text::format("ui.scan_select_kept_points", &[("name", &kept.name), ("points", &kept.count().to_string())]);
+        ui_kit::row(ui, &line, |ui| {
+            ui.horizontal(|ui| {
+                if ui_kit::button(ui, tr("ui.scan_select_open"), ui_kit::Button::Enabled(true)).clicked() {
+                    k.asked = Some(("scan.select".into(), json!({"cloud": id, "saved": kept.name, "mode": mode_now(k)})));
+                }
+                if ui_kit::button(ui, tr("ui.scan_select_delete"), ui_kit::Button::Enabled(true)).clicked() {
+                    k.asked = Some(("scan.delete_selection".into(), json!({"name": kept.name, "cloud": id})));
+                }
+            })
+            .response
+        });
+    }
     if let Some(why) = &k.error {
         ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_select_error", true));
     }
@@ -793,6 +818,21 @@ mod tests {
         kind(&mut h).asked = Some(("scan.select".into(), json!({"cloud": id, "shrink": 1})));
         h.frames(2);
         assert!(count(&h) < 9, "shrunk below it: {}", count(&h));
+        // Keep Selection keeps the points under the name; Open brings them back; Delete takes it away.
+        kind(&mut h).asked = Some(("scan.select".into(), json!({"cloud": id, "all": true})));
+        h.frames(2);
+        kind(&mut h).name = "Everything".into();
+        kind(&mut h).asked = Some(("scan.keep_selection".into(), json!({"cloud": id, "name": "Everything"})));
+        h.frames(2);
+        assert_eq!(h.app.session.doc.cloud_selections.len(), 1, "kept: {:?}", kind(&mut h).error);
+        kind(&mut h).asked = Some(("scan.select".into(), json!({"cloud": id, "none": true})));
+        h.frames(2);
+        kind(&mut h).asked = Some(("scan.select".into(), json!({"cloud": id, "saved": "Everything"})));
+        h.frames(2);
+        assert_eq!(count(&h), 441, "opened again: {:?}", kind(&mut h).error);
+        kind(&mut h).asked = Some(("scan.delete_selection".into(), json!({"name": "Everything", "cloud": id})));
+        h.frames(2);
+        assert!(h.app.session.doc.cloud_selections.is_empty());
         assert!(kind(&mut h).error.is_none());
     }
 
