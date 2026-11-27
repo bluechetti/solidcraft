@@ -33,8 +33,8 @@ pub fn selected(s: &Session, id: u64, points: usize) -> Option<Arc<CloudSelected
 }
 
 pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
-    let ways = ["brush", "polygon", "box", "saved", "all", "none", "invert", "grow", "shrink"];
-    for other in ["region", "shape", "triangles", "unexplained", "body"] {
+    let ways = ["brush", "polygon", "region", "box", "saved", "all", "none", "invert", "grow", "shrink"];
+    for other in ["shape", "triangles", "unexplained", "body"] {
         if p.get(other).is_some_and(|v| !v.is_null() && *v != json!(false)) {
             return Err(bad(cmd, format!("`{other}` is for a scan's triangles: with `cloud`, give one of {}", ways.join(", "))));
         }
@@ -55,6 +55,19 @@ pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         "all" => vec![true; count],
         "none" => vec![false; count],
         "invert" => current().into_iter().map(|f| !f).collect(),
+        "region" => {
+            let point = crate::params::vec3(&v["point"]).ok_or_else(|| bad(cmd, "`region.point` must be [x, y, z]"))?;
+            let angle = v.get("angle").and_then(Value::as_f64).unwrap_or(super::REGION_ANGLE);
+            if !(1.0..=90.0).contains(&angle) {
+                return Err(bad(cmd, "`region.angle` is 1 to 90 degrees"));
+            }
+            let crease = match v.get("until").and_then(Value::as_str) {
+                None | Some("facing") => false,
+                Some("crease") => true,
+                Some(_) => return Err(bad(cmd, "`region.until` is facing or crease")),
+            };
+            solidcraft_scan::selection::points_region(&places, point, angle.to_radians(), crease)
+        }
         "saved" => {
             let name = v.as_str().ok_or_else(|| bad(cmd, "`saved` is the name of a kept selection"))?;
             let kept = s

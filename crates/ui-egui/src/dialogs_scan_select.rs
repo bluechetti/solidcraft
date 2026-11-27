@@ -318,8 +318,8 @@ fn polygon_buttons(ui: &mut egui::Ui, k: &mut ScanSelect) {
 /// take all of it, none, the other points, or a ring of points more or fewer.
 fn cloud_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect, id: u64, points: usize) -> bool {
     let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
-    // The tools that work on points: Brush, Polygon and Lasso, the first three of the list.
-    k.tool = k.tool.min(LASSO);
+    // The tools that work on points: Brush, Polygon, Lasso and Region, the first four of the list.
+    k.tool = k.tool.min(REGION);
     if k.radius <= 0.0 {
         let diagonal = app.session.doc.point_clouds.iter().find(|c| c.id == id).and_then(|c| c.world_corners()).map_or(0.0, |c| {
             let (lo, hi) = c.iter().fold((c[0], c[0]), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
@@ -327,7 +327,7 @@ fn cloud_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect, id: u64, po
         });
         k.radius = if diagonal > 0.0 { (diagonal / 100.0).max(1e-3) } else { 2.0 };
     }
-    let tools: Vec<&str> = TOOLS[..=LASSO].iter().map(|t| tr(t)).collect();
+    let tools: Vec<&str> = TOOLS[..=REGION].iter().map(|t| tr(t)).collect();
     let before = k.tool;
     choice_row(ui, tr("ui.scan_select_tool"), "scan_select_tool", &mut k.tool, &tools);
     if k.tool != before {
@@ -338,6 +338,8 @@ fn cloud_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect, id: u64, po
     if k.tool == BRUSH {
         form_row(ui, tr("ui.scan_select_radius"), |ui| ui_kit::length_field(ui, &mut k.radius, &units, decimals));
         k.radius = k.radius.clamp(1e-3, 1e4);
+    } else if k.tool == REGION {
+        form_row(ui, tr("ui.scan_select_angle"), |ui| ui_kit::number_field(ui, &mut k.angle, 1.0..=90.0, 0.5, "°"));
     } else {
         form_row(ui, tr("ui.scan_select_through"), |ui| check(ui, &mut k.through));
     }
@@ -401,6 +403,7 @@ fn cloud_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect, id: u64, po
     let hint = match k.tool {
         POLYGON => "ui.scan_select_hint_polygon",
         LASSO => "ui.scan_select_hint_lasso",
+        REGION => "ui.scan_select_hint_region_cloud",
         _ => "ui.scan_select_hint_cloud",
     };
     ui_kit::text(ui, tr(hint), ui_kit::Text::Hint("scan_select_hint"));
@@ -511,11 +514,17 @@ pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::
                 if let Some(d) = dialog(app) {
                     d.cloud = Some(cloud);
                 }
-                run(
-                    app,
-                    "scan.select",
-                    json!({"cloud": cloud, "brush": {"points": [place], "radius": format!("{} mm", k.radius)}, "mode": mode_now(&k)}),
-                );
+                // Region takes the face under the click, up to the creases sharper than the angle.
+                let way = if k.tool == REGION {
+                    json!({"region": {"point": place, "angle": k.angle, "until": "crease"}})
+                } else {
+                    json!({"brush": {"points": [place], "radius": format!("{} mm", k.radius)}})
+                };
+                let mut p = json!({"cloud": cloud, "mode": mode_now(&k)});
+                if let (Some(p), Some(way)) = (p.as_object_mut(), way.as_object()) {
+                    p.extend(way.clone());
+                }
+                run(app, "scan.select", p);
                 return;
             }
             let Some((body, point)) = scan_at(app, proj, at) else { return };
@@ -818,6 +827,16 @@ mod tests {
         kind(&mut h).asked = Some(("scan.select".into(), json!({"cloud": id, "shrink": 1})));
         h.frames(2);
         assert!(count(&h) < 9, "shrunk below it: {}", count(&h));
+        // The Region tool takes the flat sheet under the click (a click on the sheet of a grid).
+        kind(&mut h).asked = Some(("scan.select".into(), json!({"cloud": id, "none": true})));
+        h.frames(2);
+        kind(&mut h).tool = REGION;
+        h.frames(1);
+        h.step(&json!({"click": {"world": [10.0, 10.0, 0.0]}})).unwrap();
+        h.frames(2);
+        assert!(count(&h) > 400, "the whole sheet, but for its rim: {} {:?}", count(&h), kind(&mut h).error);
+        kind(&mut h).tool = BRUSH;
+        h.frames(1);
         // Keep Selection keeps the points under the name; Open brings them back; Delete takes it away.
         kind(&mut h).asked = Some(("scan.select".into(), json!({"cloud": id, "all": true})));
         h.frames(2);

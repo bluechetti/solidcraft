@@ -1,0 +1,26 @@
+{
+  "en": {
+    "ui.scan_select_hint_region_cloud": "Click the points: the smooth face there is selected, up to the creases sharper than the angle."
+  },
+  "de": {
+    "ui.scan_select_hint_region_cloud": "Klicken Sie auf die Punkte: Die glatte Fläche dort wird ausgewählt, bis zu den Kanten, die schärfer als der Winkel sind."
+  },
+  "ja": {
+    "ui.scan_select_hint_region_cloud": "点をクリックすると、その位置の滑らかな面が、角度より鋭い折れ目まで選択されます。"
+  },
+  "ko": {
+    "ui.scan_select_hint_region_cloud": "점을 클릭하면 그곳의 매끄러운 면이 각도보다 날카로운 꺾임까지 선택됩니다."
+  },
+  "zh": {
+    "ui.scan_select_hint_region_cloud": "单击点：选择该处的平滑面，直到比角度更尖的折痕为止。"
+  },
+  "ar": {
+    "ui.scan_select_hint_region_cloud": "انقر النقاط: يُحدد السطح الناعم هناك حتى الحواف الأحدّ من الزاوية."
+  },
+  "he": {
+    "ui.scan_select_hint_region_cloud": "לחצו על הנקודות: המשטח החלק שם נבחר, עד לקפלים חדים יותר מהזווית."
+  },
+  "vi": {
+    "ui.scan_select_hint_region_cloud": "Bấm các điểm: bề mặt trơn ở đó được chọn, tới các nếp gấp sắc hơn góc."
+  }
+}

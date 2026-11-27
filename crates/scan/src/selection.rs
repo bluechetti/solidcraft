@@ -1119,6 +1119,82 @@ pub fn points_grown(points: &[Vec3], selected: &[bool], reach: f64, grow: bool) 
     now
 }
 
+/// How many neighbours a point's way of facing is read from, and how far (in spacings) the
+/// region of a cloud reaches from a point to the next, so it does not cross a gap.
+const FACING_NEIGHBOURS: usize = 12;
+const HOP_SPACINGS: f64 = 3.0;
+
+/// The region of a point cloud round the point nearest `seed`: grown from point to point (each to
+/// its neighbours within three spacings) while the cloud faces about the way it does at the seed
+/// (`crease` false: within `angle` radians of it, so a flat face is taken up to where its rounds
+/// turn away) or turns less than `angle` from one point to the next (`crease` true: up to its
+/// creases). A point faces the way the plane through it and its twelve nearest does, either way;
+/// this is read only for the points the region reaches, so a small face of a huge cloud is quick.
+pub fn points_region(points: &[Vec3], seed: Vec3, angle: f64, crease: bool) -> Vec<bool> {
+    let mut taken = vec![false; points.len()];
+    if points.len() <= FACING_NEIGHBOURS || !(angle > 0.0 && angle.is_finite()) || !seed.x.is_finite() {
+        return taken;
+    }
+    let spacing = crate::poisson::typical_spacing(points);
+    if !(spacing > 0.0) {
+        return taken;
+    }
+    let hop = (HOP_SPACINGS * spacing).powi(2);
+    let grid = crate::poisson::PointGrid::sized_for(points, FACING_NEIGHBOURS as f64);
+    // Which way a point faces (zero where its neighbours are in a line) and the neighbours within a hop.
+    let look = |k: u32| -> (Vec3, Vec<u32>) {
+        let mut near = Vec::with_capacity(FACING_NEIGHBOURS);
+        grid.nearest(points[k as usize], FACING_NEIGHBOURS, Some(k), &mut near);
+        let around: Vec<Vec3> = near.iter().map(|&(_, q)| points[q as usize]).chain(std::iter::once(points[k as usize])).collect();
+        let middle = around.iter().fold(Vec3::ZERO, |a, &q| a + q) / around.len() as f64;
+        let mut spread = [[0.0f64; 3]; 3];
+        for q in &around {
+            let d = *q - middle;
+            let d = [d.x, d.y, d.z];
+            for (row, a) in spread.iter_mut().zip(d) {
+                for (cell, b) in row.iter_mut().zip(d) {
+                    *cell += a * b;
+                }
+            }
+        }
+        let facing = solidcraft_geom::inertia::principal(&spread, 0.0).and_then(|(_, axes)| axes[0].normalized()).unwrap_or(Vec3::ZERO);
+        (facing, near.iter().filter(|&&(d, _)| d <= hop).map(|&(_, q)| q).collect())
+    };
+    let mut first = Vec::new();
+    grid.nearest(seed, 1, None, &mut first);
+    let Some(&(_, start)) = first.first() else { return taken };
+    let (seed_facing, linked) = look(start);
+    if seed_facing == Vec3::ZERO {
+        return taken;
+    }
+    let least = angle.cos();
+    let mut seen = vec![false; points.len()];
+    taken[start as usize] = true;
+    seen[start as usize] = true;
+    // The points just taken: their neighbours, and the way they face.
+    let mut edge = vec![(linked, seed_facing)];
+    while !edge.is_empty() {
+        let mut candidates: Vec<(u32, Vec3)> = Vec::new();
+        for (linked, facing) in &edge {
+            for &q in linked {
+                if !std::mem::replace(&mut seen[q as usize], true) {
+                    candidates.push((q, *facing));
+                }
+            }
+        }
+        let looked = par::map(candidates.len(), |i| look(candidates[i].0));
+        edge = Vec::new();
+        for (&(q, from), (facing, linked)) in candidates.iter().zip(looked) {
+            let reference = if crease { from } else { seed_facing };
+            if facing != Vec3::ZERO && facing.dot(reference).abs() >= least {
+                taken[q as usize] = true;
+                edge.push((linked, facing));
+            }
+        }
+    }
+    taken
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1133,6 +1209,50 @@ mod tests {
         assert!(points_near(&points, &[], 2.0).iter().all(|n| !n));
         assert!(points_near(&points, &[Vec3::ZERO], 0.0).iter().all(|n| !n));
         assert!(points_near(&[], &[Vec3::ZERO], 1.0).is_empty());
+    }
+
+    /// A plate with a wall standing on its edge, and another plate above it that touches
+    /// neither: a region from the plate is the plate, not the wall (it faces another way) and not
+    /// the plate above (it is a gap away); on a cylinder turning slowly, facing takes a strip of it
+    /// and crease the whole.
+    #[test]
+    fn a_region_of_points_follows_the_way_they_face() {
+        let mut points = Vec::new();
+        for i in 0..30 {
+            for j in 0..30 {
+                points.push(Vec3::new(f64::from(i), f64::from(j), 0.0)); // the plate
+                points.push(Vec3::new(f64::from(i), f64::from(j), 10.0)); // the plate above
+                points.push(Vec3::new(30.0, f64::from(j), f64::from(i) + 1.0)); // the wall at its edge
+            }
+        }
+        let region = points_region(&points, Vec3::new(10.0, 10.0, 0.0), 30f64.to_radians(), false);
+        let (mut plate, mut other) = (0, 0);
+        for (p, t) in points.iter().zip(&region) {
+            match (p.z == 0.0 && p.x < 30.0, *t) {
+                (true, true) => plate += 1,
+                (false, true) => other += 1,
+                _ => {}
+            }
+        }
+        assert!(plate >= 28 * 28, "the plate is taken but for its rim: {plate} of 900");
+        assert_eq!(other, 0, "nothing else is");
+        // A quarter of a cylinder of radius 20, a point every 1 round it and along it.
+        let mut cylinder = Vec::new();
+        for i in 0..32 {
+            for k in 0..30 {
+                let t = f64::from(i) / 20.0;
+                cylinder.push(Vec3::new(20.0 * t.cos(), 20.0 * t.sin(), f64::from(k)));
+            }
+        }
+        let share = |r: &[bool]| r.iter().filter(|t| **t).count() as f64 / r.len() as f64;
+        // From the middle of its quarter turn, a strip 10 degrees either side of it, or all of it.
+        let middle = Vec3::new(20.0 * 0.78f64.cos(), 20.0 * 0.78f64.sin(), 15.0);
+        let strip = points_region(&cylinder, middle, 10f64.to_radians(), false);
+        let whole = points_region(&cylinder, middle, 10f64.to_radians(), true);
+        assert!((0.15..0.35).contains(&share(&strip)), "a strip of it: {}", share(&strip));
+        assert!(share(&whole) > 0.9, "the whole of it: {}", share(&whole));
+        assert!(points_region(&cylinder, Vec3::ZERO, 0.0, false).iter().all(|t| !t));
+        assert!(points_region(&[], Vec3::ZERO, 0.5, false).is_empty());
     }
 
     /// A line of points with its middle selected: growing takes the neighbours within the reach,

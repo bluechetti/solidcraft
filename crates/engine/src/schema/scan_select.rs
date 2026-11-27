@@ -116,8 +116,9 @@ pub struct ScanSelectParams {
     #[serde(default)]
     pub unexplained: Option<Value>,
     /// Select a point cloud's points instead of a scan's triangles: its name or id. Then give one
-    /// of `brush` (the points within its radius of its places), `polygon`, `box`, `saved`, `all`,
-    /// `none`, `invert`, `grow` or `shrink`.
+    /// of `brush` (the points within its radius of its places), `polygon`, `region` (the face the
+    /// points of a place lie on, joined by their neighbours), `box`, `saved`, `all`, `none`,
+    /// `invert`, `grow` or `shrink`.
     #[serde(default)]
     pub cloud: Option<String>,
     /// With `cloud`: the points inside this box (corners in mm, both ends included).

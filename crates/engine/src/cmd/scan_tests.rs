@@ -1876,6 +1876,46 @@ fn a_cloud_selection_grows_and_shrinks_by_rings() {
     }
 }
 
+/// A region of a cloud is the face its points lie on: joined by their neighbours while they face
+/// the way they do at the place, not the wall beside it or the sheet a gap above.
+#[test]
+fn a_region_of_a_cloud_is_the_face_under_a_place() {
+    let mut points = Vec::new();
+    for i in 0..30 {
+        for j in 0..30 {
+            points.push(Vec3::new(f64::from(i), f64::from(j), 0.0));
+            points.push(Vec3::new(f64::from(i), f64::from(j), 10.0));
+            points.push(Vec3::new(30.0, f64::from(j), f64::from(i) + 1.0));
+        }
+    }
+    let mut s = session_with_a_cloud(&points);
+    let region = |s: &mut Session, extra: Value| {
+        let mut p = json!({"cloud": 1, "region": {"point": [10, 10, 0]}});
+        for (k, v) in extra.as_object().into_iter().flatten() {
+            p[k] = v.clone();
+        }
+        run(s, "scan.select", p)["points"].as_u64().unwrap_or(0)
+    };
+    let plate = region(&mut s, json!({}));
+    // The plate is 900 points; the wall and the sheet above it add 1800 more, none of them taken.
+    assert!((28 * 28..=900).contains(&(plate as usize)), "the plate but for its rim: {plate}");
+    // Added to what is selected, it does not grow it again; taken from all, it leaves the rest.
+    assert_eq!(region(&mut s, json!({"mode": "add"})), plate);
+    run(&mut s, "scan.select", json!({"cloud": 1, "all": true}));
+    assert_eq!(region(&mut s, json!({"mode": "remove"})), 2700 - plate);
+    let creased =
+        run(&mut s, "scan.select", json!({"cloud": 1, "region": {"point": [10, 10, 0], "until": "crease", "angle": 20}}))["points"].as_u64();
+    assert!(creased.is_some_and(|n| (28 * 28..=900).contains(&(n as usize))), "{creased:?}");
+    for bad in [
+        json!({"point": [10, 10, 0], "angle": 0}),
+        json!({"point": [10, 10, 0], "angle": 91}),
+        json!({"point": [10, 10]}),
+        json!({"point": [10, 10, 0], "until": "never"}),
+    ] {
+        assert!(s.execute("scan.select", &json!({"cloud": 1, "region": bad})).is_err(), "{bad}");
+    }
+}
+
 /// The points selected on a cloud are kept in the design under a name, opened again (with a mode),
 /// replaced by name and deleted; they are the cloud's, not a scan's.
 #[test]
