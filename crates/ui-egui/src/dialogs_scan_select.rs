@@ -67,6 +67,10 @@ pub struct ScanSelect {
     /// The brush stroke's places not yet sent, and whether the stroke has sent any.
     stroke: Vec<Vec3>,
     stroked: bool,
+    /// With no scan mesh in the design, the point cloud brushed last (its id) and the one the
+    /// stroke being drawn is on.
+    cloud: Option<u64>,
+    stroke_cloud: Option<u64>,
     /// A command asked for by a button, run on the next frame.
     asked: Option<(String, Value)>,
     /// What the last command said, when it was refused.
@@ -87,6 +91,8 @@ impl Default for ScanSelect {
             corners: Vec::new(),
             stroke: Vec::new(),
             stroked: false,
+            cloud: None,
+            stroke_cloud: None,
             asked: None,
             error: None,
         }
@@ -99,6 +105,30 @@ pub fn start(_app: &SolveApp, id: &str) -> Option<(Kind, Vec<crate::selection::S
 
 fn tr(id: &'static str) -> &'static str {
     solidcraft_ui_text::tr(id)
+}
+
+/// The point cloud the dialog selects the points of: only when the design holds no scan mesh to
+/// select on. The one brushed last, else one with points selected, else the first shown: its id,
+/// name and how many points it has.
+fn cloud_target(app: &SolveApp, k: &ScanSelect) -> Option<(u64, String, usize)> {
+    if app.session.model.state().bodies.iter().any(|b| b.body.is_mesh()) {
+        return None;
+    }
+    let clouds: Vec<_> = solidcraft_engine::view::shown_point_clouds(&app.session).collect();
+    let chosen = k
+        .cloud
+        .and_then(|id| clouds.iter().find(|c| c.id == id))
+        .or_else(|| clouds.iter().find(|c| engine_select::cloud::selected(&app.session, c.id, c.len()).is_some()))
+        .or_else(|| clouds.first())?;
+    Some((chosen.id, chosen.name.clone(), chosen.len()))
+}
+
+/// The point of a cloud under `at` on the screen: its id and place.
+fn cloud_at(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::Pos2) -> Option<(u64, Vec3)> {
+    crate::viewport::pick_cached(app, proj, at).into_iter().find_map(|h| match h {
+        crate::viewport::Hit::PointCloudPoint { cloud, point, .. } => Some((cloud, point)),
+        _ => None,
+    })
 }
 
 fn dialog(app: &mut SolveApp) -> Option<&mut ScanSelect> {
@@ -170,6 +200,9 @@ pub(crate) fn radius_wheel(app: &mut SolveApp, ctx: &egui::Context, rect: egui::
 /// The dialog's rows.
 pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect) -> bool {
     let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
+    if let Some((id, _, points)) = cloud_target(app, k) {
+        return cloud_rows(app, ui, k, id, points);
+    }
     if k.radius <= 0.0 {
         let scan = solidcraft_engine::cmd::scan::mesh_body_name(&app.session, None, "scan.select").ok();
         let size = scan.map_or(0.0, |s| engine_curve::size(&app.session, &s));
@@ -275,6 +308,46 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect) -> bool {
     false
 }
 
+/// The dialog for a point cloud: the brush, what it does to what is selected, and the buttons that
+/// take all of it, none or the other points.
+fn cloud_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect, id: u64, points: usize) -> bool {
+    let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
+    k.tool = BRUSH;
+    if k.radius <= 0.0 {
+        let diagonal = app.session.doc.point_clouds.iter().find(|c| c.id == id).and_then(|c| c.world_corners()).map_or(0.0, |c| {
+            let (lo, hi) = c.iter().fold((c[0], c[0]), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+            (hi - lo).len()
+        });
+        k.radius = if diagonal > 0.0 { (diagonal / 100.0).max(1e-3) } else { 2.0 };
+    }
+    let modes: Vec<&str> = MODES.iter().map(|m| tr(m)).collect();
+    choice_row(ui, tr("ui.scan_select_mode"), "scan_select_mode", &mut k.mode, &modes);
+    form_row(ui, tr("ui.scan_select_radius"), |ui| ui_kit::length_field(ui, &mut k.radius, &units, decimals));
+    k.radius = k.radius.clamp(1e-3, 1e4);
+    let now = engine_select::cloud::selected(&app.session, id, points);
+    let summary = match &now {
+        Some(s) => solidcraft_ui_text::format("ui.scan_select_count", &[("triangles", &s.count.to_string()), ("of", &points.to_string())]),
+        None => tr("ui.scan_select_nothing").to_owned(),
+    };
+    form_row(ui, tr("ui.scan_select_selected"), |ui| ui_kit::text(ui, &summary, ui_kit::Text::Cell));
+    ui_kit::row(ui, "", |ui| {
+        ui.horizontal(|ui| {
+            for (label, key) in [("ui.scan_select_all", "all"), ("ui.scan_select_none", "none"), ("ui.scan_select_invert", "invert")] {
+                let needs = key != "all";
+                if ui_kit::button(ui, tr(label), ui_kit::Button::Enabled(!needs || now.is_some())).clicked() {
+                    k.asked = Some(("scan.select".into(), json!({"cloud": id, key: true})));
+                }
+            }
+        })
+        .response
+    });
+    if let Some(why) = &k.error {
+        ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_select_error", true));
+    }
+    ui_kit::text(ui, tr("ui.scan_select_hint_cloud"), ui_kit::Text::Hint("scan_select_hint"));
+    false
+}
+
 /// OK closes the dialog: what is selected stays selected.
 pub fn commands(_k: &ScanSelect) -> Result<Vec<(String, Value)>, String> {
     Ok(Vec::new())
@@ -370,6 +443,14 @@ pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::
             }
         }
         _ => {
+            if let Some((cloud, point)) = cloud_target(app, &k).and_then(|_| cloud_at(app, proj, at)) {
+                let place = json!([point.x, point.y, point.z]);
+                if let Some(d) = dialog(app) {
+                    d.cloud = Some(cloud);
+                }
+                run(app, "scan.select", json!({"cloud": cloud, "brush": {"points": [place], "radius": format!("{} mm", k.radius)}, "mode": mode_now(&k)}));
+                return;
+            }
             let Some((body, point)) = scan_at(app, proj, at) else { return };
             let place = json!([point.x, point.y, point.z]);
             let p = match k.tool {
@@ -393,8 +474,10 @@ fn send_stroke(app: &mut SolveApp, body: Option<String>) {
     let mode = if k.keys.unwrap_or(k.mode) == 0 && k.stroked { "add" } else { mode_now(k) };
     k.stroked = true;
     let mut p = json!({"brush": {"points": points, "radius": format!("{} mm", k.radius)}, "mode": mode});
-    if let Some(b) = body {
-        p["body"] = json!(b);
+    match (k.stroke_cloud, body) {
+        (Some(cloud), _) => p["cloud"] = json!(cloud),
+        (None, Some(b)) => p["body"] = json!(b),
+        (None, None) => {}
     }
     run(app, "scan.select", p);
 }
@@ -404,6 +487,20 @@ pub(crate) fn drag_to(app: &mut SolveApp, proj: &crate::viewport::Proj, from: eg
     let Some(tool) = dialog(app).map(|k| k.tool) else { return };
     match tool {
         BRUSH => {
+            // Over a point cloud when the design holds no scan: the stroke is its points'.
+            let on_cloud = dialog(app).map(|k| k.clone()).and_then(|k| cloud_target(app, &k)).and_then(|_| cloud_at(app, proj, to));
+            if let Some((cloud, point)) = on_cloud {
+                let full = dialog(app).is_some_and(|k| {
+                    k.cloud = Some(cloud);
+                    k.stroke_cloud = Some(cloud);
+                    k.stroke.push(point);
+                    k.stroke.len() >= STROKE_CHUNK
+                });
+                if full {
+                    send_stroke(app, None);
+                }
+                return;
+            }
             let Some((body, point)) = scan_at(app, proj, to) else { return };
             let full = dialog(app).is_some_and(|k| {
                 k.stroke.push(point);
@@ -435,6 +532,7 @@ pub(crate) fn drag_end(app: &mut SolveApp) {
             send_stroke(app, None);
             if let Some(k) = dialog(app) {
                 k.stroked = false;
+                k.stroke_cloud = None;
             }
         }
         LASSO if k.corners.len() >= 3 => k.asked = Some(("polygon".into(), Value::Null)),
@@ -460,9 +558,14 @@ pub(crate) fn draw(app: &mut SolveApp, painter: &egui::Painter, proj: &crate::vi
     for (i, c) in corners.iter().enumerate().filter(|_| tool == POLYGON) {
         painter.circle_filled(*c, 3.0, if i == 0 { t.accent } else { t.text });
     }
+    let under = hover.and_then(|h| {
+        scan_at(app, proj, h).map(|(_, at)| at).or_else(|| {
+            let k = dialog(app).map(|k| k.clone())?;
+            cloud_target(app, &k).and_then(|_| cloud_at(app, proj, h)).map(|(_, at)| at)
+        })
+    });
     if tool == BRUSH
-        && let Some(h) = hover
-        && let Some((_, at)) = scan_at(app, proj, h)
+        && let Some(at) = under
         && let Some(side) = proj.cam.back().cross(Vec3::Z).normalized().or_else(|| proj.cam.back().cross(Vec3::X).normalized())
         && let (Some(a), Some(b)) = (proj.to_screen(at), proj.to_screen(at + side * radius))
     {
@@ -588,5 +691,53 @@ mod tests {
         h.frames(2);
         assert!(h.app.dialog.is_none());
         assert!(engine_select::selected(&h.app.session).is_some(), "the selection stays");
+    }
+
+    /// With no scan in the design, the dialog works on a point cloud: a click brushes the points
+    /// within the radius of the one under it (Shift adds, Ctrl takes away), a drag brushes along
+    /// them, and the buttons take all, none or the other points.
+    #[test]
+    fn the_brush_selects_the_points_of_a_cloud() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("grid.xyz");
+        let mut xyz = String::new();
+        for j in 0..21 {
+            for i in 0..21 {
+                xyz += &format!("{i} {j} 0\n");
+            }
+        }
+        std::fs::write(&path, xyz).unwrap();
+        let id = h.app.run("pointcloud.insert", json!({"path": path.to_string_lossy()})).unwrap()["cloud"].as_u64().unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.select");
+        h.frames(2);
+        assert!(active(&h.app));
+        kind(&mut h).radius = 1.5;
+        h.frames(1);
+        let count = |h: &crate::scenario::Harness| engine_select::cloud::selected(&h.app.session, id, 441).map_or(0, |s| s.count);
+        // Within 1.5 of (10, 10): the centre, its four and four diagonal neighbours, and the four
+        // two steps away along the axes are further than 1.5; so nine.
+        h.step(&json!({"click": {"world": [10.0, 10.0, 0.0]}})).unwrap();
+        h.frames(2);
+        assert_eq!(count(&h), 9, "{:?}", kind(&mut h).error);
+        // Shift adds another place; Ctrl takes the first away again.
+        h.step(&json!({"click": {"world": [4.0, 4.0, 0.0]}, "shift": true})).unwrap();
+        h.frames(2);
+        assert_eq!(count(&h), 18);
+        h.step(&json!({"click": {"world": [10.0, 10.0, 0.0]}, "ctrl": true})).unwrap();
+        h.frames(2);
+        assert_eq!(count(&h), 9, "the first place taken away");
+        // A drag along a row brushes each place it passes.
+        h.step(&json!({"drag": [{"world": [14.0, 16.0, 0.0]}, {"world": [18.0, 16.0, 0.0]}], "steps": 8})).unwrap();
+        h.frames(3);
+        assert!(count(&h) > 9, "the stroke added points: {}", count(&h));
+        // The buttons.
+        kind(&mut h).asked = Some(("scan.select".into(), json!({"cloud": id, "all": true})));
+        h.frames(2);
+        assert_eq!(count(&h), 441);
+        kind(&mut h).asked = Some(("scan.select".into(), json!({"cloud": id, "none": true})));
+        h.frames(2);
+        assert_eq!(count(&h), 0);
+        assert!(kind(&mut h).error.is_none());
     }
 }
