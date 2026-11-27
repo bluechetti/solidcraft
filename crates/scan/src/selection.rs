@@ -979,6 +979,16 @@ impl Raster {
         if !(span > 0.0 && span.is_finite()) {
             return None;
         }
+        // Corners on one line enclose nothing, though a cell's middle can fall on the line.
+        let twice_area: f64 = (0..polygon.len())
+            .map(|k| {
+                let (a, b) = (polygon[k], polygon[(k + 1) % polygon.len()]);
+                a[0] * b[1] - b[0] * a[1]
+            })
+            .sum();
+        if !(twice_area.abs() > 1e-9 * span * span) {
+            return None;
+        }
         let cell = span / RASTER as f64;
         let (w, h) = (((hi[0] - lo[0]) / cell).ceil() as usize + 1, ((hi[1] - lo[1]) / cell).ceil() as usize + 1);
         let mut mask = vec![false; w * h];
@@ -1126,7 +1136,41 @@ mod tests {
         assert!(count(&seen) > 0 && seen.iter().zip(&points).all(|(s, p)| !*s || p.z == 0.0), "{}", count(&seen));
         let line = [Vec3::new(1.0, 1.0, 0.0), Vec3::new(2.0, 2.0, 0.0)];
         assert_eq!(count(&points_seen_inside(&points, &line, &down, true)), 0, "two corners take nothing");
+        // Three corners on one line, through lattice points, take nothing either.
+        let flat = [Vec3::new(1.0, 1.0, 0.0), Vec3::new(2.0, 2.0, 0.0), Vec3::new(5.0, 5.0, 0.0)];
+        assert_eq!(count(&points_seen_inside(&points, &flat, &down, true)), 0, "corners on a line take nothing");
+        assert_eq!(count(&points_seen_inside(&points, &flat, &down, false)), 0);
         assert_eq!(count(&points_seen_inside(&points, &ring, &View { direction: Vec3::ZERO, eye: None }, true)), 0);
+    }
+
+    /// A dense wall seen from outside a room: a polygon over it takes the wall and what stands
+    /// before it, not the sparser points of the room behind it (the heuristic on a real scan:
+    /// about 2% of what lay behind a wall of 16,000 points leaked, all of it near the wall).
+    #[test]
+    fn a_polygon_over_a_wall_takes_nothing_from_behind_it() {
+        let mut points = Vec::new();
+        let mut room = 0;
+        for i in 0..100 {
+            for j in 0..100 {
+                // The wall, a point every 0.1, and a sparser sheet and a table top behind it.
+                points.push(Vec3::new(f64::from(i) * 0.1, 10.0, f64::from(j) * 0.1));
+                if i % 4 == 0 && j % 4 == 0 {
+                    points.push(Vec3::new(f64::from(i) * 0.1, 4.0, f64::from(j) * 0.1));
+                    room += 1;
+                }
+            }
+        }
+        let ring: Vec<Vec3> = [[2.0, 2.0], [8.0, 2.0], [8.0, 8.0], [2.0, 8.0]].iter().map(|[x, z]| Vec3::new(*x, 20.0, *z)).collect();
+        // Looking along -Y from outside: the wall (y = 10) is nearer than the room (y = 4).
+        let view = View { direction: Vec3::new(0.0, -1.0, 0.0), eye: None };
+        let seen = points_seen_inside(&points, &ring, &view, false);
+        let (wall, behind) = seen.iter().zip(&points).fold((0, 0), |(w, b), (s, p)| match (*s, p.y > 9.0) {
+            (true, true) => (w + 1, b),
+            (true, false) => (w, b + 1),
+            _ => (w, b),
+        });
+        assert!(wall >= 55 * 55, "the wall is taken: {wall}");
+        assert!(behind * 50 <= room, "{behind} of the room behind leaked");
     }
 
     /// A ball of radius 20 about the origin, its poles on Z.
