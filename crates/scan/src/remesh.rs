@@ -70,6 +70,9 @@ impl std::fmt::Display for RemeshError {
     }
 }
 
+/// A read grid point with this many of its six neighbours unread is given up when a skin stops short
+/// of the scan's rim.
+const ERODED_BY: usize = 2;
 /// How far from a scan's surface it speaks, in cells.
 const BAND: i64 = 2;
 /// The most grid points read.
@@ -455,6 +458,26 @@ fn remesh_offset(sources: &[Scan], settings: &Settings, offset: f64, reach_rims:
         if count > 0 { (sum / count as f64 - offset) as f32 } else { f32::NAN }
     });
     let index: HashMap<u64, u32> = nodes.iter().enumerate().map(|(i, &k)| (k, i as u32)).collect();
+    // Where the scan's rim is ragged, the nearest point flips between a face and a rim edge from one
+    // grid point to the next, so unread points sit among read ones and the surface drawn through the
+    // cells round them crumples. A skin that stops short of the rim anyway (a shell's) gives up each
+    // read point with [`ERODED_BY`] or more unread neighbours, which leaves a clean edge.
+    let mut values = values;
+    if !reach_rims {
+        let unread = |n: usize, values: &[f32]| {
+            let (i, j, k) = unpack(nodes[n]);
+            [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
+                .iter()
+                .filter(|(a, b, c)| index.get(&pack(i + a, j + b, k + c)).is_some_and(|&at| values[at as usize].is_nan()))
+                .count()
+        };
+        let gone: Vec<bool> = (0..nodes.len()).map(|n| values[n].is_finite() && unread(n, &values) >= ERODED_BY).collect();
+        for (n, gone) in gone.iter().enumerate() {
+            if *gone {
+                values[n] = f32::NAN;
+            }
+        }
+    }
     let value = |i: i64, j: i64, k: i64| index.get(&pack(i, j, k)).map(|&at| values[at as usize]).filter(|v| v.is_finite());
 
     // A vertex for each patch of surface in each cell it crosses: the cell's crossed edges joined
@@ -1415,6 +1438,7 @@ mod tests {
             let (positions, triangles) = revolved(&profile, 96, false);
             let made = shell(&[Scan::new(&positions, &triangles)], &settings, 0.0, 2.0).expect("a shell");
             assert!(is_closed(&made.triangles) && is_manifold(&made.triangles), "closed and manifold (half {half})");
+            assert_eq!(crate::repair::crossing_count(&Scan::new(&made.positions, &made.triangles)), 0, "no face through another (half {half})");
             let v = volume(&made.positions, &made.triangles).abs();
             assert!((v - share * between).abs() < 0.04 * share * between, "half {half}: {v} against {}", share * between);
         }
