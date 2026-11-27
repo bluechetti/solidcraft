@@ -31,10 +31,12 @@ struct Key {
     color: Option<[u32; 3]>,
     value: Option<String>,
     filtered: [Option<String>; FILTERS],
+    /// The selection drawn on it (`scan.select` with `cloud`): its stamp, 0 for none.
+    selected: u64,
 }
 
 impl Key {
-    fn of(c: &PointCloud) -> Key {
+    fn of(c: &PointCloud, selected: u64) -> Key {
         let mut data = vec![
             Arc::as_ptr(c.points.values()).cast::<f32>() as usize,
             Arc::as_ptr(&c.colors.0).cast::<u8>() as usize,
@@ -51,6 +53,7 @@ impl Key {
             color: c.color.map(|k| k.map(f32::to_bits)),
             value: c.colored_property().map(str::to_string),
             filtered: std::array::from_fn(|k| c.filters.get(k).map(|f| f.property.clone())),
+            selected,
         }
     }
 }
@@ -85,7 +88,10 @@ pub(crate) fn color_range(ctx: &egui::Context, c: &PointCloud) -> Option<[f64; 2
     })
 }
 
-fn records(c: &PointCloud) -> Records {
+/// The points selected on `c` and the colour they are drawn in.
+type Chosen<'a> = Option<(&'a [bool], [u8; 3])>;
+
+fn records(c: &PointCloud, chosen: Chosen<'_>) -> Records {
     let world: Vec<[f32; 3]> = (0..c.len())
         .map(|i| {
             // Placed in double precision: the cloud's origin may be far from the design's.
@@ -95,10 +101,11 @@ fn records(c: &PointCloud) -> Records {
         .collect();
     let plain = PLAIN.map(byte);
     let single = c.color.unwrap_or(PLAIN).map(byte);
-    let own = |i: u32| match c.color_by {
-        ColorBy::Single => single,
-        ColorBy::File => c.colors.get(i as usize).unwrap_or(plain),
-        ColorBy::Height | ColorBy::Property => plain,
+    let own = |i: u32| match (chosen, c.color_by) {
+        (Some((flags, colour)), _) if flags.get(i as usize).copied().unwrap_or(false) => colour,
+        (_, ColorBy::Single) => single,
+        (_, ColorBy::File) => c.colors.get(i as usize).unwrap_or(plain),
+        (_, ColorBy::Height | ColorBy::Property) => plain,
     };
     // The coloured property, then the filtered ones.
     let names: [Option<&str>; 1 + FILTERS] =
@@ -203,11 +210,14 @@ pub(crate) fn as_drawn(c: &PointCloud, playing: impl Fn(usize) -> Option<[f64; 2
 }
 
 /// How a cloud is coloured and which of its elements are shown, as the shaders read it; a filter
-/// playing in the Edit Point Cloud card shows its range now.
-fn style(ctx: &egui::Context, c: &PointCloud, playing: impl Fn(usize) -> Option<[f64; 2]>) -> CloudStyle {
+/// playing in the Edit Point Cloud card shows its range now. `selected`: points are selected on it.
+fn style(ctx: &egui::Context, c: &PointCloud, selected: bool, playing: impl Fn(usize) -> Option<[f64; 2]>) -> CloudStyle {
     let c = as_drawn(c, playing);
     let property = c.colored_property();
+    // With points selected the cloud is drawn in its own colours, the selected ones in the
+    // selection's, whatever it was coloured by: a ramp or a palette would paint over them.
     let mode = match (c.color_by, property) {
+        _ if selected => ColorMode::Own,
         (ColorBy::File | ColorBy::Single, _) | (_, None) => ColorMode::Own,
         (_, Some(name)) if c.complex.integer(name) => ColorMode::Palette,
         _ => ColorMode::Ramp,
@@ -232,6 +242,12 @@ fn style(ctx: &egui::Context, c: &PointCloud, playing: impl Fn(usize) -> Option<
     CloudStyle { mode, range, filters, point_size: c.point_size as f32 }
 }
 
+/// The colour selected points are drawn in: the theme's selection colour for faces.
+fn selection_colour() -> [u8; 3] {
+    let [r, g, b, _] = crate::viewport::c4(solidcraft_theme::Tokens::get().sel_face);
+    [r, g, b]
+}
+
 /// The shown point clouds as the GPU draws them.
 pub fn gpu_clouds(app: &SolveApp, ctx: &egui::Context) -> Vec<GpuCloud> {
     let doc = &app.session.doc;
@@ -241,7 +257,9 @@ pub fn gpu_clouds(app: &SolveApp, ctx: &egui::Context) -> Vec<GpuCloud> {
         m.retain(|id, _| doc.point_clouds.iter().any(|c| c.id == *id));
         solidcraft_engine::view::shown_point_clouds(&app.session)
             .map(|c| {
-                let key = Key::of(c);
+                let chosen = solidcraft_engine::cmd::scan::select::cloud::selected(&app.session, c.id, c.len());
+                let colour = selection_colour();
+                let key = Key::of(c, chosen.as_ref().map_or(0, |k| k.stamp));
                 let (version, [dots, segments, triangles]) = match m.get(&c.id) {
                     Some((k, version, records)) if *k == key => (*version, records.clone()),
                     _ => {
@@ -249,13 +267,13 @@ pub fn gpu_clouds(app: &SolveApp, ctx: &egui::Context) -> Vec<GpuCloud> {
                             v.set(v.get() + 1);
                             v.get()
                         });
-                        let records = records(c);
+                        let records = records(c, chosen.as_ref().map(|k| (&k.selected[..], colour)));
                         m.insert(c.id, (key, version, records.clone()));
                         (version, records)
                     }
                 };
                 let playing = |k: usize| app.tree.cloud_panel.as_ref().and_then(|p| p.playing(c.id, k));
-                GpuCloud { id: c.id, version, dots, segments, triangles, style: style(ctx, c, playing) }
+                GpuCloud { id: c.id, version, dots, segments, triangles, style: style(ctx, c, chosen.is_some(), playing) }
             })
             .collect()
     })
@@ -276,10 +294,16 @@ pub fn show(app: &SolveApp, painter: &Painter, proj: &Proj) {
     for c in clouds {
         let r = (c.point_size as f32 / painter.ctx().pixels_per_point() * 0.5).max(0.5);
         let shade = c.shade(color_range(painter.ctx(), c));
+        let chosen = solidcraft_engine::cmd::scan::select::cloud::selected(&app.session, c.id, c.len());
         for i in (0..c.len()).step_by(stride) {
             let Some(p) = c.world_point(i) else { continue };
             let Some(q) = proj.to_screen(p) else { continue };
-            shapes.push(Shape::rect_filled(egui::Rect::from_center_size(q, egui::vec2(r * 2.0, r * 2.0)), 0.0, crate::theme::model_color(shade(i))));
+            let colour = if chosen.as_ref().is_some_and(|k| k.selected.get(i).copied().unwrap_or(false)) {
+                solidcraft_theme::Tokens::get().sel_face
+            } else {
+                crate::theme::model_color(shade(i))
+            };
+            shapes.push(Shape::rect_filled(egui::Rect::from_center_size(q, egui::vec2(r * 2.0, r * 2.0)), 0.0, colour));
         }
     }
     painter.extend(shapes);
@@ -334,6 +358,38 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// Points selected on a cloud (`scan.select` with `cloud`) are drawn in the selection's colour
+    /// whatever the cloud is coloured by, the others as they were; the records are made again only
+    /// when the selection changes, and again when it is cleared.
+    #[test]
+    fn selected_points_are_drawn_in_the_selection_colour() {
+        let mut h = crate::scenario::Harness::new();
+        let dir = std::env::temp_dir().join(format!("solidcraft-ui-cloud-select-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("two.xyz");
+        std::fs::write(&path, "0 0 0 255 0 0\n10 0 0 0 255 0\n").unwrap();
+        let id = h.app.run("pointcloud.insert", serde_json::json!({"path": path.to_string_lossy()})).unwrap()["cloud"].as_u64().unwrap();
+        let size = solidcraft_viewport_gpu::view::CELL_SIZE;
+        let plain = gpu_clouds(&h.app, &h.ctx);
+        // The second point selected: x from 5 to 20.
+        let picked = h.app.run("scan.select", serde_json::json!({"cloud": id, "box": {"min": [5, -1, -1], "max": [20, 1, 1]}})).unwrap();
+        assert_eq!(picked["points"], 1, "{picked}");
+        let drawn = gpu_clouds(&h.app, &h.ctx);
+        assert_ne!(drawn[0].version, plain[0].version);
+        let selection = selection_colour();
+        assert_eq!(&drawn[0].dots[2 * size - 4..2 * size - 1], &selection, "the selected point");
+        assert_eq!(&drawn[0].dots[size - 4..size - 1], &[255, 0, 0], "the other keeps its own");
+        assert_eq!(gpu_clouds(&h.app, &h.ctx)[0].version, drawn[0].version, "the same selection: the same records");
+        // Coloured by height it would be a ramp; with points selected the shaders keep their colours.
+        h.app.run("pointcloud.edit", serde_json::json!({"cloud": id, "color_by": "height", "height_range": [0, 1]})).unwrap();
+        assert_eq!(gpu_clouds(&h.app, &h.ctx)[0].style.mode, ColorMode::Own);
+        h.app.run("scan.select", serde_json::json!({"cloud": id, "none": true})).unwrap();
+        let cleared = gpu_clouds(&h.app, &h.ctx);
+        assert_eq!(cleared[0].style.mode, ColorMode::Ramp, "no selection: coloured as it was");
+        assert_ne!(&cleared[0].dots[2 * size - 4..2 * size - 1], &selection);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn an_automatic_range_is_what_is_kept_and_follows_a_playing_filter() {
         let mut h = crate::scenario::Harness::new();
@@ -347,7 +403,7 @@ mod tests {
         let id = h.app.run("pointcloud.insert", serde_json::json!({"path": path.to_string_lossy()})).unwrap()["cloud"].as_u64().unwrap();
         // Filtered by x, not by t: the range is what is kept of t, 2 to 4, once worked out.
         h.app.run("pointcloud.edit", serde_json::json!({"cloud": id, "color_by": "t", "filters": [{"property": "x", "range": [2, 4]}]})).unwrap();
-        let range = |h: &crate::scenario::Harness, playing: Option<[f64; 2]>| style(&h.ctx, &h.app.session.doc.point_clouds[0], |_| playing).range;
+        let range = |h: &crate::scenario::Harness, playing: Option<[f64; 2]>| style(&h.ctx, &h.app.session.doc.point_clouds[0], false, |_| playing).range;
         let settle = |h: &crate::scenario::Harness, playing: Option<[f64; 2]>, want: [f32; 2]| {
             (0..500).any(|_| {
                 let ok = range(h, playing) == want;
