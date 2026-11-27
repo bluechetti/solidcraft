@@ -1836,6 +1836,46 @@ fn a_polygon_selects_the_points_of_a_cloud_inside_it() {
     assert!(both.is_err(), "one way to select");
 }
 
+/// A cloud's selection grows and shrinks by rings as wide as `step`, or twice the cloud's point
+/// spacing; a scan's refuses `step`, and a ring count out of range is refused.
+#[test]
+fn a_cloud_selection_grows_and_shrinks_by_rings() {
+    let mut points = Vec::new();
+    for i in 0..40 {
+        for j in 0..40 {
+            points.push(Vec3::new(f64::from(i), f64::from(j), 0.0));
+        }
+    }
+    let mut s = session_with_a_cloud(&points);
+    let count = |s: &mut Session, p: Value| run(s, "scan.select", p)["points"].clone();
+    // A 6 by 6 block of the grid (spacing 1).
+    let block = json!({"cloud": 1, "box": {"min": [10, 10, -1], "max": [15, 15, 1]}});
+    assert_eq!(count(&mut s, block), json!(36));
+    assert_eq!(
+        count(&mut s, json!({"cloud": 1, "grow": 1, "step": "1 mm"})),
+        json!(60),
+        "one ring of 1 mm: a point along each side, not at the corners"
+    );
+    assert_eq!(count(&mut s, json!({"cloud": 1, "shrink": 1, "step": "1 mm"})), json!(36), "and back");
+    assert_eq!(count(&mut s, json!({"cloud": 1, "shrink": 2, "step": "1 mm"})), json!(4), "two rings in from 6 by 6");
+    // With no step a ring is twice the spacing, 2 mm: two points out along each side, and the
+    // diagonal one at each corner.
+    let block = json!({"cloud": 1, "box": {"min": [10, 10, -1], "max": [15, 15, 1]}});
+    count(&mut s, block);
+    assert_eq!(count(&mut s, json!({"cloud": 1, "grow": 1})), json!(88));
+    // The edge of the cloud is not an unselected place.
+    assert_eq!(count(&mut s, json!({"cloud": 1, "all": true})), json!(1600));
+    assert_eq!(count(&mut s, json!({"cloud": 1, "shrink": 3})), json!(1600));
+    for bad in [
+        json!({"cloud": 1, "grow": 0}),
+        json!({"cloud": 1, "grow": 1001}),
+        json!({"cloud": 1, "grow": 1, "shrink": 1}),
+        json!({"cloud": 1, "grow": 1, "step": "0 mm"}),
+    ] {
+        assert!(s.execute("scan.select", &bad).is_err(), "{bad}");
+    }
+}
+
 /// The points a command selected on a copy of the session (an agent's or the control channel's,
 /// off the window thread) are selected here when it is adopted, as a scan's triangles are.
 #[test]
@@ -4220,7 +4260,9 @@ fn a_fit_on_a_point_cloud_says_what_it_cannot_do() {
 fn a_hand_chosen_region_with_a_stray_piece_is_fitted_to_the_part_when_robust() {
     let flat = |z: f64, n: u32, side: f64| -> Vec<[Vec3; 3]> {
         let at = |i: u32, j: u32| Vec3::new(f64::from(i) * side, f64::from(j) * side, z);
-        (0..n).flat_map(|j| (0..n).flat_map(move |i| [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]])).collect()
+        (0..n)
+            .flat_map(|j| (0..n).flat_map(move |i| [[at(i, j), at(i + 1, j), at(i + 1, j + 1)], [at(i, j), at(i + 1, j + 1), at(i, j + 1)]]))
+            .collect()
     };
     let mut triangles = flat(5.0, 12, 4.0);
     let plate = triangles.len();

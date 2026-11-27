@@ -98,19 +98,26 @@ pub struct ScanSelectParams {
     /// Select what is not selected, and not what is.
     #[serde(default)]
     pub invert: Option<bool>,
-    /// Grow what is selected by this many rings of triangles (1 to 1000).
+    /// Grow what is selected by this many rings of triangles (1 to 1000); with `cloud`, rings of
+    /// points as wide as `step`.
     #[serde(default)]
     pub grow: Option<u32>,
-    /// Shrink what is selected by this many rings of triangles (1 to 1000).
+    /// Shrink what is selected by this many rings of triangles (1 to 1000); with `cloud`, rings
+    /// of points as wide as `step`.
     #[serde(default)]
     pub shrink: Option<u32>,
+    /// With `cloud` and `grow` or `shrink`: how wide a ring is, a length. Default: twice the
+    /// cloud's typical distance between neighbouring points.
+    #[serde(default)]
+    pub step: Option<Value>,
     /// The part of the scan a solid built from it does not explain yet: the solid's name, or
     /// `{body, piece?, grow?}` (`piece`: which piece, 0 the largest, the default; `grow`: rings
     /// of triangles added round it, 0 to 1000).
     #[serde(default)]
     pub unexplained: Option<Value>,
     /// Select a point cloud's points instead of a scan's triangles: its name or id. Then give one
-    /// of `brush` (the points within its radius of its places), `box`, `all`, `none` or `invert`.
+    /// of `brush` (the points within its radius of its places), `polygon`, `box`, `all`, `none`,
+    /// `invert`, `grow` or `shrink`.
     #[serde(default)]
     pub cloud: Option<String>,
     /// With `cloud`: the points inside this box (corners in mm, both ends included).
@@ -282,7 +289,25 @@ mod tests {
     fn the_selection_commands_take_these_keys() {
         assert_keys(
             input_schema_for::<ScanSelectParams>(),
-            &["all", "body", "box", "brush", "cloud", "grow", "invert", "mode", "none", "polygon", "region", "saved", "shape", "shrink", "triangles", "unexplained"],
+            &[
+                "all",
+                "body",
+                "box",
+                "brush",
+                "cloud",
+                "grow",
+                "invert",
+                "mode",
+                "none",
+                "polygon",
+                "region",
+                "saved",
+                "shape",
+                "shrink",
+                "step",
+                "triangles",
+                "unexplained",
+            ],
         );
         assert_keys(input_schema_for::<ScanSelectInsideParams>(), &["body", "curves", "mode", "sketch"]);
         assert_keys(input_schema_for::<ScanKeepSelectionParams>(), &["name"]);

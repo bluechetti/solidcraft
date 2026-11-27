@@ -1,15 +1,15 @@
 //! `scan.select` on a point cloud (`cloud`): the points selected by a brush, a box, all, none or
-//! the inverse, held by the session as a scan's selected triangles are: a view of the cloud, not
-//! part of the design and not an undo step. The fits take it (`scan.fit_*` with the same `cloud`
-//! and no `point`). It follows the cloud while its points are the same count; a cloud inserted
-//! again or cut down gives it up.
+//! the inverse or the selection grown or shrunk, held by the session as a scan's selected
+//! triangles are: a view of the cloud, not part of the design and not an undo step. The fits
+//! take it (`scan.fit_*` with the same `cloud` and no `point`). It follows the cloud while its
+//! points are the same count; a cloud inserted again or cut down gives it up.
 
 use std::sync::Arc;
 
 use serde_json::{Value, json};
 use solidcore_record::Vec3;
 
-use super::{MOST_PLACES, Mode, NEXT_STAMP, mode, points};
+use super::{MOST_PLACES, MOST_RINGS, Mode, NEXT_STAMP, mode, points};
 use crate::params::bad;
 use crate::schema::scan_select::ScanSelectResult;
 use crate::{EngineError, Result, Session};
@@ -33,8 +33,8 @@ pub fn selected(s: &Session, id: u64, points: usize) -> Option<Arc<CloudSelected
 }
 
 pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
-    let ways = ["brush", "polygon", "box", "all", "none", "invert"];
-    for other in ["region", "shape", "saved", "triangles", "grow", "shrink", "unexplained", "body"] {
+    let ways = ["brush", "polygon", "box", "all", "none", "invert", "grow", "shrink"];
+    for other in ["region", "shape", "saved", "triangles", "unexplained", "body"] {
         if p.get(other).is_some_and(|v| !v.is_null() && *v != json!(false)) {
             return Err(bad(cmd, format!("`{other}` is for a scan's triangles: with `cloud`, give one of {}", ways.join(", "))));
         }
@@ -54,14 +54,28 @@ pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         "all" => vec![true; count],
         "none" => vec![false; count],
         "invert" => current().into_iter().map(|f| !f).collect(),
+        "grow" | "shrink" => {
+            let rings = v
+                .as_u64()
+                .filter(|n| (1..=MOST_RINGS).contains(n))
+                .ok_or_else(|| bad(cmd, format!("`{way}` is a number of rings, 1 to {MOST_RINGS}")))?;
+            // A ring is as wide as `step`, else twice the cloud's point spacing.
+            let step = match crate::params::expr(p, "step") {
+                Some(e) => s.doc.eval(&e, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("step: {e}")))?,
+                None => 2.0 * solidcraft_scan::poisson::typical_spacing(&places),
+            };
+            if !(step.is_finite() && step > 0.0) {
+                return Err(bad(cmd, "`step` is how wide a ring is, a length above 0 (the cloud's points have no spacing to take it from)"));
+            }
+            solidcraft_scan::selection::points_grown(&places, &current(), step * rings as f64, way == "grow")
+        }
         "polygon" => {
             let (ring, view, through) = super::polygon_of(v, cmd)?;
             solidcraft_scan::selection::points_seen_inside(&places, &ring, &view, through)
         }
         "box" => {
-            let corner = |key: &str| {
-                crate::params::vec3(&v[key]).ok_or_else(|| bad(cmd, format!("`box.{key}` must be a point [x, y, z] of numbers")))
-            };
+            let corner =
+                |key: &str| crate::params::vec3(&v[key]).ok_or_else(|| bad(cmd, format!("`box.{key}` must be a point [x, y, z] of numbers")));
             let (lo, hi) = (corner("min")?, corner("max")?);
             if lo.x > hi.x || lo.y > hi.y || lo.z > hi.z {
                 return Err(bad(cmd, "`box.min` must be below `box.max` on every axis"));
@@ -83,7 +97,7 @@ pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
     };
     let flags: Vec<bool> = match (mode, way) {
         // These say what is selected whole, whichever the mode.
-        (_, "all" | "none" | "invert") => found,
+        (_, "all" | "none" | "invert" | "grow" | "shrink") => found,
         (Mode::Replace, _) => found,
         (Mode::Add, _) => current().into_iter().zip(&found).map(|(a, b)| a | *b).collect(),
         (Mode::Remove, _) => current().into_iter().zip(&found).map(|(a, b)| a & !*b).collect(),
@@ -94,8 +108,7 @@ pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         Some(k) => k.stamp,
         None => NEXT_STAMP.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
     };
-    s.cloud_selection =
-        (total > 0).then(|| Arc::new(CloudSelected { id, cloud: name.clone(), selected: Arc::new(flags), count: total, stamp }));
+    s.cloud_selection = (total > 0).then(|| Arc::new(CloudSelected { id, cloud: name.clone(), selected: Arc::new(flags), count: total, stamp }));
     let reply = ScanSelectResult {
         body: name,
         triangles: 0,

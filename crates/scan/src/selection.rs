@@ -1085,6 +1085,40 @@ pub fn points_near(points: &[Vec3], places: &[Vec3], radius: f64) -> Vec<bool> {
     near
 }
 
+/// A point cloud's selection grown by `reach` (the points within it of a selected point join), or
+/// shrunk by it (the selected points within it of an unselected point leave). The edge of the
+/// cloud is not an unselected place, so shrinking does not eat in from it. A selection that is
+/// not as long as `points` is taken as unselected past its end; a `reach` that is not above 0
+/// changes nothing. One pass over a grid of cells one reach wide, so it stays near the cloud's
+/// size however much is selected.
+pub fn points_grown(points: &[Vec3], selected: &[bool], reach: f64, grow: bool) -> Vec<bool> {
+    let mut now: Vec<bool> = (0..points.len()).map(|i| selected.get(i).copied().unwrap_or(false)).collect();
+    if !(reach.is_finite() && reach > 0.0) {
+        return now;
+    }
+    // The places the change spreads from: what is selected when growing, what is not when shrinking.
+    let from: Vec<Vec3> = points.iter().zip(&now).filter(|(_, s)| **s == grow).map(|(p, _)| *p).collect();
+    if from.is_empty() {
+        return now;
+    }
+    let grid = crate::poisson::PointGrid::new(&from, reach);
+    // The points the change may reach: those that are not yet what it makes them.
+    let reached: Vec<bool> = par::map(points.len(), |i| {
+        if now[i] == grow {
+            return false;
+        }
+        let mut found = false;
+        grid.within(points[i], reach, |_, _| found = true);
+        found
+    });
+    for (flag, hit) in now.iter_mut().zip(reached) {
+        if hit {
+            *flag = grow;
+        }
+    }
+    now
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1099,6 +1133,31 @@ mod tests {
         assert!(points_near(&points, &[], 2.0).iter().all(|n| !n));
         assert!(points_near(&points, &[Vec3::ZERO], 0.0).iter().all(|n| !n));
         assert!(points_near(&[], &[Vec3::ZERO], 1.0).is_empty());
+    }
+
+    /// A line of points with its middle selected: growing takes the neighbours within the reach,
+    /// shrinking gives up those within it of an unselected point, and the end of the line is not
+    /// an unselected place.
+    #[test]
+    fn a_selection_of_points_grows_and_shrinks_by_a_reach() {
+        let points: Vec<Vec3> = (0..20).map(|i| Vec3::new(f64::from(i), 0.0, 0.0)).collect();
+        let middle: Vec<bool> = (0..20).map(|i| (8..12).contains(&i)).collect();
+        let at = |f: &[bool]| (0..20).filter(|&i| f[i]).collect::<Vec<_>>();
+        assert_eq!(at(&points_grown(&points, &middle, 1.0, true)), (7..13).collect::<Vec<_>>());
+        assert_eq!(at(&points_grown(&points, &middle, 2.5, true)), (6..14).collect::<Vec<_>>());
+        assert_eq!(at(&points_grown(&points, &middle, 1.0, false)), vec![9, 10]);
+        assert!(points_grown(&points, &middle, 3.0, false).iter().all(|f| !f), "shrunk away");
+        // Selected to the end of the line: the end is not an unselected place.
+        let tail: Vec<bool> = (0..20).map(|i| i >= 15).collect();
+        assert_eq!(at(&points_grown(&points, &tail, 1.0, false)), vec![16, 17, 18, 19]);
+        // Nothing selected stays nothing; everything selected has nothing to shrink from.
+        assert!(points_grown(&points, &[false; 20], 5.0, true).iter().all(|f| !f));
+        assert!(points_grown(&points, &[true; 20], 5.0, false).iter().all(|f| *f));
+        // A reach that is not above 0, and a short selection, are taken as given.
+        assert_eq!(points_grown(&points, &middle, 0.0, true), middle);
+        assert_eq!(points_grown(&points, &middle, f64::NAN, false), middle);
+        assert_eq!(at(&points_grown(&points, &[true, true], 1.0, true)), vec![0, 1, 2]);
+        assert!(points_grown(&[], &[], 1.0, true).is_empty());
     }
 
     /// Two sheets of points, one over the other, seen from above through a square: the near sheet

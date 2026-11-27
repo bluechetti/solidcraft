@@ -315,7 +315,7 @@ fn polygon_buttons(ui: &mut egui::Ui, k: &mut ScanSelect) {
 }
 
 /// The dialog for a point cloud: the brush, what it does to what is selected, and the buttons that
-/// take all of it, none or the other points.
+/// take all of it, none, the other points, or a ring of points more or fewer.
 fn cloud_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect, id: u64, points: usize) -> bool {
     let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
     // The tools that work on points: Brush, Polygon and Lasso, the first three of the list.
@@ -348,17 +348,28 @@ fn cloud_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect, id: u64, po
         None => tr("ui.scan_select_nothing").to_owned(),
     };
     form_row(ui, tr("ui.scan_select_selected"), |ui| ui_kit::text(ui, &summary, ui_kit::Text::Cell));
-    ui_kit::row(ui, "", |ui| {
-        ui.horizontal(|ui| {
-            for (label, key) in [("ui.scan_select_all", "all"), ("ui.scan_select_none", "none"), ("ui.scan_select_invert", "invert")] {
-                let needs = key != "all";
-                if ui_kit::button(ui, tr(label), ui_kit::Button::Enabled(!needs || now.is_some())).clicked() {
-                    k.asked = Some(("scan.select".into(), json!({"cloud": id, key: true})));
+    for line in [
+        &[
+            ("ui.scan_select_all", json!({"all": true})),
+            ("ui.scan_select_none", json!({"none": true})),
+            ("ui.scan_select_invert", json!({"invert": true})),
+        ][..],
+        &[("ui.scan_select_grow", json!({"grow": 1})), ("ui.scan_select_shrink", json!({"shrink": 1}))][..],
+    ] {
+        ui_kit::row(ui, "", |ui| {
+            ui.horizontal(|ui| {
+                for (label, way) in line {
+                    let needs = *label != "ui.scan_select_all";
+                    if ui_kit::button(ui, tr(label), ui_kit::Button::Enabled(!needs || now.is_some())).clicked() {
+                        let mut p = way.clone();
+                        p["cloud"] = json!(id);
+                        k.asked = Some(("scan.select".into(), p));
+                    }
                 }
-            }
-        })
-        .response
-    });
+            })
+            .response
+        });
+    }
     if let Some(why) = &k.error {
         ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_select_error", true));
     }
@@ -475,7 +486,11 @@ pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::
                 if let Some(d) = dialog(app) {
                     d.cloud = Some(cloud);
                 }
-                run(app, "scan.select", json!({"cloud": cloud, "brush": {"points": [place], "radius": format!("{} mm", k.radius)}, "mode": mode_now(&k)}));
+                run(
+                    app,
+                    "scan.select",
+                    json!({"cloud": cloud, "brush": {"points": [place], "radius": format!("{} mm", k.radius)}, "mode": mode_now(&k)}),
+                );
                 return;
             }
             let Some((body, point)) = scan_at(app, proj, at) else { return };
@@ -765,6 +780,19 @@ mod tests {
         kind(&mut h).asked = Some(("scan.select".into(), json!({"cloud": id, "none": true})));
         h.frames(2);
         assert_eq!(count(&h), 0);
+        // Grow and Shrink take a ring of points (twice their spacing) more or fewer.
+        h.step(&json!({"click": {"world": [10.0, 10.0, 0.0]}})).unwrap();
+        h.frames(2);
+        assert_eq!(count(&h), 9);
+        kind(&mut h).asked = Some(("scan.select".into(), json!({"cloud": id, "grow": 1})));
+        h.frames(2);
+        assert!(count(&h) > 9, "grown: {}", count(&h));
+        kind(&mut h).asked = Some(("scan.select".into(), json!({"cloud": id, "shrink": 1})));
+        h.frames(2);
+        assert_eq!(count(&h), 9, "a ring taken off what a ring was put on");
+        kind(&mut h).asked = Some(("scan.select".into(), json!({"cloud": id, "shrink": 1})));
+        h.frames(2);
+        assert!(count(&h) < 9, "shrunk below it: {}", count(&h));
         assert!(kind(&mut h).error.is_none());
     }
 
