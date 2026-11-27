@@ -846,6 +846,70 @@ fn without_small_pieces(positions: Vec<Vec3>, triangles: Vec<[u32; 3]>) -> (Vec<
     (kept_positions, kept)
 }
 
+/// The most steps (n by m) a strip's walk is worked out over: past it the walk goes greedily.
+const MOST_WALK_CELLS: usize = 40_000_000;
+
+/// How a strip walks two closed loops of `n` and `m` points, `apart(i, j)` the distance between the
+/// first's point `i` and the second's point `j` (each taken round, so `n` is `0` again): for each
+/// step whether it goes on along the first loop (else the second), from (0, 0) to (n, m). The walk
+/// is the one whose rungs, taken together, are shortest, so a rim with a hairpin or a stair that
+/// the loops follow differently is not left a whole leg out of step; a pair of loops too large
+/// for that goes on along whichever loop's next rung is shorter.
+fn strip_walk(n: usize, m: usize, apart: &dyn Fn(usize, usize) -> f64) -> Vec<bool> {
+    if (n + 1).saturating_mul(m + 1) > MOST_WALK_CELLS {
+        let (mut i, mut j) = (0, 0);
+        let mut steps = Vec::with_capacity(n + m);
+        while i < n || j < m {
+            let step_a = i < n && (j >= m || apart(i + 1, j) <= apart(i, j + 1));
+            steps.push(step_a);
+            if step_a {
+                i += 1;
+            } else {
+                j += 1;
+            }
+        }
+        return steps;
+    }
+    // came[i * (m + 1) + j]: 1 when (i, j) was reached from (i - 1, j), 0 from (i, j - 1).
+    let width = m + 1;
+    let mut came = vec![0u8; (n + 1) * width];
+    let mut row = vec![f64::INFINITY; width];
+    for i in 0..=n {
+        let mut left = f64::INFINITY;
+        for j in 0..=m {
+            let here = if i == 0 && j == 0 {
+                0.0
+            } else {
+                let up = if i > 0 { row[j] } else { f64::INFINITY };
+                let (best, from_up) = if up <= left { (up, 1u8) } else { (left, 0u8) };
+                came[i * width + j] = from_up;
+                best + apart(i, j)
+            };
+            row[j] = here;
+            left = here;
+        }
+    }
+    let (mut i, mut j) = (n, m);
+    let mut steps = Vec::with_capacity(n + m);
+    while i > 0 || j > 0 {
+        let up = if j == 0 {
+            true
+        } else if i == 0 {
+            false
+        } else {
+            came[i * width + j] == 1
+        };
+        steps.push(up);
+        if up {
+            i -= 1;
+        } else {
+            j -= 1;
+        }
+    }
+    steps.reverse();
+    steps
+}
+
 /// Triangles joining two loops of points round one rim, `a` and `b` (each a loop of vertex
 /// numbers): each step goes on along the loop whose next diagonal is shorter, so the strip
 /// neither twists nor folds. `b` is walked the way `a` runs, from its point nearest `a`'s start.
@@ -869,10 +933,10 @@ fn zipped(a: &[u32], b: &[u32], at: &dyn Fn(u32) -> Vec3) -> Vec<[u32; 3]> {
     let forward = spread(true) <= spread(false);
     let bv = |j: usize| if forward { b[(start + j) % m] } else { b[(start + m - j % m) % m] };
     let av = |i: usize| a[i % n];
+    let steps = strip_walk(n, m, &|i, j| at(av(i)).dist(at(bv(j))));
     let (mut i, mut j) = (0, 0);
     let mut out = Vec::with_capacity(n + m);
-    while i < n || j < m {
-        let step_a = i < n && (j >= m || at(av(i + 1)).dist(at(bv(j))) <= at(av(i)).dist(at(bv(j + 1))));
+    for step_a in steps {
         // Each runs `a`'s rim edge the other way from the face it ends (`a`'s loops run as its
         // faces do), and `b`'s as walked (against its faces, `b` being turned inward).
         if step_a {
@@ -1063,15 +1127,25 @@ fn out_to_rims(mut positions: Vec<Vec3>, mut triangles: Vec<[u32; 3]>, sources: 
         let at: Vec<Vec3> = chain.iter().map(|&v| positions[v as usize]).collect();
         let p = |i: usize| at[i % n];
         let (j0, _) = nearest(p(0), rim);
-        let ahead = (p(1) - p(0)).dot(rim[(j0 + 1) % m] - rim[(j0 + m - 1) % m]) >= 0.0;
+        // The way round: whichever walks the rim alongside the loop all the way round, not by the
+        // loop's first edge, which a stair-stepped rim can turn either way.
+        let spread = |forward: bool| -> f64 {
+            (0..n)
+                .step_by((n / 64).max(1))
+                .map(|i| {
+                    let j = i * m / n;
+                    p(i).dist(rim[if forward { (j0 + j) % m } else { (j0 + m - j % m) % m }])
+                })
+                .sum()
+        };
+        let ahead = spread(true) <= spread(false);
         let q = |j: usize| if ahead { rim[(j0 + j) % m] } else { rim[(j0 + m - j % m) % m] };
         let base = positions.len() as u32;
         positions.extend((0..m).map(q));
         let qi = |j: usize| base + (j % m) as u32;
         // Zipped: the loop's edges each taken the other way round by a triangle, and the rim's.
         let (mut i, mut j) = (0usize, 0usize);
-        while i < n || j < m {
-            let take_loop = j >= m || (i < n && p(i + 1).dist(q(j)) <= p(i).dist(q(j + 1)));
+        for take_loop in strip_walk(n, m, &|i, j| p(i).dist(q(j))) {
             if take_loop {
                 triangles.push([chain[(i + 1) % n], chain[i % n], qi(j)]);
                 i += 1;
@@ -1207,6 +1281,51 @@ mod tests {
         triangles.extend([[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]].map(|t: [u32; 3]| t.map(|v| v + base)));
         let (kept_points, kept) = without_small_pieces(positions, triangles);
         assert_eq!((kept.len(), kept_points.len()), (big_triangles, big_points));
+    }
+
+    /// An offset surface's open loop is joined to the rim it stops short of by a strip that keeps
+    /// narrow, whichever way the rim is listed and however its first edge points.
+    #[test]
+    fn a_strip_to_a_rim_walks_the_rim_the_way_that_keeps_it_narrow() {
+        // A cylinder open at both ends, offset out: each end is a rim.
+        let profile: Vec<[f64; 2]> = (0..=40).map(|k| [f64::from(k) - 20.0, 10.0]).collect();
+        let (positions, triangles) = revolved(&profile, 96, false);
+        let made = remesh_at(&[Scan::new(&positions, &triangles)], &Settings { cell: 0.8, sharp: false }, 2.0).expect("offset");
+        let longest = made
+            .triangles
+            .iter()
+            .map(|t| (0..3).map(|k| made.positions[t[k] as usize].dist(made.positions[t[(k + 1) % 3] as usize])).fold(0.0, f64::max))
+            .fold(0.0, f64::max);
+        assert!(longest < 4.0, "a triangle edge {longest} long");
+    }
+
+    /// Two loops that run out along a thin tongue and back (a hairpin) are walked leg to leg, the
+    /// second loop starting a little behind the first: no rung is longer than the legs are apart
+    /// plus the lag, where a walk that goes by the next rung alone can lose a whole leg.
+    #[test]
+    fn a_strip_walk_keeps_its_rungs_short_round_a_hairpin() {
+        // Out along y = 0 and back along y = 1.5, 0.5 apart in x: 120 points a loop.
+        let loop_of = |lag: f64, y_out: f64, y_back: f64| -> Vec<Vec3> {
+            let mut v: Vec<Vec3> = (0..60).map(|k| Vec3::new(f64::from(k) * 0.5 + lag, y_out, 0.0)).collect();
+            v.extend((0..60).rev().map(|k| Vec3::new(f64::from(k) * 0.5 + lag, y_back, 0.0)));
+            v
+        };
+        let (a, b) = (loop_of(0.0, 0.0, 1.5), loop_of(-0.7, 0.2, 1.3));
+        let (n, m) = (a.len(), b.len());
+        let apart = |i: usize, j: usize| a[i % n].dist(b[j % m]);
+        let steps = strip_walk(n, m, &apart);
+        assert_eq!(steps.iter().filter(|s| **s).count(), n);
+        assert_eq!(steps.iter().filter(|s| !**s).count(), m);
+        let (mut i, mut j, mut longest) = (0, 0, 0.0f64);
+        for step in steps {
+            if step {
+                i += 1;
+            } else {
+                j += 1;
+            }
+            longest = longest.max(apart(i, j));
+        }
+        assert!(longest < 3.0, "a rung {longest} long");
     }
 
     /// Two rims that meet at a vertex are two loops, each passing it once, and every edge is in one.
