@@ -771,8 +771,18 @@ fn zipped(a: &[u32], b: &[u32], at: &dyn Fn(u32) -> Vec3) -> Vec<[u32; 3]> {
         return Vec::new();
     }
     let start = (0..m).min_by(|&x, &y| at(b[x]).dist(at(a[0])).total_cmp(&at(b[y]).dist(at(a[0])))).unwrap_or(0);
-    let along = at(a[1]) - at(a[0]);
-    let forward = (at(b[(start + 1) % m]) - at(b[start])).dot(along) >= (at(b[(start + m - 1) % m]) - at(b[start])).dot(along);
+    // The way round: whichever walks `b` alongside `a` all the way round, not by the first edge's
+    // direction, which a rim's stair-steps can turn either way.
+    let spread = |forward: bool| -> f64 {
+        (0..n)
+            .step_by((n / 64).max(1))
+            .map(|i| {
+                let j = i * m / n;
+                at(a[i]).dist(at(b[if forward { (start + j) % m } else { (start + m - j) % m }]))
+            })
+            .sum()
+    };
+    let forward = spread(true) <= spread(false);
     let bv = |j: usize| if forward { b[(start + j) % m] } else { b[(start + m - j % m) % m] };
     let av = |i: usize| a[i % n];
     let (mut i, mut j) = (0, 0);
@@ -1102,6 +1112,34 @@ mod tests {
         let triangles: Vec<[u32; 3]> = triangles.into_iter().filter(|t| near(t).dist(hole) > 2.5).collect();
         let made = shell(&[Scan::new(&positions, &triangles)], &Settings { cell: 0.8, sharp: false }, 0.0, 2.0).expect("a shell");
         assert!(is_closed(&made.triangles) && is_manifold(&made.triangles), "closed and manifold");
+    }
+
+    /// A strip between two rims runs the way round that keeps it narrow, whichever way the inner
+    /// rim is listed and whatever way the outer one's first edge points.
+    #[test]
+    fn a_strip_between_rims_keeps_narrow_whichever_way_the_rims_run() {
+        let ring = |n: usize, r: f64| {
+            (0..n)
+                .map(|k| {
+                    Vec3::new(r * (std::f64::consts::TAU * k as f64 / n as f64).cos(), r * (std::f64::consts::TAU * k as f64 / n as f64).sin(), 0.0)
+                })
+                .collect::<Vec<_>>()
+        };
+        let mut positions = ring(100, 10.0);
+        // The outer rim's first edge runs across the rim, not along it.
+        positions[1] = positions[0] + Vec3::new(0.05, 0.0, 0.0);
+        positions.extend(ring(60, 6.0));
+        let at = |v: u32| positions[v as usize];
+        let outer: Vec<u32> = (0..100).collect();
+        for reversed in [false, true] {
+            let mut inner: Vec<u32> = (100..160).collect();
+            if reversed {
+                inner.reverse();
+            }
+            let strip = zipped(&outer, &inner, &at);
+            let widest = strip.iter().flat_map(|t| [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])]).map(|(a, b)| at(a).dist(at(b))).fold(0.0, f64::max);
+            assert!(widest < 6.0, "reversed {reversed}: an edge {widest} long");
+        }
     }
 
     /// A ball R 20 made a shell 2 thick, and a bowl (the ball's lower half, open at the top) the
