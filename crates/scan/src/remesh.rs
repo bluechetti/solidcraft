@@ -119,10 +119,17 @@ impl<'a> Source<'a> {
         let mut normals = vec![Vec3::ZERO; scan.positions.len()];
         for (t, tri) in scan.triangles.iter().enumerate() {
             let Some([a, b, c]) = scan.corners(t) else { continue };
-            let n = (b - a).cross(c - a);
-            for &v in tri {
+            let Some(face) = (b - a).cross(c - a).normalized() else { continue };
+            // Each corner's face direction weighted by the angle the face makes there, not by its
+            // area: a long thin face (the scanner's patch over a pinhole) would otherwise outweigh
+            // the faces round it and turn the corner's direction, which reads the points beyond
+            // a narrow pit's tip as outside the part.
+            let corners = [a, b, c];
+            for (k, &v) in tri.iter().enumerate() {
+                let (e1, e2) = (corners[(k + 1) % 3] - corners[k], corners[(k + 2) % 3] - corners[k]);
+                let cos = e1.dot(e2) / (e1.len() * e2.len()).max(1e-300);
                 if let Some(slot) = normals.get_mut(v as usize) {
-                    *slot += n;
+                    *slot += face * cos.clamp(-1.0, 1.0).acos();
                 }
             }
         }
@@ -668,6 +675,9 @@ pub fn remesh_at(sources: &[Scan], settings: &Settings, offset: f64) -> Result<R
 /// How far an open loop of the new surface may lie from a scan's rim moved by the offset, in cells,
 /// for the strip between them to be made.
 const RIM_REACH: f64 = 2.5;
+/// The most edges a loop of a shell's skin may have to be closed by a cap when no loop of the other
+/// skin lies along it, not joined to one.
+const MOST_CAPPED_EDGES: usize = 256;
 /// The scans made again as a hollow part `wall` thick: the surface `offset` off them (as
 /// [`remesh_at`]) and, inside it, the surface `wall` farther in, facing inward, the two joined by
 /// a strip along each pair of open rims (an open scan's rim, a socket's or a cover's edge), so the
@@ -693,23 +703,60 @@ pub fn shell(sources: &[Scan], settings: &Settings, offset: f64, wall: f64) -> R
         }
         let open: Vec<(u32, u32)> =
             tris.iter().flat_map(|&[a, b, c]| [(a, b), (b, c), (c, a)]).filter(|&(p, q)| uses.get(&(p.min(q), p.max(q))) == Some(&1)).collect();
-        loops_of(&open)
+        loops_through_pinches(&open)
     };
     let (outer, inner) = (rims(&outside.triangles), rims(&triangles[outside.triangles.len()..]));
-    if outer.len() != inner.len() {
+    // The long rims (the scan's open end, a socket's or a cover's edge) must pair up; a short loop
+    // is joined to the other skin's when one lies along it, else closed by a cap: a scan's pinhole or
+    // a patch over a pit leaves one skin a tiny opening the other does not have.
+    let (outer_long, outer_short): (Vec<_>, Vec<_>) = outer.into_iter().partition(|r| r.len() > MOST_CAPPED_EDGES);
+    let (inner_long, inner_short): (Vec<_>, Vec<_>) = inner.into_iter().partition(|r| r.len() > MOST_CAPPED_EDGES);
+    if outer_long.len() != inner_long.len() {
         return Err(RemeshError::Rims);
     }
-    let at = |v: u32| positions.get(v as usize).copied().unwrap_or(Vec3::ZERO);
-    let middle = |ring: &[u32]| ring.iter().fold(Vec3::ZERO, |s, &v| s + at(v)) / ring.len().max(1) as f64;
-    let mut taken = vec![false; inner.len()];
     let mut strips = Vec::new();
-    for ring in &outer {
-        let m = middle(ring);
-        let Some(k) = (0..inner.len()).filter(|&k| !taken[k]).min_by(|&a, &b| middle(&inner[a]).dist(m).total_cmp(&middle(&inner[b]).dist(m))) else {
-            return Err(RemeshError::Rims);
-        };
-        taken[k] = true;
-        strips.extend(zipped(ring, &inner[k], &at));
+    let mut caps: Vec<Vec<u32>> = Vec::new();
+    {
+        let at = |v: u32| positions.get(v as usize).copied().unwrap_or(Vec3::ZERO);
+        let middle = |ring: &[u32]| ring.iter().fold(Vec3::ZERO, |s, &v| s + at(v)) / ring.len().max(1) as f64;
+        let mut taken = vec![false; inner_long.len()];
+        for ring in &outer_long {
+            let m = middle(ring);
+            let Some(k) = (0..inner_long.len())
+                .filter(|&k| !taken[k])
+                .min_by(|&a, &b| middle(&inner_long[a]).dist(m).total_cmp(&middle(&inner_long[b]).dist(m)))
+            else {
+                return Err(RemeshError::Rims);
+            };
+            taken[k] = true;
+            strips.extend(zipped(ring, &inner_long[k], &at));
+        }
+        let reach = wall + 2.0 * settings.cell;
+        let mut free = vec![true; inner_short.len()];
+        for ring in &outer_short {
+            let m = middle(ring);
+            let mate = (0..inner_short.len())
+                .filter(|&k| free[k] && middle(&inner_short[k]).dist(m) <= reach)
+                .min_by(|&a, &b| middle(&inner_short[a]).dist(m).total_cmp(&middle(&inner_short[b]).dist(m)));
+            match mate {
+                Some(k) => {
+                    free[k] = false;
+                    strips.extend(zipped(ring, &inner_short[k], &at));
+                }
+                None => caps.push(ring.clone()),
+            }
+        }
+        caps.extend(inner_short.iter().zip(&free).filter(|(_, free)| **free).map(|(ring, _)| ring.clone()));
+    }
+    // A cap: a fan from the loop's middle, each triangle running the loop's edge the other way
+    // round from the face it ends, as a strip's do.
+    for ring in &caps {
+        let middle = ring.iter().fold(Vec3::ZERO, |s, &v| s + positions.get(v as usize).copied().unwrap_or(Vec3::ZERO)) / ring.len().max(1) as f64;
+        let centre = positions.len() as u32;
+        positions.push(middle);
+        for i in 0..ring.len() {
+            strips.push([ring[(i + 1) % ring.len()], ring[i], centre]);
+        }
     }
     triangles.extend(strips);
     Ok(Remeshed { positions, triangles, ..outside })
@@ -781,6 +828,51 @@ fn loops_of(edges: &[(u32, u32)]) -> Vec<Vec<u32>> {
         };
         if closed && chain.len() >= 3 {
             out.push(chain);
+        }
+    }
+    out
+}
+
+/// Closed loops of directed edges, each edge `(a, b)` used once, as [`loops_of`] but a vertex with
+/// more than one edge leaving it (two rims or a rim and a hole meeting at a point) is passed
+/// through, the walk going on by another unused edge and the loop it makes split off where it
+/// comes back to a vertex: every loop is simple, every edge ends in one unless its chain does not
+/// close.
+fn loops_through_pinches(edges: &[(u32, u32)]) -> Vec<Vec<u32>> {
+    let mut leaving: HashMap<u32, Vec<u32>> = HashMap::new();
+    for &(a, b) in edges {
+        leaving.entry(a).or_default().push(b);
+    }
+    let mut out = Vec::new();
+    for &(start, _) in edges {
+        while let Some(first) = leaving.get_mut(&start).and_then(Vec::pop) {
+            let mut chain = vec![start];
+            let mut place: HashMap<u32, usize> = HashMap::from([(start, 0)]);
+            let mut at = first;
+            loop {
+                if at == start {
+                    if chain.len() >= 3 {
+                        out.push(chain);
+                    }
+                    break;
+                }
+                if let Some(&p) = place.get(&at) {
+                    // Back at a vertex this walk has passed: the loop between is complete.
+                    let sub = chain.split_off(p);
+                    for v in sub.iter().skip(1) {
+                        place.remove(v);
+                    }
+                    chain.push(at);
+                    if sub.len() >= 3 {
+                        out.push(sub);
+                    }
+                } else {
+                    place.insert(at, chain.len());
+                    chain.push(at);
+                }
+                let Some(next) = leaving.get_mut(&at).and_then(Vec::pop) else { break };
+                at = next;
+            }
         }
     }
     out
@@ -962,6 +1054,55 @@ pub fn is_closed(triangles: &[[u32; 3]]) -> bool {
 mod tests {
     use super::*;
     use crate::test_meshes::{fine_cuboid, revolved, steps, turned};
+
+    /// A corner's direction follows the angles its faces make there, not their areas: one long
+    /// thin face (a scanner's patch over a pinhole) beside two small faces that fill more of the
+    /// corner's angle must not turn it.
+    #[test]
+    fn a_corners_direction_follows_face_angles_not_areas() {
+        let positions = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(40.0, 0.0, 0.0),
+            Vec3::new(0.0, 40.0, 0.0),
+            Vec3::new(-0.1, 0.0, 0.0),
+            Vec3::new(0.0, -0.1, 0.0),
+            Vec3::new(0.0, 0.1, 0.0),
+        ];
+        // The big face looks up (a quarter turn at the corner); two small ones look down (half a turn).
+        let triangles = [[0, 1, 2], [0, 4, 3], [0, 3, 5]];
+        let source = Source::new(Scan::new(&positions, &triangles));
+        assert!(source.normals[0].z < 0.0, "the corner's direction was {:?}", source.normals[0]);
+    }
+
+    /// Two rims that meet at a vertex are two loops, each passing it once, and every edge is in one.
+    #[test]
+    fn rims_meeting_at_a_point_are_two_simple_loops() {
+        // A triangle 0-1-2 and a triangle 0-3-4 sharing vertex 0, both running the same way round.
+        let loops = loops_through_pinches(&[(0, 1), (1, 2), (2, 0), (0, 3), (3, 4), (4, 0)]);
+        assert_eq!(loops.len(), 2, "{loops:?}");
+        assert!(loops.iter().all(|l| l.len() == 3), "{loops:?}");
+        // A chain that does not close is left out.
+        assert!(loops_through_pinches(&[(0, 1), (1, 2)]).is_empty());
+    }
+
+    /// A bowl with a hole through its wall (a pinhole of the scan) is made hollow and closed: the
+    /// hole's rim on the outside skin is joined to the inside skin's, none left open.
+    #[test]
+    fn a_bowl_with_a_hole_through_it_is_made_hollow_and_closed() {
+        let profile: Vec<[f64; 2]> = (0..=16)
+            .map(|k| {
+                let t = std::f64::consts::PI * f64::from(k) / 32.0;
+                [-20.0 * t.cos(), 20.0 * t.sin()]
+            })
+            .collect();
+        let (positions, triangles) = revolved(&profile, 96, false);
+        // Four neighbouring faces of the bowl's wall taken out, a hole of a few cells.
+        let near = |t: &[u32; 3]| t.iter().map(|&v| positions[v as usize]).fold(Vec3::ZERO, |s, p| s + p) / 3.0;
+        let hole = Vec3::new(14.0, 0.0, -10.0);
+        let triangles: Vec<[u32; 3]> = triangles.into_iter().filter(|t| near(t).dist(hole) > 2.5).collect();
+        let made = shell(&[Scan::new(&positions, &triangles)], &Settings { cell: 0.8, sharp: false }, 0.0, 2.0).expect("a shell");
+        assert!(is_closed(&made.triangles) && is_manifold(&made.triangles), "closed and manifold");
+    }
 
     /// A ball R 20 made a shell 2 thick, and a bowl (the ball's lower half, open at the top) the
     /// same: both closed and every edge shared by two faces, the ball's two skins about the volume
