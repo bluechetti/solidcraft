@@ -55,4 +55,65 @@ mod tests {
         stage("after", 1, 1);
         assert_eq!(*heard.lock().unwrap(), [("finding shapes", 3, 10), ("finding shapes", 10, 10)]);
     }
+
+    #[test]
+    fn reporting_returns_what_the_work_returns() {
+        let heard = Arc::new(Mutex::new(Vec::new()));
+        assert_eq!(reporting(Arc::new(move |_s, _d, _t| heard.lock().unwrap().push(("", 0, 0))), || 7), 7);
+    }
+
+    #[test]
+    fn a_total_of_zero_reports_zero_of_zero() {
+        let heard = Arc::new(Mutex::new(Vec::new()));
+        let into = Arc::clone(&heard);
+        reporting(Arc::new(move |s, d, t| into.lock().unwrap().push((s, d, t))), || {
+            stage("empty", 5, 0);
+        });
+        assert_eq!(*heard.lock().unwrap(), [("empty", 0, 0)]);
+    }
+
+    #[test]
+    fn a_nested_reporting_goes_to_the_inner_hook_and_then_back_to_the_outer() {
+        let outer_heard = Arc::new(Mutex::new(Vec::new()));
+        let outer_into = Arc::clone(&outer_heard);
+        let inner_heard = Arc::new(Mutex::new(Vec::new()));
+        let inner_into = Arc::clone(&inner_heard);
+        reporting(Arc::new(move |s, d, t| outer_into.lock().unwrap().push((s, d, t))), || {
+            stage("a", 1, 2);
+            reporting(Arc::new(move |s, d, t| inner_into.lock().unwrap().push((s, d, t))), || {
+                stage("b", 1, 2);
+            });
+            stage("c", 2, 2);
+        });
+        assert_eq!(*outer_heard.lock().unwrap(), [("a", 1, 2), ("c", 2, 2)]);
+        assert_eq!(*inner_heard.lock().unwrap(), [("b", 1, 2)]);
+    }
+
+    #[test]
+    fn the_previous_hook_comes_back_when_the_work_panics() {
+        let outer_heard = Arc::new(Mutex::new(Vec::new()));
+        let outer_into = Arc::clone(&outer_heard);
+        let inner_heard = Arc::new(Mutex::new(Vec::new()));
+        let inner_into = Arc::clone(&inner_heard);
+        let inner: Hook = Arc::new(move |_s, _d, _t| inner_into.lock().unwrap().push(("", 0, 0)));
+        reporting(Arc::new(move |s, d, t| outer_into.lock().unwrap().push((s, d, t))), || {
+            let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                reporting(Arc::clone(&inner), || panic!("work failed"));
+            }));
+            assert!(panicked.is_err());
+            stage("after", 1, 1);
+        });
+        assert_eq!(*outer_heard.lock().unwrap(), [("after", 1, 1)]);
+        assert!(inner_heard.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn work_shared_out_to_other_threads_reports_nothing() {
+        let heard = Arc::new(Mutex::new(Vec::new()));
+        let into = Arc::clone(&heard);
+        reporting(Arc::new(move |_s, _d, _t| into.lock().unwrap().push(("", 0, 0))), || {
+            assert!(std::thread::spawn(|| stage("elsewhere", 1, 1)).join().is_ok());
+        });
+        assert!(heard.lock().unwrap().is_empty());
+    }
 }

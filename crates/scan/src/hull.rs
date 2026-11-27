@@ -208,4 +208,68 @@ mod tests {
         hull.sort_unstable();
         assert_eq!(hull, [0, 1, 3, 4]);
     }
+
+    #[test]
+    fn no_points_or_one_point_have_no_corners() {
+        assert!(hull2(&[]).is_empty());
+        assert!(hull2(&[Vec2::new(1.0, 1.0)]).is_empty());
+    }
+
+    #[test]
+    fn points_on_a_line_leave_only_the_two_ends() {
+        let points = [Vec2::new(0.0, 0.0), Vec2::new(1.0, 1.0), Vec2::new(2.0, 2.0), Vec2::new(3.0, 3.0)];
+        assert_eq!(hull2(&points), [0, 3]);
+    }
+
+    #[test]
+    fn a_triangle_given_clockwise_comes_out_counter_clockwise_from_its_leftmost_point() {
+        let points = [Vec2::new(0.0, 0.0), Vec2::new(1.0, 2.0), Vec2::new(2.0, 0.0)];
+        assert_eq!(hull2(&points), [0, 2, 1]);
+    }
+
+    #[test]
+    fn a_point_on_an_edge_is_not_a_corner() {
+        let points = [Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(1.0, 1.0), Vec2::new(0.0, 1.0), Vec2::new(0.5, 0.0)];
+        assert_eq!(hull2(&points), [0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn a_tetrahedron_has_four_faces_wound_outward() {
+        let points = [Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 0.0, 1.0)];
+        let faces = hull3(&points, 1e-12).unwrap();
+        assert_eq!(faces.len(), 4);
+        for f in &faces {
+            assert!((f.normal.len() - 1.0).abs() < 1e-9);
+            assert!((f.offset - f.normal.dot(points[f.a])).abs() < 1e-9);
+            assert!((points[f.b] - points[f.a]).cross(points[f.c] - points[f.a]).dot(f.normal) > 0.0);
+        }
+    }
+
+    #[test]
+    fn fewer_than_four_points_or_a_flat_or_straight_set_have_no_hull() {
+        assert!(hull3(&[Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)], 1e-12).is_none());
+        let line = [Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(2.0, 0.0, 0.0), Vec3::new(3.0, 0.0, 0.0), Vec3::new(4.0, 0.0, 0.0)];
+        assert!(hull3(&line, 1e-12).is_none());
+        let flat = [Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0), Vec3::new(1.0, 1.0, 0.0), Vec3::new(0.5, 0.5, 0.0)];
+        assert!(hull3(&flat, 1e-12).is_none());
+    }
+
+    #[test]
+    fn a_tolerance_wider_than_the_set_gives_no_hull() {
+        let cube: Vec<Vec3> = (0..8).map(|i| Vec3::new(f64::from(i & 1), f64::from((i >> 1) & 1), f64::from((i >> 2) & 1))).collect();
+        assert!(hull3(&cube, 2.0).is_none());
+    }
+
+    #[test]
+    fn a_point_beyond_a_face_of_a_tetrahedron_joins_the_hull() {
+        let mut points = [Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 0.0, 1.0)].to_vec();
+        points.push(Vec3::new(1.0, 1.0, 1.0));
+        let faces = hull3(&points, 1e-12).unwrap();
+        assert_eq!(faces.len(), 6);
+        for (p, at) in points.iter().enumerate() {
+            assert!(faces.iter().any(|f| f.a == p || f.b == p || f.c == p), "point {p} is not a corner of any face");
+            let worst = faces.iter().map(|f| f.normal.dot(*at) - f.offset).fold(f64::MIN, f64::max);
+            assert!(worst <= 1e-9, "point {p} is {worst} above a face");
+        }
+    }
 }

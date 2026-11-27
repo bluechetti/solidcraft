@@ -162,4 +162,68 @@ mod tests {
         assert!(remove_and_fill(&scan, &vec![true; t.len()], true).is_none());
         assert!(remove_and_fill(&scan, &[], true).is_none());
     }
+
+    /// Flags past the scan's last triangle choose nothing.
+    #[test]
+    fn flags_beyond_the_scans_triangles_choose_nothing() {
+        let (p, t) = plate(6, 0.0);
+        let scan = Scan::new(&p, &t);
+        let mut chosen = vec![false; t.len()];
+        chosen.extend([true; 10]);
+        assert!(remove_and_fill(&scan, &chosen, true).is_none());
+    }
+
+    /// A list shorter than the scan leaves the triangles it does not reach: one flag takes the
+    /// plate's first triangle, a half of the corner cell, off the rim.
+    #[test]
+    fn a_short_list_takes_off_only_the_triangles_it_reaches() {
+        let (p, t) = plate(6, 0.0);
+        let scan = Scan::new(&p, &t);
+        let done = remove_and_fill(&scan, &[true], true).expect("removed");
+        assert_eq!(done.removed, 1);
+        assert_eq!((done.filled, done.failed, done.added_triangles, done.open_to_edge), (0, 0, 0, 1));
+        assert_eq!(done.triangles.len(), t.len() - 1);
+    }
+
+    /// Without `fair` the one hole is still the only one tried, and every triangle points at a
+    /// point the scan has.
+    #[test]
+    fn an_unfair_fill_tries_the_one_hole_and_leaves_a_sound_scan() {
+        let (p, t) = plate(20, 2.0);
+        let scan = Scan::new(&p, &t);
+        let chosen = round(&scan, 10.0, 10.0, 3.5);
+        let done = remove_and_fill(&scan, &chosen, false).expect("removed");
+        assert_eq!(done.filled + done.failed, 1);
+        assert!(done.triangles.iter().flatten().all(|&i| (i as usize) < done.positions.len()));
+    }
+
+    /// A triangle that names a point the scan lacks is not one the scan has: choosing only it
+    /// removes nothing.
+    #[test]
+    fn a_triangle_the_scan_cannot_read_is_not_counted_as_removed() {
+        let (p, mut t) = plate(6, 0.0);
+        t.push([0, 1, 9999]);
+        let scan = Scan::new(&p, &t);
+        let mut chosen = vec![false; t.len()];
+        chosen[t.len() - 1] = true;
+        assert!(remove_and_fill(&scan, &chosen, true).is_none());
+    }
+
+    /// A piece taken off whole leaves no hole: the other piece is as it was, and nothing is filled.
+    #[test]
+    fn a_piece_taken_off_whole_leaves_no_hole_to_close() {
+        let positions = [
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(10.0, 0.0, 0.0),
+            Vec3::new(11.0, 0.0, 0.0),
+            Vec3::new(10.0, 1.0, 0.0),
+        ];
+        let scan = Scan::new(&positions, &[[0, 1, 2], [3, 4, 5]]);
+        let done = remove_and_fill(&scan, &[true, false], true).expect("removed");
+        assert_eq!(done.removed, 1);
+        assert_eq!((done.filled, done.failed, done.added_triangles, done.open_to_edge), (0, 0, 0, 0));
+        assert_eq!(done.triangles.len(), 1);
+    }
 }
