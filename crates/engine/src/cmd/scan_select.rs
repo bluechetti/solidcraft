@@ -49,7 +49,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("select")
         .contract(&SELECT_CONTRACT)
         .output(output_schema_for::<ScanSelectResult>)
-        .params("body?: the scan (default: the one selected on, else the selected or only one); mode?: replace|add|remove (default replace); and one of: cloud?: a point cloud's name or id (select its points instead: one of brush, box: {min, max}, all, none, invert; mode as below; fit_* with the same cloud and no point take them; a view, not drawn); brush: {points: [[x,y,z], …], radius: length} (the triangles within the radius of each place, reached across the scan from the one under it); polygon: {points: [[x,y,z], …] (its corners as the view draws them), direction: [x,y,z] (the way the view looks), eye?: [x,y,z] (a perspective view's), through?: bool (default false: only what is seen)}; region: {point, angle?: degrees (default 30), until?: facing|crease} (facing, the default: grown while the scan faces within the angle of the way it faces there, a face up to where its rounds turn away; crease: grown while it turns less than the angle from one triangle to the next, up to its creases, a whole hole wall or a fillet with the faces it runs into); shape: n | {point, like?: bool} (a shape Find All found; with like, every shape like it: cylinders and spheres of its radius, cones of its half angle, tori of its radii, planes facing its way); saved: name (a kept selection); triangles: [n, …]; all: true; none: true; invert: true; grow: rings; shrink: rings; unexplained: solid | {body: solid, piece?: n (default 0, the largest), grow?: rings} (the part of the scan the solid built from it does not explain yet: its triangles farther from the solid than five times the scan's tolerance, at least 0.5 mm, in pieces of 50 triangles or more; one piece selected, nothing when the solid explains the whole scan; read it with scan.reconstruct_selection to build what is missing). A view of the scan, not an undo step → body, triangles, area, of, changed, pieces? [{piece, triangles, area, side: missing|extra, deepest, point}], limit?"),
+        .params("body?: the scan (default: the one selected on, else the selected or only one); mode?: replace|add|remove (default replace); and one of: cloud?: a point cloud's name or id (select its points instead: one of brush, polygon (as below: the points it sees inside it, or all through it with through), box: {min, max}, all, none, invert; mode as below; fit_* with the same cloud and no point take them; a view, not drawn); brush: {points: [[x,y,z], …], radius: length} (the triangles within the radius of each place, reached across the scan from the one under it); polygon: {points: [[x,y,z], …] (its corners as the view draws them), direction: [x,y,z] (the way the view looks), eye?: [x,y,z] (a perspective view's), through?: bool (default false: only what is seen)}; region: {point, angle?: degrees (default 30), until?: facing|crease} (facing, the default: grown while the scan faces within the angle of the way it faces there, a face up to where its rounds turn away; crease: grown while it turns less than the angle from one triangle to the next, up to its creases, a whole hole wall or a fillet with the faces it runs into); shape: n | {point, like?: bool} (a shape Find All found; with like, every shape like it: cylinders and spheres of its radius, cones of its half angle, tori of its radii, planes facing its way); saved: name (a kept selection); triangles: [n, …]; all: true; none: true; invert: true; grow: rings; shrink: rings; unexplained: solid | {body: solid, piece?: n (default 0, the largest), grow?: rings} (the part of the scan the solid built from it does not explain yet: its triangles farther from the solid than five times the scan's tolerance, at least 0.5 mm, in pieces of 50 triangles or more; one piece selected, nothing when the solid explains the whole scan; read it with scan.reconstruct_selection to build what is missing). A view of the scan, not an undo step → body, triangles, area, of, changed, pieces? [{piece, triangles, area, side: missing|extra, deepest, point}], limit?"),
     CommandSpec::new("scan.select_inside_curve", "Select Inside Curve", crate::checked!("scan.select_inside_curve", select_inside))
         .icon("boundary_fill")
         .contract(&INSIDE_CONTRACT)
@@ -305,6 +305,21 @@ fn combined(s: &Session, scan: &str, count: usize, found: &[bool], mode: Mode) -
     }
 }
 
+/// A polygon drawn on the picture (`polygon`): its corners, how the view looks and whether it
+/// takes what is behind the near side too.
+pub(super) fn polygon_of(v: &Value, cmd: &str) -> Result<(Vec<Vec3>, View, bool)> {
+    let ring = points(&v["points"], cmd, "polygon.points", 3)?;
+    let direction = crate::params::vec3(&v["direction"]).ok_or_else(|| bad(cmd, "`polygon.direction` must be [x, y, z]"))?;
+    let eye = match v.get("eye").filter(|e| !e.is_null()) {
+        Some(e) => Some(crate::params::vec3(e).ok_or_else(|| bad(cmd, "`polygon.eye` must be [x, y, z]"))?),
+        None => None,
+    };
+    if solidcraft_geom::Vec3Geom::normalized(direction).is_none() {
+        return Err(bad(cmd, "`polygon.direction` must not be zero"));
+    }
+    Ok((ring, View { direction, eye }, bool_(v, "through").unwrap_or(false)))
+}
+
 pub(super) fn select(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.select";
     if p.get("cloud").is_some_and(|v| !v.is_null()) {
@@ -362,18 +377,9 @@ pub(super) fn select(s: &mut Session, p: &Value) -> Result<Value> {
                     found
                 }
                 "polygon" => {
-                    let ring = points(&v["points"], cmd, "polygon.points", 3)?;
-                    let direction = crate::params::vec3(&v["direction"]).ok_or_else(|| bad(cmd, "`polygon.direction` must be [x, y, z]"))?;
-                    let eye = match v.get("eye").filter(|e| !e.is_null()) {
-                        Some(e) => Some(crate::params::vec3(e).ok_or_else(|| bad(cmd, "`polygon.eye` must be [x, y, z]"))?),
-                        None => None,
-                    };
-                    if solidcraft_geom::Vec3Geom::normalized(direction).is_none() {
-                        return Err(bad(cmd, "`polygon.direction` must not be zero"));
-                    }
-                    let through = bool_(v, "through").unwrap_or(false);
+                    let (ring, view, through) = polygon_of(v, cmd)?;
                     let shown = super::shown_mesh(s, &scan).ok_or_else(|| bad(cmd, "the scan has no triangles"))?;
-                    topology.seen_inside(&Scan::new(&shown.positions, &shown.triangles), &ring, &View { direction, eye }, through)
+                    topology.seen_inside(&Scan::new(&shown.positions, &shown.triangles), &ring, &view, through)
                 }
                 "region" => {
                     let point = crate::params::vec3(&v["point"]).ok_or_else(|| bad(cmd, "`region.point` must be [x, y, z]"))?;

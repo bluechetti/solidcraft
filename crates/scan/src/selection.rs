@@ -520,58 +520,11 @@ impl Topology {
     /// triangles of the scan there.
     pub fn seen_inside(&self, scan: &Scan, ring: &[Vec3], view: &View, through: bool) -> Vec<bool> {
         let mut taken = vec![false; self.corners().len()];
-        let Some(d) = view.direction.normalized() else { return taken };
-        let Some(u) = d.cross(if d.x.abs() < 0.9 { Vec3::X } else { Vec3::Y }).normalized() else { return taken };
-        let v = d.cross(u);
-        // A place on the picture, and how deep it is.
-        let picture = |p: Vec3| -> Option<([f64; 2], f64)> {
-            match view.eye {
-                Some(eye) => {
-                    let q = p - eye;
-                    let depth = q.dot(d);
-                    (depth > 1e-9).then(|| ([q.dot(u) / depth, q.dot(v) / depth], depth))
-                }
-                None => Some(([p.dot(u), p.dot(v)], p.dot(d))),
-            }
-        };
+        let Some(picture) = picture_of(view) else { return taken };
         let polygon: Vec<[f64; 2]> = ring.iter().filter_map(|p| picture(*p).map(|(q, _)| q)).collect();
-        if polygon.len() < 3 {
-            return taken;
-        }
-        let (lo, hi) = polygon.iter().fold(([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]), |(lo, hi), q| {
-            ([lo[0].min(q[0]), lo[1].min(q[1])], [hi[0].max(q[0]), hi[1].max(q[1])])
-        });
-        let span = (hi[0] - lo[0]).max(hi[1] - lo[1]);
-        if !(span > 0.0) {
-            return taken;
-        }
-        let cell = span / RASTER as f64;
-        let (w, h) = (((hi[0] - lo[0]) / cell).ceil() as usize + 1, ((hi[1] - lo[1]) / cell).ceil() as usize + 1);
-        let at = |q: [f64; 2]| -> Option<usize> {
-            let (x, y) = ((q[0] - lo[0]) / cell, (q[1] - lo[1]) / cell);
-            (x >= 0.0 && y >= 0.0 && (x as usize) < w && (y as usize) < h).then(|| y as usize * w + x as usize)
-        };
-        // The polygon filled row by row.
-        let mut mask = vec![false; w * h];
-        for row in 0..h {
-            let y = lo[1] + (row as f64 + 0.5) * cell;
-            let mut xs: Vec<f64> = (0..polygon.len())
-                .filter_map(|k| {
-                    let (a, b) = (polygon[k], polygon[(k + 1) % polygon.len()]);
-                    ((a[1] > y) != (b[1] > y)).then(|| a[0] + (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]))
-                })
-                .collect();
-            xs.sort_by(f64::total_cmp);
-            for pair in xs.chunks(2) {
-                if let [x0, x1] = *pair {
-                    let (c0, c1) =
-                        (((x0 - lo[0]) / cell - 0.5).ceil().max(0.0) as usize, (((x1 - lo[0]) / cell - 0.5).floor().max(-1.0) + 1.0) as usize);
-                    for c in c0..c1.min(w) {
-                        mask[row * w + c] = true;
-                    }
-                }
-            }
-        }
+        let Some(raster) = Raster::of(&polygon) else { return taken };
+        let Raster { lo, hi, cell, w, h, ref mask } = raster;
+        let at = |q: [f64; 2]| raster.at(q);
         // The middles inside the polygon, on the picture, and how deep they are.
         let projected: Vec<Option<([f64; 2], f64)>> = par::map(self.corners().len(), |t| {
             let mid = picture(self.middle(t))?;
@@ -986,6 +939,127 @@ impl Topology {
     }
 }
 
+/// How a view draws a place: where on the picture (for a perspective view, the tangent from the
+/// eye) and how deep. None for a view with no direction.
+fn picture_of(view: &View) -> Option<impl Fn(Vec3) -> Option<([f64; 2], f64)> + '_> {
+    let d = view.direction.normalized()?;
+    let u = d.cross(if d.x.abs() < 0.9 { Vec3::X } else { Vec3::Y }).normalized()?;
+    let v = d.cross(u);
+    Some(move |p: Vec3| match view.eye {
+        Some(eye) => {
+            let q = p - eye;
+            let depth = q.dot(d);
+            (depth > 1e-9).then(|| ([q.dot(u) / depth, q.dot(v) / depth], depth))
+        }
+        None => Some(([p.dot(u), p.dot(v)], p.dot(d))),
+    })
+}
+
+/// A polygon on the picture filled into cells: its box's corner and side of a cell, the cells
+/// across and down, and which cells' middles are inside it.
+struct Raster {
+    lo: [f64; 2],
+    hi: [f64; 2],
+    cell: f64,
+    w: usize,
+    h: usize,
+    mask: Vec<bool>,
+}
+
+impl Raster {
+    /// None for a polygon of fewer than three corners or no extent.
+    fn of(polygon: &[[f64; 2]]) -> Option<Raster> {
+        if polygon.len() < 3 {
+            return None;
+        }
+        let (lo, hi) = polygon.iter().fold(([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]), |(lo, hi), q| {
+            ([lo[0].min(q[0]), lo[1].min(q[1])], [hi[0].max(q[0]), hi[1].max(q[1])])
+        });
+        let span = (hi[0] - lo[0]).max(hi[1] - lo[1]);
+        if !(span > 0.0 && span.is_finite()) {
+            return None;
+        }
+        let cell = span / RASTER as f64;
+        let (w, h) = (((hi[0] - lo[0]) / cell).ceil() as usize + 1, ((hi[1] - lo[1]) / cell).ceil() as usize + 1);
+        let mut mask = vec![false; w * h];
+        for row in 0..h {
+            let y = lo[1] + (row as f64 + 0.5) * cell;
+            let mut xs: Vec<f64> = (0..polygon.len())
+                .filter_map(|k| {
+                    let (a, b) = (polygon[k], polygon[(k + 1) % polygon.len()]);
+                    ((a[1] > y) != (b[1] > y)).then(|| a[0] + (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]))
+                })
+                .collect();
+            xs.sort_by(f64::total_cmp);
+            for pair in xs.chunks(2) {
+                if let [x0, x1] = *pair {
+                    let (c0, c1) =
+                        (((x0 - lo[0]) / cell - 0.5).ceil().max(0.0) as usize, (((x1 - lo[0]) / cell - 0.5).floor().max(-1.0) + 1.0) as usize);
+                    for c in c0..c1.min(w) {
+                        mask[row * w + c] = true;
+                    }
+                }
+            }
+        }
+        Some(Raster { lo, hi, cell, w, h, mask })
+    }
+
+    /// The cell a place on the picture is in, if it is within the polygon's box.
+    fn at(&self, q: [f64; 2]) -> Option<usize> {
+        let (x, y) = ((q[0] - self.lo[0]) / self.cell, (q[1] - self.lo[1]) / self.cell);
+        (x >= 0.0 && y >= 0.0 && (x as usize) < self.w && (y as usize) < self.h).then(|| y as usize * self.w + x as usize)
+    }
+}
+
+/// About how many of a polygon's points each part of the depth map should hold, for the nearest
+/// to be read over the gaps between them: a cloud has no surface to hide what is behind.
+const PER_PART: f64 = 8.0;
+
+/// Which of `points` the view sees inside the polygon `ring` (world places drawn on the picture):
+/// those whose places are inside it on the picture and, unless `through`, no deeper than the
+/// nearest point in their part of the picture, give or take two parts' width. A cloud has no
+/// surface to hide what is behind, so what is seen is what is near the front; the parts are as
+/// wide as holds about [`PER_PART`] points, so a sparse cloud's gaps do not show what is behind.
+pub fn points_seen_inside(points: &[Vec3], ring: &[Vec3], view: &View, through: bool) -> Vec<bool> {
+    let mut taken = vec![false; points.len()];
+    let Some(picture) = picture_of(view) else { return taken };
+    let polygon: Vec<[f64; 2]> = ring.iter().filter_map(|p| picture(*p).map(|(q, _)| q)).collect();
+    let Some(raster) = Raster::of(&polygon) else { return taken };
+    let inside: Vec<Option<([f64; 2], f64)>> = par::map(points.len(), |i| {
+        let seen = picture(points[i])?;
+        raster.mask[raster.at(seen.0)?].then_some(seen)
+    });
+    if through {
+        for (t, p) in taken.iter_mut().zip(&inside) {
+            *t = p.is_some();
+        }
+        return taken;
+    }
+    let near = inside.iter().flatten().count();
+    let (lo, hi) = (raster.lo, raster.hi);
+    let span = (hi[0] - lo[0]).max(hi[1] - lo[1]);
+    let side = ((near as f64 / PER_PART).sqrt().ceil() as usize).clamp(1, 512);
+    let part_width = span / side as f64;
+    let (wide, high) = (((hi[0] - lo[0]) / part_width).ceil() as usize + 1, ((hi[1] - lo[1]) / part_width).ceil() as usize + 1);
+    let part = |q: [f64; 2]| {
+        let (x, y) = (((q[0] - lo[0]) / part_width) as usize, ((q[1] - lo[1]) / part_width) as usize);
+        (x < wide && y < high).then_some(y * wide + x)
+    };
+    let mut depth = vec![f64::INFINITY; wide * high];
+    for &(q, z) in inside.iter().flatten() {
+        if let Some(i) = part(q) {
+            depth[i] = depth[i].min(z);
+        }
+    }
+    for (t, p) in taken.iter_mut().zip(&inside) {
+        let Some((q, z)) = *p else { continue };
+        let Some(i) = part(q) else { continue };
+        let slack = 2.0 * if view.eye.is_some() { part_width * z } else { part_width };
+        *t = z <= depth[i] + slack;
+    }
+    taken
+}
+
 /// Which of `points` lie within `radius` of any of `places` (a point cloud's brush: one flag a
 /// point). A grid of cells one radius wide keeps it near the cloud's size, not its size times the
 /// places'.
@@ -1015,6 +1089,44 @@ mod tests {
         assert!(points_near(&points, &[], 2.0).iter().all(|n| !n));
         assert!(points_near(&points, &[Vec3::ZERO], 0.0).iter().all(|n| !n));
         assert!(points_near(&[], &[Vec3::ZERO], 1.0).is_empty());
+    }
+
+    /// Two sheets of points, one over the other, seen from above through a square: the near sheet
+    /// inside it, or both sheets when seen through; nothing outside it and nothing for a polygon
+    /// of two corners.
+    #[test]
+    fn a_polygon_takes_the_points_seen_inside_it() {
+        let mut points = Vec::new();
+        for z in [0.0, -10.0] {
+            for i in 0..41 {
+                for j in 0..41 {
+                    points.push(Vec3::new(f64::from(i), f64::from(j), z));
+                }
+            }
+        }
+        let ring: Vec<Vec3> = [[9.5, 9.5], [20.5, 9.5], [20.5, 20.5], [9.5, 20.5]].iter().map(|[x, y]| Vec3::new(*x, *y, 5.0)).collect();
+        let down = View { direction: Vec3::new(0.0, 0.0, -1.0), eye: None };
+        let count = |f: &[bool]| f.iter().filter(|b| **b).count();
+        let seen = points_seen_inside(&points, &ring, &down, false);
+        assert_eq!(count(&seen), 121, "the near sheet's 11 by 11");
+        assert!(seen.iter().zip(&points).all(|(s, p)| !*s || p.z == 0.0), "none of the far sheet");
+        assert_eq!(count(&points_seen_inside(&points, &ring, &down, true)), 242, "both sheets through");
+        // From below, the other sheet is the near one.
+        let up = View { direction: Vec3::new(0.0, 0.0, 1.0), eye: None };
+        let below = points_seen_inside(&points, &ring, &up, false);
+        assert!(count(&below) == 121 && below.iter().zip(&points).all(|(s, p)| !*s || p.z == -10.0));
+        // From a point above the middle, looking down: the same square of points (the polygon's
+        // corners are drawn on the plane the view targets, here z = 5).
+        let near = View { direction: Vec3::new(0.0, 0.0, -1.0), eye: Some(Vec3::new(15.0, 15.0, 50.0)) };
+        let ring_near: Vec<Vec3> = [[9.5, 9.5], [20.5, 9.5], [20.5, 20.5], [9.5, 20.5]]
+            .iter()
+            .map(|[x, y]| Vec3::new(15.0 + (x - 15.0) * 45.0 / 50.0, 15.0 + (y - 15.0) * 45.0 / 50.0, 5.0))
+            .collect();
+        let seen = points_seen_inside(&points, &ring_near, &near, false);
+        assert!(count(&seen) > 0 && seen.iter().zip(&points).all(|(s, p)| !*s || p.z == 0.0), "{}", count(&seen));
+        let line = [Vec3::new(1.0, 1.0, 0.0), Vec3::new(2.0, 2.0, 0.0)];
+        assert_eq!(count(&points_seen_inside(&points, &line, &down, true)), 0, "two corners take nothing");
+        assert_eq!(count(&points_seen_inside(&points, &ring, &View { direction: Vec3::ZERO, eye: None }, true)), 0);
     }
 
     /// A ball of radius 20 about the origin, its poles on Z.

@@ -232,16 +232,7 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect) -> bool {
         }
         _ => {}
     }
-    if k.tool == POLYGON {
-        let can = k.corners.len() >= 3;
-        let apply = ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_select_apply_polygon"), ui_kit::Button::Enabled(can))).clicked();
-        if apply {
-            k.asked = Some(("polygon".into(), Value::Null));
-        }
-        if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_select_undo_corner"), ui_kit::Button::Enabled(!k.corners.is_empty()))).clicked() {
-            k.corners.pop();
-        }
-    }
+    polygon_buttons(ui, k);
     let now = engine_select::selected(&app.session);
     let summary = match &now {
         Some(s) => solidcraft_ui_text::format("ui.scan_select_count", &[("triangles", &s.count.to_string()), ("of", &s.selected.len().to_string())]),
@@ -308,11 +299,27 @@ pub fn rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect) -> bool {
     false
 }
 
+/// Polygon's Apply and Undo Corner buttons.
+fn polygon_buttons(ui: &mut egui::Ui, k: &mut ScanSelect) {
+    if k.tool != POLYGON {
+        return;
+    }
+    let can = k.corners.len() >= 3;
+    let apply = ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_select_apply_polygon"), ui_kit::Button::Enabled(can))).clicked();
+    if apply {
+        k.asked = Some(("polygon".into(), Value::Null));
+    }
+    if ui_kit::row(ui, "", |ui| ui_kit::button(ui, tr("ui.scan_select_undo_corner"), ui_kit::Button::Enabled(!k.corners.is_empty()))).clicked() {
+        k.corners.pop();
+    }
+}
+
 /// The dialog for a point cloud: the brush, what it does to what is selected, and the buttons that
 /// take all of it, none or the other points.
 fn cloud_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect, id: u64, points: usize) -> bool {
     let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
-    k.tool = BRUSH;
+    // The tools that work on points: Brush, Polygon and Lasso, the first three of the list.
+    k.tool = k.tool.min(LASSO);
     if k.radius <= 0.0 {
         let diagonal = app.session.doc.point_clouds.iter().find(|c| c.id == id).and_then(|c| c.world_corners()).map_or(0.0, |c| {
             let (lo, hi) = c.iter().fold((c[0], c[0]), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
@@ -320,10 +327,21 @@ fn cloud_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect, id: u64, po
         });
         k.radius = if diagonal > 0.0 { (diagonal / 100.0).max(1e-3) } else { 2.0 };
     }
+    let tools: Vec<&str> = TOOLS[..=LASSO].iter().map(|t| tr(t)).collect();
+    let before = k.tool;
+    choice_row(ui, tr("ui.scan_select_tool"), "scan_select_tool", &mut k.tool, &tools);
+    if k.tool != before {
+        k.corners.clear();
+    }
     let modes: Vec<&str> = MODES.iter().map(|m| tr(m)).collect();
     choice_row(ui, tr("ui.scan_select_mode"), "scan_select_mode", &mut k.mode, &modes);
-    form_row(ui, tr("ui.scan_select_radius"), |ui| ui_kit::length_field(ui, &mut k.radius, &units, decimals));
-    k.radius = k.radius.clamp(1e-3, 1e4);
+    if k.tool == BRUSH {
+        form_row(ui, tr("ui.scan_select_radius"), |ui| ui_kit::length_field(ui, &mut k.radius, &units, decimals));
+        k.radius = k.radius.clamp(1e-3, 1e4);
+    } else {
+        form_row(ui, tr("ui.scan_select_through"), |ui| check(ui, &mut k.through));
+    }
+    polygon_buttons(ui, k);
     let now = engine_select::cloud::selected(&app.session, id, points);
     let summary = match &now {
         Some(s) => solidcraft_ui_text::format("ui.scan_select_count", &[("triangles", &s.count.to_string()), ("of", &points.to_string())]),
@@ -344,7 +362,12 @@ fn cloud_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect, id: u64, po
     if let Some(why) = &k.error {
         ui_kit::text(ui, &crate::dialogs::shown_error(why), ui_kit::Text::Report("scan_select_error", true));
     }
-    ui_kit::text(ui, tr("ui.scan_select_hint_cloud"), ui_kit::Text::Hint("scan_select_hint"));
+    let hint = match k.tool {
+        POLYGON => "ui.scan_select_hint_polygon",
+        LASSO => "ui.scan_select_hint_lasso",
+        _ => "ui.scan_select_hint_cloud",
+    };
+    ui_kit::text(ui, tr(hint), ui_kit::Text::Hint("scan_select_hint"));
     false
 }
 
@@ -402,7 +425,11 @@ pub(crate) fn tick(app: &mut SolveApp, proj: &crate::viewport::Proj) {
     let Some((command, p)) = k.asked.take() else { return };
     if command == "polygon" {
         let k = k.clone();
-        let p = polygon_command(app, proj, &k);
+        let mut p = polygon_command(app, proj, &k);
+        // With no scan mesh in the design the polygon takes a cloud's points.
+        if let (Some(p), Some((cloud, _, _))) = (p.as_mut(), cloud_target(app, &k)) {
+            p["cloud"] = json!(cloud);
+        }
         if let Some(k) = dialog(app) {
             k.corners.clear();
         }
@@ -739,5 +766,44 @@ mod tests {
         h.frames(2);
         assert_eq!(count(&h), 0);
         assert!(kind(&mut h).error.is_none());
+    }
+
+    /// The Polygon and Lasso tools work on a point cloud too: a loop dragged round points selects
+    /// them, clicks round some and on the first corner again select those, and Shift adds.
+    #[test]
+    fn a_lasso_and_a_polygon_select_the_points_of_a_cloud() {
+        let mut h = crate::scenario::Harness::new();
+        let path = h.dir.join("grid.xyz");
+        let mut xyz = String::new();
+        for j in 0..21 {
+            for i in 0..21 {
+                xyz += &format!("{i} {j} 0\n");
+            }
+        }
+        std::fs::write(&path, xyz).unwrap();
+        let id = h.app.run("pointcloud.insert", json!({"path": path.to_string_lossy()})).unwrap()["cloud"].as_u64().unwrap();
+        h.step(&json!({"view_anim": "top"})).unwrap();
+        h.app.start("scan.select");
+        h.frames(2);
+        let count = |h: &crate::scenario::Harness| engine_select::cloud::selected(&h.app.session, id, 441).map_or(0, |s| s.count);
+        let at = |x: f64, y: f64| json!({"world": [x, y, 0.0]});
+        kind(&mut h).tool = LASSO;
+        h.frames(1);
+        // A loop round x and y from 2 to 8: seven by seven points.
+        let loop_ = [at(1.5, 1.5), at(8.5, 1.5), at(8.5, 8.5), at(1.5, 8.5), at(1.5, 1.5)];
+        h.step(&json!({"drag": loop_, "steps": 6})).unwrap();
+        h.frames(3);
+        assert_eq!(count(&h), 49, "{:?}", kind(&mut h).error);
+        kind(&mut h).tool = POLYGON;
+        h.frames(1);
+        // Shift adds the points from 14 to 16 (nine) with a polygon closed on its first corner.
+        for (x, y) in [(13.5, 13.5), (16.5, 13.5), (16.5, 16.5), (13.5, 16.5)] {
+            h.step(&json!({"click": at(x, y), "shift": true})).unwrap();
+            h.frames(1);
+        }
+        h.step(&json!({"click": at(13.5, 13.5), "shift": true})).unwrap();
+        h.frames(3);
+        assert_eq!(count(&h), 58, "the polygon's points added: {:?}", kind(&mut h).error);
+        assert!(kind(&mut h).corners.is_empty(), "the polygon is done");
     }
 }

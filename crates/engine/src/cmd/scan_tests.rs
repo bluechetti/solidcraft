@@ -1810,6 +1810,32 @@ fn a_scan_command_computed_on_a_copy_brings_back_what_it_did_to_the_view() {
     assert!(s.scan_deviation.is_none(), "the map taken away on the copy");
 }
 
+/// A polygon drawn round what is seen selects the points of a cloud inside it, the near ones only
+/// unless it goes through; it is refused with no way to look.
+#[test]
+fn a_polygon_selects_the_points_of_a_cloud_inside_it() {
+    let mut points = Vec::new();
+    for z in [0.0, -10.0] {
+        for i in 0..30 {
+            for j in 0..30 {
+                points.push(Vec3::new(f64::from(i), f64::from(j), z));
+            }
+        }
+    }
+    let mut s = session_with_a_cloud(&points);
+    let square = json!([[4.5, 4.5, 5.0], [9.5, 4.5, 5.0], [9.5, 9.5, 5.0], [4.5, 9.5, 5.0]]);
+    let pick = |s: &mut Session, through: bool, mode: &str| {
+        run(s, "scan.select", json!({"cloud": 1, "polygon": {"points": square, "direction": [0, 0, -1], "through": through}, "mode": mode}))
+    };
+    assert_eq!(pick(&mut s, false, "replace")["points"], json!(25), "the near sheet's 5 by 5");
+    assert_eq!(pick(&mut s, true, "replace")["points"], json!(50), "both sheets, seen through");
+    assert_eq!(pick(&mut s, false, "remove")["points"], json!(25), "the near sheet taken from both");
+    let refused = s.execute("scan.select", &json!({"cloud": 1, "polygon": {"points": square, "direction": [0, 0, 0]}}));
+    assert!(refused.is_err(), "no way to look");
+    let both = s.execute("scan.select", &json!({"cloud": 1, "polygon": {"points": square, "direction": [0, 0, -1]}, "all": true}));
+    assert!(both.is_err(), "one way to select");
+}
+
 /// The points a command selected on a copy of the session (an agent's or the control channel's,
 /// off the window thread) are selected here when it is adopted, as a scan's triangles are.
 #[test]

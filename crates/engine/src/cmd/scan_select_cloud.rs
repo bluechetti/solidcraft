@@ -33,8 +33,8 @@ pub fn selected(s: &Session, id: u64, points: usize) -> Option<Arc<CloudSelected
 }
 
 pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
-    let ways = ["brush", "box", "all", "none", "invert"];
-    for other in ["polygon", "region", "shape", "saved", "triangles", "grow", "shrink", "unexplained", "body"] {
+    let ways = ["brush", "polygon", "box", "all", "none", "invert"];
+    for other in ["region", "shape", "saved", "triangles", "grow", "shrink", "unexplained", "body"] {
         if p.get(other).is_some_and(|v| !v.is_null() && *v != json!(false)) {
             return Err(bad(cmd, format!("`{other}` is for a scan's triangles: with `cloud`, give one of {}", ways.join(", "))));
         }
@@ -54,6 +54,10 @@ pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
         "all" => vec![true; count],
         "none" => vec![false; count],
         "invert" => current().into_iter().map(|f| !f).collect(),
+        "polygon" => {
+            let (ring, view, through) = super::polygon_of(v, cmd)?;
+            solidcraft_scan::selection::points_seen_inside(&places, &ring, &view, through)
+        }
         "box" => {
             let corner = |key: &str| {
                 crate::params::vec3(&v[key]).ok_or_else(|| bad(cmd, format!("`box.{key}` must be a point [x, y, z] of numbers")))
