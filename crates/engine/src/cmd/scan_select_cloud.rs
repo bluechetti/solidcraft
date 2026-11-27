@@ -28,13 +28,16 @@ pub struct CloudCache {
 /// What a cloud's places come from.
 type CloudKey = (Arc<[f32]>, Vec3, solidcraft_doc::Mat);
 
+/// The index kept for the cloud with this `key` of `count` points, if there is one.
+fn kept_index(s: &Session, key: &CloudKey, count: usize) -> Option<Arc<CloudCache>> {
+    s.cloud_index.as_ref().filter(|c| Arc::ptr_eq(&c.points, &key.0) && c.origin == key.1 && c.transform == key.2 && c.index.holds(count)).cloned()
+}
+
 /// The index of the cloud with this `key` and these `places`: the one kept if it is of them, else
 /// made now and kept (a cloud moved, cut down or replaced is read again).
 fn indexed(s: &mut Session, key: &CloudKey, places: &[Vec3]) -> Arc<CloudCache> {
-    let kept =
-        s.cloud_index.as_ref().filter(|c| Arc::ptr_eq(&c.points, &key.0) && c.origin == key.1 && c.transform == key.2 && c.index.is_of(places));
-    if let Some(kept) = kept {
-        return kept.clone();
+    if let Some(kept) = kept_index(s, key, places.len()) {
+        return kept;
     }
     let made =
         Arc::new(CloudCache { points: key.0.clone(), origin: key.1, transform: key.2, index: solidcraft_scan::selection::CloudIndex::new(places) });
@@ -76,9 +79,14 @@ pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
     let (id, name, count) = (cloud.id, cloud.name.clone(), cloud.len());
     let cloud_name = name.as_str();
     let key: CloudKey = (cloud.points.values().clone(), cloud.origin, cloud.transform);
-    // The ways that say what is selected whole, or that name a selection kept, need no places.
-    let places: Vec<Vec3> =
-        if matches!(way, "all" | "none" | "invert" | "saved") { Vec::new() } else { (0..count).filter_map(|i| cloud.world_point(i)).collect() };
+    // The ways that say what is selected whole, or that name a selection kept, need no places; nor
+    // does a brush on a cloud whose index is kept (it reads the places it needs from the points).
+    let kept_for_brush = if way == "brush" { kept_index(s, &key, count) } else { None };
+    let places: Vec<Vec3> = if matches!(way, "all" | "none" | "invert" | "saved") || kept_for_brush.is_some() {
+        Vec::new()
+    } else {
+        (0..count).filter_map(|i| cloud.world_point(i)).collect()
+    };
     let before = selected(s, id, count);
     let current = || before.as_ref().map(|k| (*k.selected).clone()).unwrap_or_else(|| vec![false; count]);
     let v = &p[way];
@@ -108,7 +116,7 @@ pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
                 .iter()
                 .find(|k| k.name == name)
                 .ok_or_else(|| bad(cmd, format!("no kept selection `{name}` of a point cloud")))?;
-            if kept.body != cloud_name || kept.triangles as usize != count {
+            if kept.body != cloud_name || kept.of() != count {
                 return Err(bad(cmd, format!("the kept selection `{name}` is of `{}` as it was, not of `{cloud_name}` as it is now", kept.body)));
             }
             kept.flags()
@@ -151,7 +159,14 @@ pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
             if !(radius.is_finite() && radius > 0.0) {
                 return Err(bad(cmd, "`brush.radius` must be a length above 0"));
             }
-            solidcraft_scan::selection::points_near(&places, &at, radius)
+            // The first brush on a cloud reads its index (kept for the next); after that a stroke
+            // searches a few rows of cells, not all of the cloud's points.
+            let index = match kept_for_brush {
+                Some(kept) => kept,
+                None => indexed(s, &key, &places),
+            };
+            let world = |i: usize| solidcraft_doc::point_cloud::world_place(&key.0, key.1, &key.2, i).unwrap_or(Vec3::ZERO);
+            index.index.points_near(count, world, &at, radius)
         }
     };
     let flags: Vec<bool> = match (mode, way) {

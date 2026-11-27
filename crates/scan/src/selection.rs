@@ -1201,9 +1201,47 @@ impl CloudIndex {
         self.spacing
     }
 
+    /// Which of the `count` points (`point` gives each place, as the index was made of them) lie
+    /// within `radius` of any of `places`: [`points_near`] with the grid already made. The grid's
+    /// cells are a few spacings wide, so a small brush searches a few rows of them; a brush that
+    /// would search more than the cloud holds goes over the points once instead (a few places), or
+    /// sorts them into a grid of its own radius (many).
+    pub fn points_near(&self, count: usize, point: impl Fn(usize) -> Vec3 + Sync + Send, places: &[Vec3], radius: f64) -> Vec<bool> {
+        let mut near = vec![false; count];
+        if count == 0 || places.is_empty() || !(radius.is_finite() && radius > 0.0) {
+            return near;
+        }
+        /// A search of one row costs about this many points looked at.
+        const ROW: u64 = 24;
+        const FEW_PLACES: usize = 64;
+        let indexed = self.points == count && !self.grid.is_empty();
+        let by_rows = places.len() as u64 * self.grid.runs_for(radius) * ROW;
+        let by_points = count as u64 * places.len() as u64;
+        if indexed && by_rows <= by_points {
+            for &place in places {
+                self.grid.near(place, radius, |k| point(k as usize), |k| near[k as usize] = true);
+            }
+            return near;
+        }
+        let limit = radius * radius;
+        if places.len() <= FEW_PLACES {
+            return par::map(count, |i| {
+                let at = point(i);
+                places.iter().any(|p| (at - *p).len2() <= limit)
+            });
+        }
+        let all: Vec<Vec3> = (0..count).map(&point).collect();
+        points_near(&all, places, radius)
+    }
+
     /// Whether this is the index of `points` (as many as it was made for).
     pub fn is_of(&self, points: &[Vec3]) -> bool {
-        self.points == points.len()
+        self.holds(points.len())
+    }
+
+    /// Whether this is the index of a cloud of `count` points.
+    pub fn holds(&self, count: usize) -> bool {
+        self.points == count
     }
 }
 
@@ -1301,6 +1339,38 @@ mod tests {
         assert!(points_near(&points, &[], 2.0).iter().all(|n| !n));
         assert!(points_near(&points, &[Vec3::ZERO], 0.0).iter().all(|n| !n));
         assert!(points_near(&[], &[Vec3::ZERO], 1.0).is_empty());
+    }
+
+    /// A brush on a cloud's kept index takes the points a brush of its own grid does, whichever way
+    /// it searches (rows of cells, over the points, or a grid of the brush's radius), off the cloud
+    /// and off the places' side too.
+    #[test]
+    fn a_brush_on_a_kept_index_takes_what_a_brush_of_its_own_grid_does() {
+        let mut points = Vec::new();
+        for i in 0..60 {
+            for j in 0..40 {
+                points.push(Vec3::new(f64::from(i) * 0.7, f64::from(j) * 0.7, f64::from((i * 7 + j * 3) % 5) * 0.05));
+            }
+        }
+        let index = CloudIndex::new(&points);
+        let at = |i: usize| points[i];
+        let few = [Vec3::new(20.0, 10.0, 0.0), Vec3::new(5.0, 25.0, 0.1), Vec3::new(-50.0, 0.0, 0.0), Vec3::new(41.5, 27.0, 1.0)];
+        let many: Vec<Vec3> = (0..200).map(|k| Vec3::new(f64::from(k % 20) * 2.1, f64::from(k / 20) * 2.9, 0.0)).collect();
+        for radius in [0.2, 1.0, 3.0, 12.0, 80.0, 1e6] {
+            for places in [&few[..], &many[..], &few[..1]] {
+                let kept = index.points_near(points.len(), at, places, radius);
+                assert_eq!(kept, points_near(&points, places, radius), "radius {radius}, {} places", places.len());
+            }
+        }
+        // Nothing to take, or nothing to search.
+        assert!(index.points_near(points.len(), at, &[], 1.0).iter().all(|n| !n));
+        assert!(index.points_near(points.len(), at, &few, 0.0).iter().all(|n| !n));
+        assert!(index.points_near(points.len(), at, &few, f64::NAN).iter().all(|n| !n));
+        // An index of other points (or of too few to have a grid) is not searched.
+        let few_points = &points[..5];
+        let small = CloudIndex::new(few_points);
+        assert_eq!(small.points_near(5, |i| few_points[i], &few[..1], 100.0), points_near(few_points, &few[..1], 100.0));
+        assert_eq!(small.points_near(points.len(), at, &few[..1], 3.0), points_near(&points, &few[..1], 3.0));
     }
 
     /// A plate with a wall standing on its edge, and another plate above it that touches

@@ -168,6 +168,53 @@ pub struct GridIndex {
     order: Vec<u32>,
 }
 
+impl GridIndex {
+    /// How many runs of cells [`GridIndex::near`] searches for a ball of `radius`: what it costs,
+    /// before the points in them (a quarter of the cells' runs are looked up in a long list).
+    pub(crate) fn runs_for(&self, radius: f64) -> u64 {
+        let span = (radius / self.cell).ceil().clamp(0.0, AXIS_LIMIT as f64) as u64;
+        (2 * span + 1) * (2 * span + 1)
+    }
+
+    /// Whether the grid holds no cells (it was made of no points).
+    pub(crate) fn is_empty(&self) -> bool {
+        self.keys.is_empty()
+    }
+
+    /// Each point within `radius` of `p`, as `point` gives its place (the grid keeps none: they
+    /// are the places it was made of). The cells along X lie together in the sorted keys, so each
+    /// row of them is one search, not one a cell. A radius reaching more of the grid than it has
+    /// is read as the grid's whole reach: it is the caller's to keep [`GridIndex::runs_for`] small.
+    pub(crate) fn near(&self, p: Vec3, radius: f64, point: impl Fn(u32) -> Vec3, mut visit: impl FnMut(u32)) {
+        let c = (p - self.lower) / self.cell;
+        let (ci, cj, ck) = (c.x.floor() as i64, c.y.floor() as i64, c.z.floor() as i64);
+        let span = (radius / self.cell).ceil().clamp(0.0, AXIS_LIMIT as f64) as i64;
+        let limit = radius * radius;
+        let (i0, i1) = (ci.saturating_sub(span).max(0), ci.saturating_add(span).min(AXIS_LIMIT));
+        if i0 > i1 {
+            return;
+        }
+        for k in ck.saturating_sub(span).max(0)..=ck.saturating_add(span).min(AXIS_LIMIT) {
+            for j in cj.saturating_sub(span).max(0)..=cj.saturating_add(span).min(AXIS_LIMIT) {
+                let (lo, hi) = (pack(i0, j, k), pack(i1, j, k));
+                let mut at = self.keys.partition_point(|&key| key < lo);
+                while let Some(&key) = self.keys.get(at) {
+                    if key > hi {
+                        break;
+                    }
+                    let (a, b) = (self.starts[at] as usize, self.starts.get(at + 1).copied().unwrap_or(0) as usize);
+                    for &q in self.order.get(a..b).unwrap_or_default() {
+                        if (point(q) - p).len2() <= limit {
+                            visit(q);
+                        }
+                    }
+                    at += 1;
+                }
+            }
+        }
+    }
+}
+
 fn bounds(points: &[Vec3]) -> (Vec3, Vec3) {
     let first = points.first().copied().unwrap_or(Vec3::ZERO);
     points.iter().fold((first, first), |(lo, hi), p| (lo.min(*p), hi.max(*p)))

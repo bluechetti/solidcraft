@@ -26,6 +26,11 @@ pub struct ScanSelection {
 }
 
 impl ScanSelection {
+    /// How many triangles (or, for a point cloud, points) `body` had when this was kept.
+    pub fn of(&self) -> usize {
+        self.triangles as usize
+    }
+
     /// The selection of `flags` (one a triangle of `body`).
     pub fn from_flags(name: &str, body: &str, flags: &[bool]) -> ScanSelection {
         let mut runs: Vec<[u32; 2]> = Vec::new();

@@ -34,6 +34,15 @@ pub fn unit_scale(unit: &str) -> Option<f64> {
     UNITS.iter().find(|(u, _)| u.eq_ignore_ascii_case(unit)).map(|(_, k)| *k)
 }
 
+/// The `i`th of a cloud's raw `values` (three numbers a point) in the design (mm), for the cloud's
+/// `origin` and `transform`: [`PointCloud::world_point`] for a caller that holds only these.
+pub fn world_place(values: &[f32], origin: Vec3, transform: &Mat, i: usize) -> Option<Vec3> {
+    let at = i.checked_mul(3)?;
+    let p = values.get(at..at.checked_add(3)?)?;
+    let local = origin + Vec3::new(f64::from(*p.first()?), f64::from(*p.get(1)?), f64::from(*p.get(2)?));
+    Some(crate::apply_point(transform, local))
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PointCloud {
     pub id: u64,
@@ -252,9 +261,7 @@ impl PointCloud {
     }
     /// The `i`th point in the design (mm).
     pub fn world_point(&self, i: usize) -> Option<Vec3> {
-        let p = self.points.get(i)?;
-        let local = self.origin + Vec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
-        Some(crate::apply_point(&self.transform, local))
+        world_place(self.points.values(), self.origin, &self.transform, i)
     }
     /// Transform a world-space ray `(o, d)` into the raw `points` frame (before `origin` and
     /// `transform`). Because `transform` is rigid, distances along and perpendicular to the ray

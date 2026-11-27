@@ -1947,6 +1947,42 @@ fn a_clouds_index_is_kept_until_the_cloud_moves() {
     assert!(!std::sync::Arc::ptr_eq(&index, &kept(&s).expect("kept again")));
 }
 
+/// A brush on a cloud reads its index once and keeps it; the next brush (a stroke is sent a few
+/// places at a time) takes the same points as a count over every point would, on a cloud placed
+/// away from its raw points too.
+#[test]
+fn a_brush_on_a_cloud_uses_the_kept_index_and_takes_the_same_points() {
+    let mut points = Vec::new();
+    for i in 0..40 {
+        for j in 0..40 {
+            points.push(Vec3::new(f64::from(i), f64::from(j), 0.0));
+        }
+    }
+    let mut s = session_with_a_cloud(&points);
+    s.doc_mut().point_clouds[0].transform[3][0] = 100.0;
+    s.doc_mut().point_clouds[0].origin = Vec3::new(0.0, 5.0, 0.0);
+    assert!(s.cloud_index.is_none());
+    let places = |at: [f64; 3]| [at, [at[0] + 3.0, at[1], at[2]]];
+    let brush = |s: &mut Session, at: [f64; 3], radius: f64| {
+        run(s, "scan.select", json!({"cloud": 1, "brush": {"points": places(at), "radius": format!("{radius} mm")}}))["points"].as_u64()
+    };
+    // The points within the radius of a place, counted in the design: the cloud is 100 along X and
+    // 5 along Y from its raw points.
+    let counted = |at: [f64; 3], radius: f64| {
+        let near = |p: &Vec3| places(at).iter().any(|q| (*p + Vec3::new(100.0, 5.0, 0.0) - Vec3::new(q[0], q[1], q[2])).len() <= radius);
+        points.iter().filter(|p| near(p)).count() as u64
+    };
+    let first = brush(&mut s, [110.0, 15.0, 0.0], 1.5);
+    assert_eq!(first, Some(counted([110.0, 15.0, 0.0], 1.5)));
+    assert!(first.is_some_and(|n| n > 0));
+    let index = s.cloud_index.clone().expect("kept after a brush");
+    // Again, wider, on an edge and off the cloud: the same index, the same points as counted.
+    for (at, radius) in [([120.0, 25.0, 0.0], 4.0), ([100.0, 5.0, 0.0], 0.9), ([500.0, 5.0, 0.0], 2.0), ([110.0, 15.0, 0.0], 1000.0)] {
+        assert_eq!(brush(&mut s, at, radius), Some(counted(at, radius)), "{at:?} {radius}");
+        assert!(std::sync::Arc::ptr_eq(&index, &s.cloud_index.clone().expect("still kept")));
+    }
+}
+
 /// The points selected on a cloud are kept in the design under a name, opened again (with a mode),
 /// replaced by name and deleted; they are the cloud's, not a scan's.
 #[test]
