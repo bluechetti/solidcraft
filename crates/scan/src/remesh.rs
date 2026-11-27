@@ -52,19 +52,21 @@ pub enum RemeshError {
     TooFine,
     /// No surface was read: the scans have no area, or nothing crossed the grid.
     Empty,
-    /// A shell's two skins have open rims that do not pair up to be joined.
-    Rims,
+    /// A shell's two skins have open rims that do not pair up to be joined: how many long rims the
+    /// outside has and how many the inside.
+    Rims { outside: usize, inside: usize },
 }
 
 impl std::fmt::Display for RemeshError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
-            RemeshError::TooFine => "the grid would be too fine to hold: use a larger cell",
-            RemeshError::Empty => "no surface could be read off the scans at this cell",
-            RemeshError::Rims => {
-                "the shell's outside and inside have open rims that do not pair up: fill the scan's holes first, or give a thinner wall"
-            }
-        })
+        match self {
+            RemeshError::TooFine => f.write_str("the grid would be too fine to hold: use a larger cell"),
+            RemeshError::Empty => f.write_str("no surface could be read off the scans at this cell"),
+            RemeshError::Rims { outside, inside } => write!(
+                f,
+                "the shell's outside has {outside} long open rim(s) and its inside {inside}, which do not pair up: a thinner wall or a different cell may let the inside follow the outside, or cut the scan's open end square"
+            ),
+        }
     }
 }
 
@@ -111,15 +113,25 @@ struct Source<'a> {
     open: HashSet<(u32, u32)>,
     /// The ends of those open edges.
     rim: HashSet<u32>,
+    /// Each edge's (between welded points, lowest first) two faces' directions added: the direction
+    /// of a point whose nearest place on the scan is that edge.
+    edge_normals: HashMap<(u32, u32), Vec3>,
 }
 
 impl<'a> Source<'a> {
     fn new(scan: Scan<'a>) -> Self {
         let mesh = solidcraft_geom::Mesh { positions: scan.positions.to_vec(), triangles: scan.triangles.to_vec(), ..Default::default() };
         let mut normals = vec![Vec3::ZERO; scan.positions.len()];
+        let weld = crate::welded(scan.positions);
+        let mut edge_normals: HashMap<(u32, u32), Vec3> = HashMap::new();
         for (t, tri) in scan.triangles.iter().enumerate() {
             let Some([a, b, c]) = scan.corners(t) else { continue };
             let Some(face) = (b - a).cross(c - a).normalized() else { continue };
+            for k in 0..3 {
+                let (p, q) =
+                    (weld.get(tri[k] as usize).copied().unwrap_or(tri[k]), weld.get(tri[(k + 1) % 3] as usize).copied().unwrap_or(tri[(k + 1) % 3]));
+                *edge_normals.entry((p.min(q), p.max(q))).or_insert(Vec3::ZERO) += face;
+            }
             // Each corner's face direction weighted by the angle the face makes there, not by its
             // area: a long thin face (the scanner's patch over a pinhole) would otherwise outweigh
             // the faces round it and turn the corner's direction, which reads the points beyond
@@ -136,7 +148,6 @@ impl<'a> Source<'a> {
         for n in &mut normals {
             *n = n.normalized().unwrap_or(Vec3::ZERO);
         }
-        let weld = crate::welded(scan.positions);
         let mut uses: HashMap<(u32, u32), u32> = HashMap::new();
         for tri in scan.triangles {
             let [a, b, c] = tri.map(|v| weld.get(v as usize).copied().unwrap_or(v));
@@ -146,7 +157,7 @@ impl<'a> Source<'a> {
         }
         let open: HashSet<(u32, u32)> = uses.into_iter().filter(|(_, n)| *n == 1).map(|(e, _)| e).collect();
         let rim = open.iter().flat_map(|&(a, b)| [a, b]).collect();
-        Source { tree: TriangleTree::new(&mesh), normals, weld, open, rim, scan }
+        Source { tree: TriangleTree::new(&mesh), normals, weld, open, rim, edge_normals, scan }
     }
 
     /// The point of the surface nearest `p` within `reach`: its distance, where it is, and the
@@ -210,8 +221,7 @@ impl<'a> Source<'a> {
         }
         let [a, b, c] = self.scan.corners(t as usize)?;
         let q = closest_on_triangle(p, a, b, c);
-        // The vertices' directions at the nearest point, blended: a smooth way out at an edge or a
-        // corner, where the face's own is wrong for points round it.
+        // Where on the face the nearest point is, as weights of its corners.
         let (v0, v1) = ((b - a), (c - a));
         let (d00, d01, d11) = (v0.dot(v0), v0.dot(v1), v1.dot(v1));
         let v2 = q - a;
@@ -226,10 +236,30 @@ impl<'a> Source<'a> {
                 return None;
             }
         }
-        let n = |k: usize| self.normals.get(tri[k] as usize).copied().unwrap_or(Vec3::ZERO);
+        // The side the point lies on, read off the feature the nearest point is on (a face's inside,
+        // an edge, a corner), each with its own direction: a face's, the two faces' added, the
+        // corner's by angle. A direction blended across a long thin face (the scanner's patch over a
+        // pinhole) would turn with its corners and flip the sign over the face's middle.
         let face = v0.cross(v1).normalized()?;
-        let smooth = (n(0) * (1.0 - wb - wc) + n(1) * wb + n(2) * wc).normalized().unwrap_or(face);
-        let sign = if (p - q).dot(smooth) < 0.0 { -1.0 } else { 1.0 };
+        const ON: f64 = 1e-9;
+        let weights = [wa, wb, wc];
+        let zero = weights.map(|w| w <= ON);
+        let direction = match zero.iter().filter(|z| **z).count() {
+            1 => {
+                // On the edge opposite the corner whose weight is nothing.
+                let k = zero.iter().position(|z| *z).unwrap_or(0);
+                let (x, y) = (tri[(k + 1) % 3], tri[(k + 2) % 3]);
+                let (x, y) = (self.weld.get(x as usize).copied().unwrap_or(x), self.weld.get(y as usize).copied().unwrap_or(y));
+                self.edge_normals.get(&(x.min(y), x.max(y))).and_then(|n| n.normalized()).unwrap_or(face)
+            }
+            2 => {
+                // At the corner whose weight is all.
+                let corner = zero.iter().position(|z| !*z).unwrap_or(0);
+                self.normals.get(tri[corner] as usize).and_then(|n| n.normalized()).unwrap_or(face)
+            }
+            _ => face,
+        };
+        let sign = if (p - q).dot(direction) < 0.0 { -1.0 } else { 1.0 };
         Some((sign * distance, face))
     }
 }
@@ -712,7 +742,7 @@ pub fn shell(sources: &[Scan], settings: &Settings, offset: f64, wall: f64) -> R
     let (outer_long, outer_short): (Vec<_>, Vec<_>) = outer.into_iter().partition(|r| r.len() > MOST_CAPPED_EDGES);
     let (inner_long, inner_short): (Vec<_>, Vec<_>) = inner.into_iter().partition(|r| r.len() > MOST_CAPPED_EDGES);
     if outer_long.len() != inner_long.len() {
-        return Err(RemeshError::Rims);
+        return Err(RemeshError::Rims { outside: outer_long.len(), inside: inner_long.len() });
     }
     let mut strips = Vec::new();
     let mut caps: Vec<Vec<u32>> = Vec::new();
@@ -726,7 +756,7 @@ pub fn shell(sources: &[Scan], settings: &Settings, offset: f64, wall: f64) -> R
                 .filter(|&k| !taken[k])
                 .min_by(|&a, &b| middle(&inner_long[a]).dist(m).total_cmp(&middle(&inner_long[b]).dist(m)))
             else {
-                return Err(RemeshError::Rims);
+                return Err(RemeshError::Rims { outside: outer_long.len(), inside: inner_long.len() });
             };
             taken[k] = true;
             strips.extend(zipped(ring, &inner_long[k], &at));
@@ -748,18 +778,72 @@ pub fn shell(sources: &[Scan], settings: &Settings, offset: f64, wall: f64) -> R
         }
         caps.extend(inner_short.iter().zip(&free).filter(|(_, free)| **free).map(|(ring, _)| ring.clone()));
     }
-    // A cap: a fan from the loop's middle, each triangle running the loop's edge the other way
-    // round from the face it ends, as a strip's do.
-    for ring in &caps {
-        let middle = ring.iter().fold(Vec3::ZERO, |s, &v| s + positions.get(v as usize).copied().unwrap_or(Vec3::ZERO)) / ring.len().max(1) as f64;
-        let centre = positions.len() as u32;
-        positions.push(middle);
-        for i in 0..ring.len() {
-            strips.push([ring[(i + 1) % ring.len()], ring[i], centre]);
+    triangles.extend(strips);
+    // A cap: a patch faired across the loop, else a fan from its middle, each triangle running the
+    // loop's edge the other way round from the face it ends, as a strip's do.
+    if !caps.is_empty() {
+        let rings: Vec<crate::holes::Ring> =
+            caps.iter().map(|ring| crate::holes::Ring { points: ring.iter().rev().copied().collect(), perimeter: 0.0, rim: false }).collect();
+        let faired =
+            crate::holes::fill_rings(&Scan::new(&positions, &triangles), &rings.iter().collect::<Vec<_>>(), true).filter(|f| f.left.is_empty());
+        match faired {
+            Some(done) => {
+                positions = done.positions;
+                triangles = done.triangles;
+            }
+            None => {
+                for ring in &caps {
+                    let middle =
+                        ring.iter().fold(Vec3::ZERO, |s, &v| s + positions.get(v as usize).copied().unwrap_or(Vec3::ZERO)) / ring.len().max(1) as f64;
+                    let centre = positions.len() as u32;
+                    positions.push(middle);
+                    for i in 0..ring.len() {
+                        triangles.push([ring[(i + 1) % ring.len()], ring[i], centre]);
+                    }
+                }
+            }
         }
     }
-    triangles.extend(strips);
+    // Pieces too small to be the part (a pit's offset closing on itself leaves a bubble a cell across)
+    // are not part of a shell.
+    let (positions, triangles) = without_small_pieces(positions, triangles);
     Ok(Remeshed { positions, triangles, ..outside })
+}
+
+/// The surface without the pieces (triangles joined through corners) of fewer than
+/// [`LEAST_PIECE`] of its triangles, its unused points dropped.
+fn without_small_pieces(positions: Vec<Vec3>, triangles: Vec<[u32; 3]>) -> (Vec<Vec3>, Vec<[u32; 3]>) {
+    let mut pieces = UnionFind::new(positions.len());
+    for t in &triangles {
+        pieces.join(t[0] as usize, t[1] as usize);
+        pieces.join(t[1] as usize, t[2] as usize);
+    }
+    let roots: Vec<usize> = triangles.iter().map(|t| pieces.find(t[0] as usize)).collect();
+    let mut sizes: HashMap<usize, usize> = HashMap::new();
+    for r in &roots {
+        *sizes.entry(*r).or_default() += 1;
+    }
+    let least = (LEAST_PIECE * triangles.len() as f64).ceil() as usize;
+    if sizes.values().all(|&n| n >= least) {
+        return (positions, triangles);
+    }
+    let mut number = vec![u32::MAX; positions.len()];
+    let mut kept_positions = Vec::new();
+    let kept: Vec<[u32; 3]> = triangles
+        .iter()
+        .zip(&roots)
+        .filter(|(_, r)| sizes.get(r).copied().unwrap_or(0) >= least)
+        .map(|(t, _)| {
+            t.map(|v| {
+                if number[v as usize] == u32::MAX {
+                    number[v as usize] = kept_positions.len() as u32;
+                    kept_positions.push(positions[v as usize]);
+                }
+                number[v as usize]
+            })
+        })
+        .collect();
+    (kept_positions, kept)
 }
 
 /// Triangles joining two loops of points round one rim, `a` and `b` (each a loop of vertex
@@ -1082,6 +1166,47 @@ mod tests {
         let triangles = [[0, 1, 2], [0, 4, 3], [0, 3, 5]];
         let source = Source::new(Scan::new(&positions, &triangles));
         assert!(source.normals[0].z < 0.0, "the corner's direction was {:?}", source.normals[0]);
+    }
+
+    /// A point over the middle of a long thin face (a scanner's patch over a pinhole) is on the side
+    /// the face looks, though every corner's own direction looks the other way: the sign comes from
+    /// the face there, an edge or corner only where the nearest point is one.
+    #[test]
+    fn a_point_over_a_thin_faces_middle_reads_the_faces_side() {
+        let mut positions = vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(40.0, 0.0, 0.0), Vec3::new(0.0, 0.1, 0.0)];
+        let mut triangles = vec![[0u32, 1, 2]];
+        // At each corner two small faces looking down, filling more of its angle than the big face.
+        for corner in 0..3u32 {
+            let at = positions[corner as usize];
+            for dx in [0.05, -0.05] {
+                let n = positions.len() as u32;
+                positions.push(at + Vec3::new(0.0, 0.05, 0.0));
+                positions.push(at + Vec3::new(dx, 0.0, 0.0));
+                // Both run so their direction is down.
+                triangles.push(if dx > 0.0 { [corner, n, n + 1] } else { [corner, n + 1, n] });
+            }
+        }
+        let source = Source::new(Scan::new(&positions, &triangles));
+        assert!(source.normals[1].z < 0.0 && source.normals[2].z < 0.0, "the corners look down");
+        let (above, _) = source.reading(Vec3::new(10.0, 0.03, 1.0), 5.0).expect("a reading");
+        assert!(above > 0.0, "a point over the face reads {above}, below it");
+        let (under, _) = source.reading(Vec3::new(10.0, 0.03, -1.0), 5.0).expect("a reading");
+        assert!(under < 0.0, "a point under the face reads {under}");
+    }
+
+    /// A bubble a few triangles across beside a large surface is taken out of a shell, its points
+    /// with it; the large surface stays whole.
+    #[test]
+    fn a_tiny_closed_bubble_beside_a_surface_is_dropped() {
+        let profile: Vec<[f64; 2]> = (0..=40).map(|k| [f64::from(k) - 20.0, 15.0 + f64::from(k % 2)]).collect();
+        let (mut positions, mut triangles) = revolved(&profile, 64, false);
+        let (big_points, big_triangles) = (positions.len(), triangles.len());
+        // A tetrahedron far off.
+        let base = positions.len() as u32;
+        positions.extend([Vec3::new(100.0, 0.0, 0.0), Vec3::new(101.0, 0.0, 0.0), Vec3::new(100.0, 1.0, 0.0), Vec3::new(100.0, 0.0, 1.0)]);
+        triangles.extend([[0, 2, 1], [0, 1, 3], [1, 2, 3], [2, 0, 3]].map(|t: [u32; 3]| t.map(|v| v + base)));
+        let (kept_points, kept) = without_small_pieces(positions, triangles);
+        assert_eq!((kept.len(), kept_points.len()), (big_triangles, big_points));
     }
 
     /// Two rims that meet at a vertex are two loops, each passing it once, and every edge is in one.
