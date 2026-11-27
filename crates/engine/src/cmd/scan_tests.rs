@@ -1810,6 +1810,23 @@ fn a_scan_command_computed_on_a_copy_brings_back_what_it_did_to_the_view() {
     assert!(s.scan_deviation.is_none(), "the map taken away on the copy");
 }
 
+/// The points a command selected on a copy of the session (an agent's or the control channel's,
+/// off the window thread) are selected here when it is adopted, as a scan's triangles are.
+#[test]
+fn a_cloud_selection_made_on_a_copy_is_brought_back() {
+    let points: Vec<Vec3> = (0..100).map(|i| Vec3::new(f64::from(i), 0.0, 0.0)).collect();
+    let mut s = session_with_a_cloud(&points);
+    let adopt = |s: &mut Session, p: Value| {
+        let prepared = s.scratch().compute_commands(&[("scan.select".into(), p)], None).unwrap();
+        s.accept_commands(prepared).unwrap();
+    };
+    adopt(&mut s, json!({"cloud": 1, "box": {"min": [0, -1, -1], "max": [9.5, 1, 1]}}));
+    let first = super::select::cloud::selected(&s, 1, 100).expect("the selection made on the copy");
+    assert_eq!(first.count, 10);
+    adopt(&mut s, json!({"cloud": 1, "none": true}));
+    assert!(super::select::cloud::selected(&s, 1, 100).is_none(), "the selection cleared on the copy");
+}
+
 /// Compare Bodies with a scan (an open mesh) among them says to measure it with Scan Deviation.
 #[test]
 fn compare_bodies_on_a_scan_points_to_scan_deviation() {

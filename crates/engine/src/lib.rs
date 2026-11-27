@@ -4249,6 +4249,9 @@ impl Session {
         let picked = |x: &Option<Arc<cmd::scan::select::ScanSelected>>| x.as_ref().map(|m| Arc::as_ptr(m).cast::<()>());
         let selection = moved(picked(&prepared.source.scan_selection), picked(&prepared.computed.scan_selection))
             .then(|| prepared.computed.scan_selection.take());
+        let chosen = |x: &Option<Arc<cmd::scan::select::cloud::CloudSelected>>| x.as_ref().map(|m| Arc::as_ptr(m).cast::<()>());
+        let cloud_selection = moved(chosen(&prepared.source.cloud_selection), chosen(&prepared.computed.cloud_selection))
+            .then(|| prepared.computed.cloud_selection.take());
         let base_cycle = (prepared.source.scan_base_cycle != prepared.computed.scan_base_cycle).then(|| prepared.computed.scan_base_cycle.take());
         // Bodies the computation itself hid (Combine Scans hides the passes it fused) stay hidden;
         // the live view's own hides are kept as they are now.
@@ -4282,6 +4285,9 @@ impl Session {
         }
         if let Some(selection) = selection {
             self.scan_selection = selection;
+        }
+        if let Some(cloud_selection) = cloud_selection {
+            self.cloud_selection = cloud_selection;
         }
         if let Some(base_cycle) = base_cycle {
             self.scan_base_cycle = base_cycle;
