@@ -83,7 +83,7 @@ pub(super) fn anchor_prism(s: &mut Session, sketch: u64, solid: &str, depth: f64
     // upper face does), else its lower face is where it is.
     // The plane's place stays where it is built now, to the last digit: the face it stands on (or
     // hangs from) as that prism's expression, and the little between them the scan left as a number.
-    let off = |by: f64| if by != 0.0 { format!(" + {by} mm") } else { String::new() };
+    let off = |by: f64| if by < 0.0 { format!(" - {} mm", -by) } else if by > 0.0 { format!(" + {by} mm") } else { String::new() };
     let along = match (nearest(low), nearest(high)) {
         (Some((at, face)), _) => format!("({face}){} + ({thick}) / 2", off(low - at)),
         (None, Some((at, face))) => format!("({face}){} - ({thick}) / 2", off(high - at)),
@@ -102,6 +102,78 @@ pub(super) fn anchor_prism(s: &mut Session, sketch: u64, solid: &str, depth: f64
     }
     s.refresh();
     // The same model: the planes are re-expressed, not moved.
+    let same = match (was, volume(s)) {
+        (Some(a), Some(b)) => (a - b).abs() <= 1e-6 * a.abs().max(1.0),
+        _ => false,
+    };
+    if !same || s.model.state().sketch(sketch).is_none() {
+        s.doc = before;
+        s.refresh();
+        return false;
+    }
+    true
+}
+
+/// Anchors the cut Cut It made (`extrude` its feature, its `sketch` just outside the hole's mouth,
+/// cut `positive` into the hole): the mouth's plane is the face it opens on, as that prism's
+/// expression, plus the gap the scan left; and where the cut's far end meets another face (a hole
+/// through the plate) its depth is the distance to that face, so a thicker plate is still cut
+/// through. A blind cut keeps its depth. `reach` is how far from a face the mouth may be and
+/// still open on it. Nothing changes when it does not apply or the model comes out other than it
+/// was. Whether it was anchored.
+pub(super) fn anchor_cut(s: &mut Session, sketch: u64, solid: &str, reach: f64, tolerance: f64) -> bool {
+    let Some(id) = s
+        .doc
+        .features
+        .iter()
+        .rev()
+        .find(|f| matches!(&f.kind, FeatureKind::Extrude { sketch: k, .. } if k.0 == sketch))
+        .map(|f| f.id)
+    else {
+        return false;
+    };
+    let Some(FeatureKind::Extrude { extent, .. }) = s.doc.feature(id).map(|f| f.kind.clone()) else { return false };
+    if !matches!(extent.direction, solidcraft_doc::Direction::Positive) || extent.distance2.is_some() || extent.taper.is_some() {
+        return false;
+    }
+    let Ok(depth) = s.doc.eval(&extent.distance, solidcraft_doc::expr::Kind::Length) else { return false };
+    let Some(FeatureKind::Sketch { plane: PlaneRef::Custom { plane: stored }, .. }) = s.doc.feature(sketch).map(|f| f.kind.clone()) else {
+        return false;
+    };
+    let normal = stored.x.cross(stored.y);
+    let Some(axis) = axis_of(normal) else { return false };
+    let sign = [normal.x, normal.y, normal.z][axis].signum();
+    let origin = [stored.origin.x, stored.origin.y, stored.origin.z];
+    let (mouth, end) = (origin[axis], origin[axis] + sign * depth);
+    let near = anchors(s, axis, id);
+    let nearest = |at: f64, within: f64| near.iter().filter(|(x, _)| (x - at).abs() <= within).min_by(|a, b| (a.0 - at).abs().total_cmp(&(b.0 - at).abs()));
+    let Some((face_at, face)) = nearest(mouth, reach) else { return false };
+    let off = |by: f64| if by < 0.0 { format!(" - {} mm", -by) } else if by > 0.0 { format!(" + {by} mm") } else { String::new() };
+    let plane_expr = format!("({face}){}", off(mouth - face_at));
+    // Out of the far face by as much as it was: through, and still through when the plate is thicker.
+    let far = nearest(end, tolerance.max(1e-6)).filter(|(x, _)| (x - face_at).abs() > tolerance);
+    let distance = match far {
+        Some((far_at, far_face)) => {
+            let far_expr = format!("({far_face}){}", off(end - far_at));
+            if sign > 0.0 { format!("({far_expr}) - ({plane_expr})") } else { format!("({plane_expr}) - ({far_expr})") }
+        }
+        None => extent.distance.to_string(),
+    };
+    let placed = PlaneRef::Placed {
+        origin: std::array::from_fn(|k| Expr::new(if k == axis { plane_expr.clone() } else { format!("{}", origin[k]) })),
+        x_dir: stored.x,
+        y_dir: stored.y,
+    };
+    let before = s.doc.clone();
+    let volume = |s: &Session| s.model.state().body(solid).and_then(|b| solidcraft_kernel::measure(&b.body).ok()).map(|m| m.volume);
+    let was = volume(s);
+    if let Some(FeatureKind::Sketch { plane, .. }) = s.doc_mut().feature_mut(sketch).map(|f| &mut f.kind) {
+        *plane = placed;
+    }
+    if let Some(FeatureKind::Extrude { extent, .. }) = s.doc_mut().feature_mut(id).map(|f| &mut f.kind) {
+        extent.distance = Expr::new(distance);
+    }
+    s.refresh();
     let same = match (was, volume(s)) {
         (Some(a), Some(b)) => (a - b).abs() <= 1e-6 * a.abs().max(1.0),
         _ => false,

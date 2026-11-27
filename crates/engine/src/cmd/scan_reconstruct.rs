@@ -2395,6 +2395,8 @@ pub(super) fn cut_it(s: &mut Session, p: &Value) -> Result<Value> {
         "solid.extrude",
         json!({"sketch": sketch, "distance": depth, "operation": "cut", "targets": [solid], "name": free_cut_name(s, index)}),
     )?;
+    // Opening on the face it opens on, and through to the face it comes out of: see `anchor`.
+    anchor::anchor_cut(s, sketch, &solid, 2.0 * margin + view.outcome().tolerance, view.outcome().tolerance);
     reply(ScanBuildResult {
         body: found.scan.clone(),
         sketch: Some(sketch),

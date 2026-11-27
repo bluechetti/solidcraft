@@ -1862,3 +1862,53 @@ fn a_boss_stands_on_the_plate_when_the_plate_is_made_thicker() {
     let expected = 80.0 * 50.0 * 10.0 + std::f64::consts::PI * 25.0 * 6.0;
     assert!((v - expected).abs() < 0.01 * expected, "{v} against {expected}");
 }
+
+/// A bracket (a plate 80 × 50 × 8, a round boss on it, a pocket and a through and a blind hole) rebuilt
+/// from its scan: Cut It's sketch is on a plane that is an expression of the prisms it opens on
+/// (not the number it was cut by), so the blind hole's mouth rises with the plate when the plate's
+/// thickness is raised, and the part as scanned is the same part.
+#[test]
+fn a_cut_opens_on_the_face_it_opened_on_when_the_plate_is_made_thicker() {
+    let mut part = Session::default();
+    run(&mut part, "solid.box", json!({"length": 80, "width": 50, "height": 8, "body_name": "Part"}));
+    run(&mut part, "solid.cylinder", json!({"diameter": 10, "height": 6, "base": [20, 25, 8], "operation": "join", "targets": ["Part"]}));
+    run(&mut part, "solid.box", json!({"length": 20, "width": 15, "height": 3, "corner": [45, 10, 5], "operation": "cut", "targets": ["Part"]}));
+    run(&mut part, "solid.cylinder", json!({"diameter": 6, "height": 10, "base": [70, 40, -1], "operation": "cut", "targets": ["Part"]}));
+    run(&mut part, "solid.cylinder", json!({"diameter": 4, "height": 6, "base": [10, 10, 3], "operation": "cut", "targets": ["Part"]}));
+    let (mut s, scan) = scanned_with_noise(&part, "Part", 0.0, "bracket-anchor");
+    let read = run(&mut s, "scan.reconstruct", json!({}));
+    let proposals = read["proposals"].as_array().unwrap().clone();
+    let built = format!("{scan} Reconstructed");
+    for c in &proposals {
+        run(&mut s, c["command"].as_str().unwrap(), c["params"].clone());
+    }
+    // What the prisms leave of the scan unexplained is built piece by piece: the holes.
+    run(&mut s, "scan.reconstruct_rest", json!({}));
+    let anchored_cut = |s: &Session| {
+        s.doc.features.iter().find(|f| f.name.starts_with("Cut It")).and_then(|f| match &f.kind {
+            solidcraft_doc::FeatureKind::Extrude { sketch, .. } => match s.doc.feature(sketch.0).map(|k| &k.kind) {
+                Some(solidcraft_doc::FeatureKind::Sketch { plane: solidcraft_doc::PlaneRef::Placed { origin, .. }, .. }) => {
+                    Some(origin.iter().map(|e| s.doc.eval(e, solidcraft_doc::expr::Kind::Length).unwrap()).collect::<Vec<f64>>())
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+    };
+    let at = anchored_cut(&s).expect("the cut's sketch is on an expressed plane");
+    let before = volume(&s, &built);
+    // The plate's thickness: the parameter of the first prism, the one the others stand on.
+    let thick = s
+        .doc
+        .features
+        .iter()
+        .find(|f| matches!(f.kind, solidcraft_doc::FeatureKind::Extrude { .. }))
+        .and_then(|f| f.param_names.first().cloned())
+        .unwrap();
+    let value = s.doc.eval(&thick, solidcraft_doc::expr::Kind::Length).unwrap();
+    run(&mut s, "parameters.change", json!({"name": thick, "expression": format!("{} mm", value + 1.0)}));
+    let moved = anchored_cut(&s).unwrap();
+    let rise: Vec<f64> = moved.iter().zip(&at).map(|(a, b)| a - b).collect();
+    assert!(rise.iter().any(|d| (d - 1.0).abs() < 1e-9) && rise.iter().all(|d| d.abs() < 1e-9 || (d - 1.0).abs() < 1e-9), "the mouth rose with the plate: {rise:?}");
+    assert!(volume(&s, &built) > before, "a thicker plate holds more");
+}
