@@ -52,6 +52,24 @@ fn the_tree_finds_the_nearest_point_as_a_search_of_every_triangle_does() {
         assert!((closest_on_triangle(p, a, b, c).dist(p) - d).abs() < 1e-12);
     }
     assert!(TriangleTree::new(&Mesh::default()).nearest(Vec3::ZERO).is_none());
+    // The triangles within a radius are those a search of every triangle finds, whatever the radius.
+    for radius in [0.0, 0.5, 4.0, 15.0, 1e4] {
+        for _ in 0..40 {
+            let p = Vec3::new(rnd() * 140.0 - 20.0, rnd() * 90.0 - 20.0, rnd() * 60.0 - 20.0);
+            let mut found = Vec::new();
+            tree.within(p, radius, &mut found);
+            found.sort_unstable();
+            let brute: Vec<u32> = (0..m.triangles.len() as u32)
+                .filter(|&i| m.tri(&m.triangles[i as usize]).is_some_and(|[a, b, c]| closest_on_triangle(p, a, b, c).dist(p) <= radius))
+                .collect();
+            assert_eq!(found, brute, "radius {radius} of {p:?}");
+        }
+    }
+    let mut none = Vec::new();
+    tree.within(Vec3::ZERO, -1.0, &mut none);
+    tree.within(Vec3::new(f64::NAN, 0.0, 0.0), 10.0, &mut none);
+    TriangleTree::new(&Mesh::default()).within(Vec3::ZERO, 10.0, &mut none);
+    assert!(none.is_empty());
 }
 
 /// A tree reading its corners from the mesh it was built over finds what one with its own copy

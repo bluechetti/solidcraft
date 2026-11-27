@@ -784,12 +784,23 @@ impl Topology {
         // The triangles under the curve, from places a third of a triangle side apart.
         let step = (self.edge / 3.0).max(length / 200_000.0);
         let mut under = vec![false; self.corners().len()];
+        let (thick, mut near) = (self.edge / 2.0, Vec::new());
         for w in curve.windows(2) {
             let parts = (w[0].dist(w[1]) / step).ceil().max(1.0) as usize;
             for k in 0..parts {
                 let p = w[0] + (w[1] - w[0]) * (k as f64 / parts as f64);
                 match self.nearest(p) {
-                    Some((t, d)) if d <= reach => under[t] = true,
+                    Some((t, d)) if d <= reach => {
+                        under[t] = true;
+                        // Every layer of the scan close to the curve, not only the nearest: the
+                        // nearest flips between layers lying within a triangle of each other, and a
+                        // flood that finds a layer without the wall goes round it.
+                        near.clear();
+                        self.tree.within(p, thick, &mut near);
+                        for &n in &near {
+                            under[n as usize] = true;
+                        }
+                    }
                     _ => return Err(InsideProblem::OffTheScan),
                 }
             }
@@ -1470,6 +1481,62 @@ mod tests {
         let small = CloudIndex::new(few_points);
         assert_eq!(small.points_near(5, |i| few_points[i], &few[..1], 100.0), points_near(few_points, &few[..1], 100.0));
         assert_eq!(small.points_near(points.len(), at, &few[..1], 3.0), points_near(&points, &few[..1], 3.0));
+    }
+
+    /// A scan of two layers a few tenths of a millimetre apart that meet at the rim (a scan made of
+    /// several passes): a curve drawn between them has the nearest layer flip along it, and a wall
+    /// of only the nearest triangles leaves a layer without one, so the flood goes round it by the
+    /// rim and takes the whole scan. The wall is every triangle close to the curve.
+    #[test]
+    fn a_curve_between_two_close_layers_walls_both_of_them() {
+        let n = 30usize;
+        let at = |i: usize, j: usize| i * (n + 1) + j;
+        let mut positions: Vec<Vec3> = (0..=n).flat_map(|i| (0..=n).map(move |j| Vec3::new(i as f64, j as f64, 0.0))).collect();
+        // The upper layer: its own points inside, the lower layer's on the rim.
+        let upper = |i: usize, j: usize, positions: &mut Vec<Vec3>, made: &mut std::collections::HashMap<(usize, usize), u32>| -> u32 {
+            if i == 0 || j == 0 || i == n || j == n {
+                return at(i, j) as u32;
+            }
+            *made.entry((i, j)).or_insert_with(|| {
+                positions.push(Vec3::new(i as f64, j as f64, 0.4));
+                (positions.len() - 1) as u32
+            })
+        };
+        let mut triangles: Vec<[u32; 3]> = Vec::new();
+        let mut made = std::collections::HashMap::new();
+        for i in 0..n {
+            for j in 0..n {
+                let low = [at(i, j) as u32, at(i + 1, j) as u32, at(i + 1, j + 1) as u32, at(i, j + 1) as u32];
+                triangles.push([low[0], low[1], low[2]]);
+                triangles.push([low[0], low[2], low[3]]);
+                let up = [
+                    upper(i, j, &mut positions, &mut made),
+                    upper(i + 1, j, &mut positions, &mut made),
+                    upper(i + 1, j + 1, &mut positions, &mut made),
+                    upper(i, j + 1, &mut positions, &mut made),
+                ];
+                triangles.push([up[0], up[2], up[1]]);
+                triangles.push([up[0], up[3], up[2]]);
+            }
+        }
+        let scan = Scan::new(&positions, &triangles);
+        let topology = Topology::new(&scan);
+        let (centre, radius) = (n as f64 / 2.0 + 0.3, 8.0);
+        let circle: Vec<Vec3> = (0..=64)
+            .map(|k| {
+                let a = std::f64::consts::TAU * (k % 64) as f64 / 64.0;
+                Vec3::new(centre + radius * a.cos(), centre + radius * a.sin(), 0.2)
+            })
+            .collect();
+        let taken = topology.inside_curve(&circle, 1.0).unwrap();
+        let count = taken.iter().filter(|t| **t).count();
+        // The disc on both layers: about 2 x 201 / 0.5 triangles.
+        assert!((600..=1000).contains(&count), "{count} of {} triangles", triangles.len());
+        for (t, on) in taken.iter().enumerate() {
+            let m = topology.middle(t);
+            let d = ((m.x - centre).powi(2) + (m.y - centre).powi(2)).sqrt();
+            assert!(!*on || d <= radius + 2.0, "triangle {t} at {d} from the middle");
+        }
     }
 
     /// The points of a cloud inside a closed curve drawn on it are those inside it and those reached

@@ -422,6 +422,34 @@ impl TriangleTree {
         hit.map(|i| (best2.sqrt(), i))
     }
 
+    /// The index in the mesh of every triangle with a point within `radius` of `p`, added to `out`.
+    pub fn within(&self, p: Vec3, radius: f64, out: &mut Vec<u32>) {
+        if !p.is_finite() || !(radius >= 0.0) || self.ids.is_empty() {
+            return;
+        }
+        let limit = radius * radius;
+        let mut stack: Vec<u32> = vec![0];
+        while let Some(ni) = stack.pop() {
+            let Some(node) = self.nodes.get(ni as usize) else { continue };
+            if box_dist2(&node.bbox, p) > limit {
+                continue;
+            }
+            if node.leaf {
+                for k in node.a..node.b {
+                    let Some([a, b, c]) = self.tri(k as usize) else { continue };
+                    if (closest_on_triangle(p, a, b, c) - p).len2() <= limit
+                        && let Some(&id) = self.ids.get(k as usize)
+                    {
+                        out.push(id);
+                    }
+                }
+            } else {
+                stack.push(node.a);
+                stack.push(node.b);
+            }
+        }
+    }
+
     /// Every triangle (by its place in the tree) whose box overlaps `bx` on the two axes other
     /// than `axis`: the triangles a line along `axis` through `bx` can cross.
     fn column(&self, bx: &Aabb3, axis: usize) -> Vec<usize> {
