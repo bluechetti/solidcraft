@@ -122,7 +122,7 @@ pub fn fit_points(points: &[Vec3], normals: Option<&[Vec3]>, kind: Kind, toleran
         }
     }
     let on: Vec<Vec3> = wanted.iter().filter(|&&i| keep[i]).map(|&i| points[i]).collect();
-    if on.len() < FEWEST {
+    if on.len() < FEWEST || flat_round(&shape, &on) {
         return Err(FitError::NoFit);
     }
     Ok(summarize(shape, on, wanted.len()))
@@ -176,6 +176,16 @@ pub fn fit_region_robust(scan: &Scan, region: &[usize], kind: Kind, tolerance: f
     let mut fitted = super::summarize(scan, inside, shape)?;
     fitted.left_out = left_out;
     Ok(fitted)
+}
+
+/// Whether `shape` is a "cylinder" (or sphere, torus, cone) far wider than the points it was fitted
+/// to, more than 20 times as wide as they are across: a flat face curved only by noise, as the mesh
+/// fits refuse ([`super::flat_cylinder`]).
+fn flat_round(shape: &Shape, on: &[Vec3]) -> bool {
+    let Some(&first) = on.first() else { return false };
+    let Some(radius) = super::curve_radius(shape, first) else { return false };
+    let (lo, hi) = on.iter().fold((first, first), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
+    radius > 20.0 * (hi - lo).len()
 }
 
 /// The shape of `kind` fitted to the points, each facing as its direction says.
@@ -379,6 +389,30 @@ mod tests {
     #[test]
     fn a_plane_is_not_a_cylinder() {
         assert_eq!(fit_points(&plane(20, 0.0), None, Kind::Cylinder, None), Err(FitError::NoFit));
+    }
+
+    /// A flat face with a little noise is a plane, not a cylinder of a radius far wider than the
+    /// face: the solver finds some axis in the noise, and the fit is refused as the mesh fits are.
+    /// A real cylinder of the same size, and a plane, are not.
+    #[test]
+    fn a_flat_face_is_not_a_cylinder_of_a_huge_radius() {
+        for noise in [0.0, 0.02, 0.1] {
+            let flat = plane(30, noise);
+            assert_eq!(fit_points(&flat, None, Kind::Cylinder, None), Err(FitError::NoFit), "noise {noise}");
+            assert_eq!(fit_points(&flat, None, Kind::Sphere, None), Err(FitError::NoFit), "noise {noise}");
+            assert!(fit_points(&flat, None, Kind::Plane, None).is_ok());
+        }
+        // A shallow arc is a cylinder of a radius within 20 times its width: kept.
+        let arc = cylinder(30, 60, 90f64.to_radians(), 0.0);
+        assert!(fit_points(&arc, None, Kind::Cylinder, None).is_ok());
+        // A radius over 20 times what it was fitted to is not: a strip 40 long of radius 10000.
+        let strip: Vec<Vec3> = (0..40)
+            .flat_map(|j| (0..40).map(move |i| {
+                let a = f64::from(i) * 0.1 / 10_000.0;
+                Vec3::new(10_000.0 * a.sin(), f64::from(j), 10_000.0 * (1.0 - a.cos()))
+            }))
+            .collect();
+        assert_eq!(fit_points(&strip, None, Kind::Cylinder, None), Err(FitError::NoFit));
     }
 
     #[test]

@@ -454,22 +454,28 @@ fn sphere_step(c: &(Vec3, f64), step: &[f64; 4]) -> Option<(Vec3, f64)> {
 /// `reach` across: a flat face, curved only by noise. Asked while the region grows too, so that a
 /// flat face is refused before the region spreads over it. A cone or a torus as wide is as flat.
 fn flat_cylinder(scan: &Scan, region: &[usize], shape: &Shape, reach: f64) -> bool {
-    let radius = match *shape {
-        Shape::Cylinder { radius, .. } | Shape::Sphere { radius, .. } => radius,
-        Shape::Torus { minor, .. } => minor,
-        // A cone's curve across it at the region: its radius there over the cosine.
-        Shape::Cone { apex, axis, half_angle } => {
-            let Some(at) = region.first().and_then(|&t| scan.corners(t)) else { return false };
-            let v = at[0] - apex;
-            (v - axis * v.dot(axis)).len() / half_angle.cos().max(1e-9)
-        }
-        Shape::Plane { .. } => return false,
-    };
+    let Some(at) = region.first().and_then(|&t| scan.corners(t)) else { return false };
+    let Some(radius) = curve_radius(shape, at[0]) else { return false };
     let mut corners = region.iter().filter_map(|&t| scan.corners(t)).flatten();
     let Some(first) = corners.next() else { return false };
     let (lo, hi) = corners.fold((first, first), |(lo, hi), p| (lo.min(p), hi.max(p)));
     let across = (hi - lo).len();
     across >= reach && radius > 20.0 * across
+}
+
+/// The radius a round shape curves by at `at`, a point of the region it was fitted to: a
+/// cylinder's or sphere's, a torus's tube, a cone's radius there over the cosine of its half
+/// angle. `None` for a plane, which does not curve.
+fn curve_radius(shape: &Shape, at: Vec3) -> Option<f64> {
+    match *shape {
+        Shape::Cylinder { radius, .. } | Shape::Sphere { radius, .. } => Some(radius),
+        Shape::Torus { minor, .. } => Some(minor),
+        Shape::Cone { apex, axis, half_angle } => {
+            let v = at - apex;
+            Some((v - axis * v.dot(axis)).len() / half_angle.cos().max(1e-9))
+        }
+        Shape::Plane { .. } => None,
+    }
 }
 
 /// Neighbours of a fit's start whose directions differ by more than this meet at a crease.
