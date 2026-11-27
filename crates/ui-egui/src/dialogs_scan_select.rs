@@ -33,6 +33,9 @@ const LASSO: usize = 2;
 const REGION: usize = 3;
 const SHAPE: usize = 4;
 const INSIDE: usize = 5;
+/// The tools that work on a point cloud's points, in the order its dialog offers them (Shape
+/// needs Find All's shapes, which a cloud has none of).
+const CLOUD_TOOLS: [usize; 5] = [BRUSH, POLYGON, LASSO, REGION, INSIDE];
 
 /// What the tools do to what is selected.
 const MODES: [&str; 3] = ["ui.scan_select_replace", "ui.scan_select_add", "ui.scan_select_remove"];
@@ -318,8 +321,9 @@ fn polygon_buttons(ui: &mut egui::Ui, k: &mut ScanSelect) {
 /// take all of it, none, the other points, or a ring of points more or fewer.
 fn cloud_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect, id: u64, points: usize) -> bool {
     let (units, decimals) = (app.session.doc.units.clone(), app.preferences.length_decimals);
-    // The tools that work on points: Brush, Polygon, Lasso and Region, the first four of the list.
-    k.tool = k.tool.min(REGION);
+    if !CLOUD_TOOLS.contains(&k.tool) {
+        k.tool = REGION;
+    }
     if k.radius <= 0.0 {
         let diagonal = app.session.doc.point_clouds.iter().find(|c| c.id == id).and_then(|c| c.world_corners()).map_or(0.0, |c| {
             let (lo, hi) = c.iter().fold((c[0], c[0]), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
@@ -327,9 +331,11 @@ fn cloud_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect, id: u64, po
         });
         k.radius = if diagonal > 0.0 { (diagonal / 100.0).max(1e-3) } else { 2.0 };
     }
-    let tools: Vec<&str> = TOOLS[..=REGION].iter().map(|t| tr(t)).collect();
+    let tools: Vec<&str> = CLOUD_TOOLS.iter().map(|t| tr(TOOLS[*t])).collect();
     let before = k.tool;
-    choice_row(ui, tr("ui.scan_select_tool"), "scan_select_tool", &mut k.tool, &tools);
+    let mut shown = CLOUD_TOOLS.iter().position(|t| *t == k.tool).unwrap_or(0);
+    choice_row(ui, tr("ui.scan_select_tool"), "scan_select_tool", &mut shown, &tools);
+    k.tool = CLOUD_TOOLS.get(shown).copied().unwrap_or(BRUSH);
     if k.tool != before {
         k.corners.clear();
     }
@@ -340,7 +346,7 @@ fn cloud_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect, id: u64, po
         k.radius = k.radius.clamp(1e-3, 1e4);
     } else if k.tool == REGION {
         form_row(ui, tr("ui.scan_select_angle"), |ui| ui_kit::number_field(ui, &mut k.angle, 1.0..=90.0, 0.5, "°"));
-    } else {
+    } else if k.tool != INSIDE {
         form_row(ui, tr("ui.scan_select_through"), |ui| check(ui, &mut k.through));
     }
     polygon_buttons(ui, k);
@@ -404,6 +410,7 @@ fn cloud_rows(app: &SolveApp, ui: &mut egui::Ui, k: &mut ScanSelect, id: u64, po
         POLYGON => "ui.scan_select_hint_polygon",
         LASSO => "ui.scan_select_hint_lasso",
         REGION => "ui.scan_select_hint_region_cloud",
+        INSIDE => "ui.scan_select_hint_inside_cloud",
         _ => "ui.scan_select_hint_cloud",
     };
     ui_kit::text(ui, tr(hint), ui_kit::Text::Hint("scan_select_hint"));
@@ -505,7 +512,15 @@ pub(crate) fn click(app: &mut SolveApp, proj: &crate::viewport::Proj, at: egui::
             let curve = curve.filter(|(sketch, id)| state.sketch(*sketch).is_some_and(|ss| ss.sketch.wire_index(id).is_some()));
             drop(state);
             if let Some((sketch, id)) = curve {
-                run(app, "scan.select_inside_curve", json!({"sketch": sketch, "curves": [id], "mode": mode_now(&k)}));
+                let mut p = json!({"sketch": sketch, "curves": [id], "mode": mode_now(&k)});
+                // With no scan mesh in the design the curve takes a cloud's points.
+                if let Some((cloud, _, _)) = cloud_target(app, &k) {
+                    p["cloud"] = json!(cloud);
+                    if let Some(d) = dialog(app) {
+                        d.cloud = Some(cloud);
+                    }
+                }
+                run(app, "scan.select_inside_curve", p);
             }
         }
         _ => {

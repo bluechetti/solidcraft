@@ -54,7 +54,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         .icon("boundary_fill")
         .contract(&INSIDE_CONTRACT)
         .output(output_schema_for::<ScanSelectResult>)
-        .params("body?; sketch?: the 3D sketch (default the last `Scan Curves`); curves?: [ids end to end] (default its last curve), closed; mode?: replace|add|remove (default replace): the triangles inside the curve drawn on the scan, reached across the scan without crossing it, so the far side of a part is not taken. A view, not an undo step → body, triangles, area, of, changed"),
+        .params("body?; cloud?: a point cloud's name or id (select its points instead: those inside the curve and those reached from them from point to point without crossing it); sketch?: the 3D sketch (default the last `Scan Curves`); curves?: [ids end to end] (default its last curve), closed; mode?: replace|add|remove (default replace): the triangles inside the curve drawn on the scan, reached across the scan without crossing it, so the far side of a part is not taken. A view, not an undo step → body, triangles, area, of, changed, points? (a cloud's)"),
     CommandSpec::new("scan.keep_selection", "Keep Selection", crate::checked!("scan.keep_selection", keep))
         .icon("checkpoint")
         .contract(&KEEP_CONTRACT)
@@ -558,6 +558,14 @@ fn shape_flags(s: &Session, scan: &str, v: &Value, topology: &Topology, cmd: &st
 
 pub(super) fn select_inside(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "scan.select_inside_curve";
+    // A point cloud's points: the cloud's selection takes the curve as one of its ways.
+    if p.get("cloud").is_some_and(|v| !v.is_null()) {
+        if p.get("body").is_some_and(|v| !v.is_null()) {
+            return Err(bad(cmd, "give `body` (a scan) or `cloud` (a point cloud), not both"));
+        }
+        let way = json!({"sketch": p.get("sketch"), "curves": p.get("curves")});
+        return cloud::select(s, &json!({"cloud": p["cloud"], "mode": p.get("mode"), "inside": way}), cmd);
+    }
     let scan = scan_name(s, p, cmd)?;
     let mode = mode(p, cmd)?;
     let (_, _, path) = super::section::along_path(s, p.get("sketch"), &string_list_or_default(p, "curves"), cmd)?;

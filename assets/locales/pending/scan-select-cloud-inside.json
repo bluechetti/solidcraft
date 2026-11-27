@@ -1,0 +1,26 @@
+{
+  "en": {
+    "ui.scan_select_hint_inside_cloud": "Click a closed 3D curve drawn on the points: the points inside it are selected, never the far side of the part."
+  },
+  "de": {
+    "ui.scan_select_hint_inside_cloud": "Klicken Sie eine auf den Punkten gezeichnete geschlossene 3D-Kurve an: Die Punkte innerhalb werden ausgewählt, nie die Rückseite des Teils."
+  },
+  "ja": {
+    "ui.scan_select_hint_inside_cloud": "点の上に描いた閉じた 3D 曲線をクリックすると、その内側の点が選択されます。部品の裏側は選ばれません。"
+  },
+  "ko": {
+    "ui.scan_select_hint_inside_cloud": "점 위에 그린 닫힌 3D 곡선을 클릭하면 그 안쪽의 점이 선택됩니다. 부품의 뒷면은 선택되지 않습니다."
+  },
+  "zh": {
+    "ui.scan_select_hint_inside_cloud": "单击在点上绘制的闭合 3D 曲线：选择其内部的点，绝不选到零件背面。"
+  },
+  "ar": {
+    "ui.scan_select_hint_inside_cloud": "انقر منحنى مغلقًا ثلاثي الأبعاد مرسومًا على النقاط: تُحدد النقاط التي بداخله، ولا يُؤخذ الجانب الخلفي للقطعة أبدًا."
+  },
+  "he": {
+    "ui.scan_select_hint_inside_cloud": "לחצו על עקומה תלת-ממדית סגורה שצוירה על הנקודות: הנקודות שבתוכה נבחרות, לעולם לא הצד האחורי של החלק."
+  },
+  "vi": {
+    "ui.scan_select_hint_inside_cloud": "Bấm một đường cong 3D khép kín vẽ trên các điểm: các điểm bên trong được chọn, không bao giờ lấy mặt sau của chi tiết."
+  }
+}

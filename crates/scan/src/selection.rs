@@ -101,6 +101,10 @@ pub enum InsideProblem {
     OffTheScan,
     /// No triangle of the scan is inside it.
     Nothing,
+    /// The curve is not on the point cloud: no point lies near enough along it.
+    OffTheCloud,
+    /// No point of the cloud is inside it (or the cloud has no spacing to read it by).
+    NoPointInside,
 }
 
 impl std::fmt::Display for InsideProblem {
@@ -109,6 +113,8 @@ impl std::fmt::Display for InsideProblem {
             InsideProblem::Open => "the curve is open: it must come back round to where it starts",
             InsideProblem::OffTheScan => "the curve is not on the scan: draw it on the scan",
             InsideProblem::Nothing => "no triangle of the scan is inside the curve",
+            InsideProblem::OffTheCloud => "the curve is not on the point cloud: draw it on the cloud",
+            InsideProblem::NoPointInside => "no point of the cloud is inside the curve",
         })
     }
 }
@@ -172,6 +178,45 @@ fn smoothed(places: &[Vec3], spacing: f64, width: f64) -> Vec<Vec3> {
     let once = blur(places);
     let twice = blur(&once);
     once.iter().zip(&twice).map(|(a, b)| *a * 2.0 - *b).collect()
+}
+
+/// A closed curve and the polygon it makes on the plane it lies most nearly in (Newell's normal).
+struct Outline {
+    /// The curve's length.
+    length: f64,
+    middle: Vec3,
+    u: Vec3,
+    v: Vec3,
+    polygon: Vec<[f64; 2]>,
+}
+
+impl Outline {
+    /// The outline of `curve`, which must come back to where it starts.
+    fn of(curve: &[Vec3]) -> Result<Outline, InsideProblem> {
+        let length: f64 = curve.windows(2).map(|w| w[0].dist(w[1])).sum();
+        let closed = curve.len() >= 4 && curve.first().zip(curve.last()).is_some_and(|(a, b)| a.dist(*b) <= 1e-6 * length.max(1.0));
+        if !closed {
+            return Err(InsideProblem::Open);
+        }
+        let ring = &curve[..curve.len() - 1];
+        let middle = ring.iter().fold(Vec3::ZERO, |s, p| s + *p) / ring.len() as f64;
+        let normal = (0..ring.len()).fold(Vec3::ZERO, |s, i| s + (ring[i] - middle).cross(ring[(i + 1) % ring.len()] - middle));
+        let n = normal.normalized().ok_or(InsideProblem::Nothing)?;
+        let u = n.cross(if n.x.abs() < 0.9 { Vec3::X } else { Vec3::Y }).normalized().ok_or(InsideProblem::Nothing)?;
+        let v = n.cross(u);
+        let mut outline = Outline { length, middle, u, v, polygon: Vec::new() };
+        outline.polygon = ring.iter().map(|p| outline.flat(*p)).collect();
+        Ok(outline)
+    }
+
+    fn flat(&self, p: Vec3) -> [f64; 2] {
+        [(p - self.middle).dot(self.u), (p - self.middle).dot(self.v)]
+    }
+
+    /// Whether `p`, seen along the plane's normal, is inside the curve.
+    fn contains(&self, p: Vec3) -> bool {
+        inside_polygon(self.flat(p), &self.polygon)
+    }
 }
 
 /// Whether `q` is inside the closed polygon `ring` (even-odd).
@@ -734,20 +779,8 @@ impl Topology {
     /// inside it, and those reached from them across the scan without crossing it, so the far
     /// side of a part is not taken. Inside is judged on the plane the curve lies most nearly in.
     pub fn inside_curve(&self, curve: &[Vec3], reach: f64) -> Result<Vec<bool>, InsideProblem> {
-        let length: f64 = curve.windows(2).map(|w| w[0].dist(w[1])).sum();
-        let closed = curve.len() >= 4 && curve.first().zip(curve.last()).is_some_and(|(a, b)| a.dist(*b) <= 1e-6 * length.max(1.0));
-        if !closed {
-            return Err(InsideProblem::Open);
-        }
-        let ring = &curve[..curve.len() - 1];
-        // The curve's plane: its middle and its normal (Newell's), the polygon on it.
-        let middle = ring.iter().fold(Vec3::ZERO, |s, p| s + *p) / ring.len() as f64;
-        let normal = (0..ring.len()).fold(Vec3::ZERO, |s, i| s + (ring[i] - middle).cross(ring[(i + 1) % ring.len()] - middle));
-        let n = normal.normalized().ok_or(InsideProblem::Nothing)?;
-        let u = n.cross(if n.x.abs() < 0.9 { Vec3::X } else { Vec3::Y }).normalized().ok_or(InsideProblem::Nothing)?;
-        let v = n.cross(u);
-        let flat = |p: Vec3| [(p - middle).dot(u), (p - middle).dot(v)];
-        let polygon: Vec<[f64; 2]> = ring.iter().map(|p| flat(*p)).collect();
+        let outline = Outline::of(curve)?;
+        let length = outline.length;
         // The triangles under the curve, from places a third of a triangle side apart.
         let step = (self.edge / 3.0).max(length / 200_000.0);
         let mut under = vec![false; self.corners().len()];
@@ -761,7 +794,7 @@ impl Topology {
                 }
             }
         }
-        let inside = |t: usize| inside_polygon(flat(self.middle(t)), &polygon);
+        let inside = |t: usize| outline.contains(self.middle(t));
         let seeds: Vec<usize> = (0..self.corners().len())
             .filter(|&t| under[t])
             .flat_map(|t| self.neighbours(t).collect::<Vec<_>>())
@@ -1325,6 +1358,72 @@ pub fn points_region_in(points: &[Vec3], index: &CloudIndex, seed: Vec3, angle: 
     taken
 }
 
+/// The points of a cloud inside the closed `curve` drawn on it: those inside it (judged on the
+/// plane the curve lies most nearly in) and those reached from them from point to point (within
+/// a hop, as [`points_region_in`] reaches) without crossing the curve, so the far side of a part is
+/// not taken. The curve is a wall of the points along it, as wide as a hop, so no hop crosses it.
+/// `points` are the places `index` was made of.
+pub fn points_inside_curve(points: &[Vec3], index: &CloudIndex, curve: &[Vec3]) -> Result<Vec<bool>, InsideProblem> {
+    let outline = Outline::of(curve)?;
+    if points.len() <= FACING_NEIGHBOURS || !index.is_of(points) || !(index.spacing > 0.0) || index.grid.is_empty() {
+        return Err(InsideProblem::NoPointInside);
+    }
+    let grid = crate::poisson::PointGrid::over(points, &index.grid);
+    let hop = (HOP_SPACINGS * index.spacing).max(1.1 * index.scale);
+    // Places along the curve half a spacing apart: a hop that crosses the curve starts or ends
+    // within half a hop (and half a place's distance) of one of them.
+    let step = (index.spacing / 2.0).max(outline.length / 200_000.0);
+    let wall = hop / 2.0 + step / 2.0;
+    let reach = wall + hop;
+    let mut barrier = vec![false; points.len()];
+    let mut near = vec![false; points.len()];
+    let mut candidates: Vec<u32> = Vec::new();
+    for w in curve.windows(2) {
+        let parts = (w[0].dist(w[1]) / step).ceil().max(1.0) as usize;
+        for k in 0..parts {
+            let place = w[0] + (w[1] - w[0]) * (k as f64 / parts as f64);
+            let mut on_cloud = false;
+            grid.within(place, reach, |q, d| {
+                on_cloud = true;
+                if d <= wall * wall {
+                    barrier[q as usize] = true;
+                }
+                if !near[q as usize] {
+                    near[q as usize] = true;
+                    candidates.push(q);
+                }
+            });
+            if !on_cloud {
+                return Err(InsideProblem::OffTheCloud);
+            }
+        }
+    }
+    // From the points inside the curve beside its wall, hop by hop without crossing the wall.
+    let mut taken = vec![false; points.len()];
+    let mut stack: Vec<u32> = candidates.into_iter().filter(|&q| !barrier[q as usize] && outline.contains(points[q as usize])).collect();
+    for &q in &stack {
+        taken[q as usize] = true;
+    }
+    while let Some(q) = stack.pop() {
+        grid.within(points[q as usize], hop, |n, _| {
+            if !barrier[n as usize] && !taken[n as usize] {
+                taken[n as usize] = true;
+                stack.push(n);
+            }
+        });
+    }
+    // The wall's own points inside the curve are inside it too.
+    for (q, on_wall) in barrier.iter().enumerate() {
+        if *on_wall && outline.contains(points[q]) {
+            taken[q] = true;
+        }
+    }
+    if !taken.iter().any(|&t| t) {
+        return Err(InsideProblem::NoPointInside);
+    }
+    Ok(taken)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1371,6 +1470,50 @@ mod tests {
         let small = CloudIndex::new(few_points);
         assert_eq!(small.points_near(5, |i| few_points[i], &few[..1], 100.0), points_near(few_points, &few[..1], 100.0));
         assert_eq!(small.points_near(points.len(), at, &few[..1], 3.0), points_near(&points, &few[..1], 3.0));
+    }
+
+    /// The points of a cloud inside a closed curve drawn on it are those inside it and those reached
+    /// from them without crossing it: on a plate with a ring drawn on it the disc and not the rest,
+    /// and not a second plate a gap below it.
+    #[test]
+    fn the_points_inside_a_curve_are_the_ones_it_surrounds() {
+        let mut points = Vec::new();
+        for z in [0.0, -30.0] {
+            for i in 0..80 {
+                for j in 0..80 {
+                    points.push(Vec3::new(f64::from(i), f64::from(j), z));
+                }
+            }
+        }
+        let index = CloudIndex::new(&points);
+        let ring = |c: [f64; 2], r: f64, parts: usize| -> Vec<Vec3> {
+            (0..=parts)
+                .map(|k| {
+                    let a = std::f64::consts::TAU * (k % parts) as f64 / parts as f64;
+                    Vec3::new(c[0] + r * a.cos(), c[1] + r * a.sin(), 0.0)
+                })
+                .collect()
+        };
+        let taken = points_inside_curve(&points, &index, &ring([40.0, 40.0], 15.0, 200)).unwrap();
+        let (mut inside, mut wrong) = (0, 0);
+        for (p, t) in points.iter().zip(&taken) {
+            let d = ((p.x - 40.0).powi(2) + (p.y - 40.0).powi(2)).sqrt();
+            if *t {
+                inside += 1;
+                // Only the top plate, and inside the curve.
+                wrong += usize::from(p.z != 0.0 || d > 15.0 + 1.0);
+            } else {
+                // What is well inside is taken.
+                wrong += usize::from(p.z == 0.0 && d < 15.0 - 1.0);
+            }
+        }
+        assert_eq!(wrong, 0);
+        assert!((600..=800).contains(&inside), "{inside} points inside a disc of about 707");
+        // Open, off the cloud, and a cloud too small to read.
+        assert_eq!(points_inside_curve(&points, &index, &ring([40.0, 40.0], 15.0, 200)[..100]), Err(InsideProblem::Open));
+        assert_eq!(points_inside_curve(&points, &index, &ring([500.0, 500.0], 15.0, 200)), Err(InsideProblem::OffTheCloud));
+        let few = [Vec3::ZERO, Vec3::X, Vec3::Y];
+        assert_eq!(points_inside_curve(&few, &CloudIndex::new(&few), &ring([0.0, 0.0], 1.0, 20)), Err(InsideProblem::NoPointInside));
     }
 
     /// A plate with a wall standing on its edge, and another plate above it that touches

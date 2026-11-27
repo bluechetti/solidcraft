@@ -1,4 +1,5 @@
-//! `scan.select` on a point cloud (`cloud`): the points selected by a brush, a box, all, none or
+//! `scan.select` on a point cloud (`cloud`): the points selected by a brush, a polygon, a region,
+//! the inside of a closed curve (`scan.select_inside_curve` with `cloud`), a box, all, none or
 //! the inverse or the selection grown or shrunk, held by the session as a scan's selected
 //! triangles are: a view of the cloud, not part of the design and not an undo step. The fits
 //! take it (`scan.fit_*` with the same `cloud` and no `point`). It follows the cloud while its
@@ -64,7 +65,7 @@ pub fn selected(s: &Session, id: u64, points: usize) -> Option<Arc<CloudSelected
 }
 
 pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
-    let ways = ["brush", "polygon", "region", "box", "saved", "all", "none", "invert", "grow", "shrink"];
+    let ways = ["brush", "polygon", "region", "inside", "box", "saved", "all", "none", "invert", "grow", "shrink"];
     for other in ["shape", "triangles", "unexplained", "body"] {
         if p.get(other).is_some_and(|v| !v.is_null() && *v != json!(false)) {
             return Err(bad(cmd, format!("`{other}` is for a scan's triangles: with `cloud`, give one of {}", ways.join(", "))));
@@ -107,6 +108,14 @@ pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
             };
             let kept = indexed(s, &key, &places);
             solidcraft_scan::selection::points_region_in(&places, &kept.index, point, angle.to_radians(), crease)
+        }
+        "inside" => {
+            let sketch = v.get("sketch").filter(|k| !k.is_null());
+            let curves: Vec<String> =
+                v.get("curves").and_then(Value::as_array).map_or_else(Vec::new, |a| a.iter().filter_map(|c| c.as_str().map(str::to_owned)).collect());
+            let (_, _, path) = super::super::section::along_path(s, sketch, &curves, cmd)?;
+            let kept = indexed(s, &key, &places);
+            solidcraft_scan::selection::points_inside_curve(&places, &kept.index, &path).map_err(|e| bad(cmd, e.to_string()))?
         }
         "saved" => {
             let name = v.as_str().ok_or_else(|| bad(cmd, "`saved` is the name of a kept selection"))?;

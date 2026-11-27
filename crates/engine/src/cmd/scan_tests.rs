@@ -1983,6 +1983,50 @@ fn a_brush_on_a_cloud_uses_the_kept_index_and_takes_the_same_points() {
     }
 }
 
+/// Inside a closed curve drawn over a point cloud selects the points inside it, in each mode, and
+/// not a plate a gap below; a curve that is open, off the cloud or given with a scan is refused.
+#[test]
+fn inside_a_curve_selects_the_points_of_a_cloud_it_surrounds() {
+    let mut points = Vec::new();
+    for z in [0.0, -20.0] {
+        for i in 0..30 {
+            for j in 0..30 {
+                points.push(Vec3::new(f64::from(i), f64::from(j), z));
+            }
+        }
+    }
+    let mut s = session_with_a_cloud(&points);
+    let sketch = run(&mut s, "sketch.create3d", json!({}))["sketch"].clone();
+    let square = |lo: f64, hi: f64| json!([[lo, lo, 0], [hi, lo, 0], [hi, hi, 0], [lo, hi, 0], [lo, lo, 0]]);
+    let curves = run(&mut s, "sketch.line3d", json!({"points": square(10.0, 20.0)}))["curves"].clone();
+    let inside = |s: &mut Session, extra: Value| {
+        let mut p = json!({"cloud": 1, "sketch": sketch, "curves": curves});
+        p.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        s.execute("scan.select_inside_curve", &p)
+    };
+    let first = inside(&mut s, json!({})).expect("selects")["points"].as_u64().unwrap();
+    assert!((81..=121).contains(&first), "{first}");
+    let held = super::select::cloud::selected(&s, 1, points.len()).expect("held on the cloud");
+    for (p, on) in points.iter().zip(held.selected.iter()) {
+        let inner = (11.0..=19.0).contains(&p.x) && (11.0..=19.0).contains(&p.y) && p.z == 0.0;
+        let square = (10.0..=20.0).contains(&p.x) && (10.0..=20.0).contains(&p.y) && p.z == 0.0;
+        assert!(!inner || *on, "{p:?} is inside the curve");
+        assert!(!*on || square, "{p:?} is not");
+    }
+    drop(held);
+    // Add keeps what is held, remove takes the same points away.
+    assert_eq!(inside(&mut s, json!({"mode": "add"})).unwrap()["points"].as_u64(), Some(first));
+    assert_eq!(inside(&mut s, json!({"mode": "remove"})).unwrap()["points"].as_u64(), Some(0));
+    // Refused: both a scan and a cloud, an open curve, one off the cloud.
+    let both = inside(&mut s, json!({"body": "Scan"})).unwrap_err().to_string();
+    assert!(both.contains("not both"), "{both}");
+    let open = s.execute("scan.select_inside_curve", &json!({"cloud": 1, "sketch": sketch, "curves": [curves[0]]})).unwrap_err().to_string();
+    assert!(open.contains("open"), "{open}");
+    let far = run(&mut s, "sketch.line3d", json!({"points": square(110.0, 120.0)}))["curves"].clone();
+    let off = s.execute("scan.select_inside_curve", &json!({"cloud": 1, "sketch": sketch, "curves": far})).unwrap_err().to_string();
+    assert!(off.contains("not on the point cloud"), "{off}");
+}
+
 /// The points selected on a cloud are kept in the design under a name, opened again (with a mode),
 /// replaced by name and deleted; they are the cloud's, not a scan's.
 #[test]

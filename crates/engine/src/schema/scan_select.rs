@@ -188,6 +188,10 @@ pub struct ScanSelectInsideParams {
     /// The mesh body. Default: the selected or only mesh body.
     #[serde(default)]
     pub body: Option<String>,
+    /// A point cloud's name or id: select the cloud's points inside the curve instead of a mesh
+    /// body's triangles.
+    #[serde(default)]
+    pub cloud: Option<String>,
     /// The 3D sketch the curve is in, by id or name. Default: the design's last `Scan Curves`.
     #[serde(default)]
     pub sketch: Option<Value>,
@@ -322,7 +326,7 @@ mod tests {
                 "unexplained",
             ],
         );
-        assert_keys(input_schema_for::<ScanSelectInsideParams>(), &["body", "curves", "mode", "sketch"]);
+        assert_keys(input_schema_for::<ScanSelectInsideParams>(), &["body", "cloud", "curves", "mode", "sketch"]);
         assert_keys(input_schema_for::<ScanKeepSelectionParams>(), &["cloud", "name"]);
         assert_keys(input_schema_for::<ScanDeleteSelectionParams>(), &["cloud", "name"]);
         assert_keys(input_schema_for::<ScanCurveFromSelectionParams>(), &["every", "sketch", "smooth", "tolerance"]);
