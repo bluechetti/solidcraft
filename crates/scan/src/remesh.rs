@@ -374,6 +374,12 @@ pub fn remesh(sources: &[Scan], settings: &Settings) -> Result<Remeshed, RemeshE
 /// grown outward is rounded, as an offset of it is); a scan's open rim is offset as a rim. The
 /// errors reported are how far the new surface is from `|offset|` off the scans.
 pub fn remesh_at(sources: &[Scan], settings: &Settings, offset: f64) -> Result<Remeshed, RemeshError> {
+    remesh_offset(sources, settings, offset, true)
+}
+
+/// [`remesh_at`], the offset surface taken out to the scan's rims (`reach_rims`) or left where the
+/// grid's reading ends, about a cell short of them.
+fn remesh_offset(sources: &[Scan], settings: &Settings, offset: f64, reach_rims: bool) -> Result<Remeshed, RemeshError> {
     let cell = settings.cell;
     if !(cell.is_finite() && cell > 0.0) || !offset.is_finite() || sources.iter().all(|s| s.triangle_count() == 0) {
         return Err(RemeshError::Empty);
@@ -697,7 +703,7 @@ pub fn remesh_at(sources: &[Scan], settings: &Settings, offset: f64) -> Result<R
     // An offset's rim taken out to where the scan's rim moved by the offset is: the grid reads
     // nothing past a scan's open edge, so the surface stops a cell short of it.
     let (out_positions, out_triangles) =
-        if offset != 0.0 { out_to_rims(out_positions, out_triangles, &prepared, offset, cell) } else { (out_positions, out_triangles) };
+        if offset != 0.0 && reach_rims { out_to_rims(out_positions, out_triangles, &prepared, offset, cell) } else { (out_positions, out_triangles) };
     let (new_rms, new_max, scan_rms, scan_p95, uncovered) = measure(&out_positions, &out_triangles, &prepared, cell, offset.abs());
     Ok(Remeshed { positions: out_positions, triangles: out_triangles, new_rms, new_max, scan_rms, scan_p95, uncovered, dropped })
 }
@@ -711,13 +717,16 @@ const MOST_CAPPED_EDGES: usize = 256;
 /// The scans made again as a hollow part `wall` thick: the surface `offset` off them (as
 /// [`remesh_at`]) and, inside it, the surface `wall` farther in, facing inward, the two joined by
 /// a strip along each pair of open rims (an open scan's rim, a socket's or a cover's edge), so the
-/// result is closed and can be printed. The errors reported are the outside's.
+/// result is closed and can be printed; it ends a cell or so short of the scan's own rim. The errors reported are the outside's.
 pub fn shell(sources: &[Scan], settings: &Settings, offset: f64, wall: f64) -> Result<Remeshed, RemeshError> {
     if !(wall.is_finite() && wall > 0.0) {
         return Err(RemeshError::Empty);
     }
-    let outside = remesh_at(sources, settings, offset)?;
-    let inside = remesh_at(sources, &Settings { sharp: false, ..*settings }, offset - wall)?;
+    // Each skin ends where the grid's reading does, a cell or so short of the scan's open rim: a skin
+    // taken out to the rim along the scan's vertex directions leaves the strip between the two skins
+    // crossing them where the end is flat or sharp, and the shell closed on faces through each other.
+    let outside = remesh_offset(sources, settings, offset, false)?;
+    let inside = remesh_offset(sources, &Settings { sharp: false, ..*settings }, offset - wall, false)?;
     let base = outside.positions.len() as u32;
     let mut positions = outside.positions.clone();
     positions.extend_from_slice(&inside.positions);
