@@ -180,7 +180,8 @@ impl<'a> PointGrid<'a> {
                 (pack(c.x.floor() as i64, c.y.floor() as i64, c.z.floor() as i64), k as u32)
             })
             .collect();
-        keyed.sort_unstable();
+        // The pairs are all different, so the order is the same on any number of threads.
+        par::sort_unstable(&mut keyed);
         let (mut keys, mut starts) = (Vec::new(), Vec::new());
         for (k, (key, _)) in keyed.iter().enumerate() {
             if keys.last() != Some(key) {

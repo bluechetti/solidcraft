@@ -1119,45 +1119,90 @@ pub fn points_grown(points: &[Vec3], selected: &[bool], reach: f64, grow: bool) 
     now
 }
 
-/// How many neighbours a point's way of facing is read from, and how far (in spacings) the
-/// region of a cloud reaches from a point to the next, so it does not cross a gap.
+/// How many neighbours a point's way of facing is read from, and how many when those lie in a line
+/// (a scan's line of points, read along it), and how far (in spacings) the region of a cloud
+/// reaches from a point to the next, so it does not cross a gap.
 const FACING_NEIGHBOURS: usize = 12;
+const WIDE_NEIGHBOURS: usize = 36;
 const HOP_SPACINGS: f64 = 3.0;
+/// The neighbour, counted from a point, whose distance says how far apart the cloud's lines or
+/// rows are: on an even cloud it is about 2.8 spacings (a hop is then the three spacings), on
+/// lines a few points apart along and many between it is past the next line.
+const SCALE_NEIGHBOUR: usize = 24;
+/// A neighbourhood whose second spread is under this share of its largest is a line, not a plane.
+const LINE_SHARE: f64 = 0.02;
+
+/// The way a point faces, read from `near` (its neighbours), or zero where they are in a line.
+fn facing_from(points: &[Vec3], at: Vec3, near: &[(f64, u32)]) -> Vec3 {
+    let around: Vec<Vec3> = near.iter().map(|&(_, q)| points[q as usize]).chain(std::iter::once(at)).collect();
+    let middle = around.iter().fold(Vec3::ZERO, |a, &q| a + q) / around.len() as f64;
+    let mut spread = [[0.0f64; 3]; 3];
+    for q in &around {
+        let d = *q - middle;
+        let d = [d.x, d.y, d.z];
+        for (row, a) in spread.iter_mut().zip(d) {
+            for (cell, b) in row.iter_mut().zip(d) {
+                *cell += a * b;
+            }
+        }
+    }
+    match solidcraft_geom::inertia::principal(&spread, 0.0) {
+        Some((moments, axes)) if moments[2] > 0.0 && moments[1] >= LINE_SHARE * moments[2] => axes[0].normalized().unwrap_or(Vec3::ZERO),
+        _ => Vec3::ZERO,
+    }
+}
+
+/// The cloud's typical distance to the nearest point and to the `SCALE_NEIGHBOUR`th, medians
+/// over points spread through it, read from one grid.
+fn spacing_scales(points: &[Vec3], grid: &crate::poisson::PointGrid) -> (f64, f64) {
+    let stride = (points.len() / 2000).max(1);
+    let picked: Vec<usize> = (0..points.len()).step_by(stride).collect();
+    let both: Vec<(f64, f64)> = par::map(picked.len(), |i| {
+        let k = picked[i];
+        let mut out = Vec::with_capacity(SCALE_NEIGHBOUR);
+        grid.nearest(points[k], SCALE_NEIGHBOUR, Some(k as u32), &mut out);
+        let first = out.first().map_or(0.0, |&(d, _)| d.sqrt());
+        let far = out.last().map_or(0.0, |&(d, _)| d.sqrt());
+        (first, far)
+    });
+    let median = |mut v: Vec<f64>| {
+        v.retain(|d| *d > 0.0 && d.is_finite());
+        v.sort_by(f64::total_cmp);
+        v.get(v.len() / 2).copied().unwrap_or(0.0)
+    };
+    (median(both.iter().map(|b| b.0).collect()), median(both.iter().map(|b| b.1).collect()))
+}
 
 /// The region of a point cloud round the point nearest `seed`: grown from point to point (each to
-/// its neighbours within three spacings) while the cloud faces about the way it does at the seed
-/// (`crease` false: within `angle` radians of it, so a flat face is taken up to where its rounds
-/// turn away) or turns less than `angle` from one point to the next (`crease` true: up to its
-/// creases). A point faces the way the plane through it and its twelve nearest does, either way;
-/// this is read only for the points the region reaches, so a small face of a huge cloud is quick.
+/// its neighbours within a hop: three spacings, or past the next line of points on a cloud of
+/// lines) while the cloud faces about the way it does at the seed (`crease` false: within `angle`
+/// radians of it, so a flat face is taken up to where its rounds turn away) or turns less than
+/// `angle` from one point to the next (`crease` true: up to its creases). A point faces the way
+/// the plane through it and its twelve nearest does (its thirty-six nearest where those lie in a
+/// line), either way; this is read only for the points the region reaches, so a small face of a
+/// huge cloud is quick.
 pub fn points_region(points: &[Vec3], seed: Vec3, angle: f64, crease: bool) -> Vec<bool> {
     let mut taken = vec![false; points.len()];
     if points.len() <= FACING_NEIGHBOURS || !(angle > 0.0 && angle.is_finite()) || !seed.x.is_finite() {
         return taken;
     }
-    let spacing = crate::poisson::typical_spacing(points);
+    let grid = crate::poisson::PointGrid::sized_for(points, FACING_NEIGHBOURS as f64);
+    let (spacing, scale) = spacing_scales(points, &grid);
     if !(spacing > 0.0) {
         return taken;
     }
-    let hop = (HOP_SPACINGS * spacing).powi(2);
-    let grid = crate::poisson::PointGrid::sized_for(points, FACING_NEIGHBOURS as f64);
+    let hop = (HOP_SPACINGS * spacing).max(1.1 * scale).powi(2);
     // Which way a point faces (zero where its neighbours are in a line) and the neighbours within a hop.
     let look = |k: u32| -> (Vec3, Vec<u32>) {
-        let mut near = Vec::with_capacity(FACING_NEIGHBOURS);
-        grid.nearest(points[k as usize], FACING_NEIGHBOURS, Some(k), &mut near);
-        let around: Vec<Vec3> = near.iter().map(|&(_, q)| points[q as usize]).chain(std::iter::once(points[k as usize])).collect();
-        let middle = around.iter().fold(Vec3::ZERO, |a, &q| a + q) / around.len() as f64;
-        let mut spread = [[0.0f64; 3]; 3];
-        for q in &around {
-            let d = *q - middle;
-            let d = [d.x, d.y, d.z];
-            for (row, a) in spread.iter_mut().zip(d) {
-                for (cell, b) in row.iter_mut().zip(d) {
-                    *cell += a * b;
-                }
+        let mut near = Vec::with_capacity(WIDE_NEIGHBOURS);
+        let mut facing = Vec3::ZERO;
+        for count in [FACING_NEIGHBOURS, WIDE_NEIGHBOURS] {
+            grid.nearest(points[k as usize], count, Some(k), &mut near);
+            facing = facing_from(points, points[k as usize], &near);
+            if facing != Vec3::ZERO {
+                break;
             }
         }
-        let facing = solidcraft_geom::inertia::principal(&spread, 0.0).and_then(|(_, axes)| axes[0].normalized()).unwrap_or(Vec3::ZERO);
         (facing, near.iter().filter(|&&(d, _)| d <= hop).map(|&(_, q)| q).collect())
     };
     let mut first = Vec::new();
@@ -1253,6 +1298,31 @@ mod tests {
         assert!(share(&whole) > 0.9, "the whole of it: {}", share(&whole));
         assert!(points_region(&cylinder, Vec3::ZERO, 0.0, false).iter().all(|t| !t));
         assert!(points_region(&[], Vec3::ZERO, 0.5, false).is_empty());
+    }
+
+    /// A scan's lines of points, a point every 1 along and 10 between the lines: a region takes
+    /// the plane the lines lie on (not the one line the seed is on), and not the plane of lines
+    /// above it.
+    #[test]
+    fn a_region_of_points_crosses_the_lines_of_a_scan() {
+        let mut points = Vec::new();
+        for l in 0..30 {
+            for k in 0..200 {
+                points.push(Vec3::new(f64::from(l) * 10.0, f64::from(k), 0.0));
+                points.push(Vec3::new(f64::from(l) * 10.0, f64::from(k), 500.0));
+            }
+        }
+        let region = points_region(&points, Vec3::new(100.0, 100.0, 0.0), 20f64.to_radians(), false);
+        let (mut low, mut high) = (0, 0);
+        for (p, t) in points.iter().zip(&region) {
+            match (p.z == 0.0, *t) {
+                (true, true) => low += 1,
+                (false, true) => high += 1,
+                _ => {}
+            }
+        }
+        assert!(low >= 28 * 200, "the lines are crossed: {low} of 6000");
+        assert_eq!(high, 0, "the plane above is not");
     }
 
     /// A line of points with its middle selected: growing takes the neighbours within the reach,
