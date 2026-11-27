@@ -1144,6 +1144,9 @@ pub struct Session {
     /// What is selected on a point cloud (`scan.select` with `cloud`): the points the fits take.
     /// View state, as `scan_selection` is.
     pub cloud_selection: Option<std::sync::Arc<cmd::scan::select::cloud::CloudSelected>>,
+    /// What Region and the spacing of a point cloud read of its points, kept for the cloud last
+    /// selected on while its points stay where they are (`scan.select` with `cloud`).
+    pub cloud_index: Option<std::sync::Arc<cmd::scan::select::cloud::CloudCache>>,
     /// The base `scan.stand_on_base` last stood a scan on by number: the scan and which base it
     /// was. Pressed again with nothing picked while the scan still stands there, it goes on to the
     /// next. View state: not part of the design.
@@ -1619,6 +1622,7 @@ impl Session {
             scan_verdict: None,
             scan_selection: None,
             cloud_selection: None,
+            cloud_index: None,
             scan_base_cycle: None,
             isocurves: Vec::new(),
             comb: None,
@@ -3966,6 +3970,7 @@ impl Session {
             scan_verdict: None,
             scan_selection: self.scan_selection.clone(),
             cloud_selection: self.cloud_selection.clone(),
+            cloud_index: self.cloud_index.clone(),
             scan_base_cycle: self.scan_base_cycle.clone(),
             isocurves: Vec::new(),
             comb: None,
@@ -4252,6 +4257,9 @@ impl Session {
         let chosen = |x: &Option<Arc<cmd::scan::select::cloud::CloudSelected>>| x.as_ref().map(|m| Arc::as_ptr(m).cast::<()>());
         let cloud_selection = moved(chosen(&prepared.source.cloud_selection), chosen(&prepared.computed.cloud_selection))
             .then(|| prepared.computed.cloud_selection.take());
+        let indexed = |x: &Option<Arc<cmd::scan::select::cloud::CloudCache>>| x.as_ref().map(|m| Arc::as_ptr(m).cast::<()>());
+        let cloud_index =
+            moved(indexed(&prepared.source.cloud_index), indexed(&prepared.computed.cloud_index)).then(|| prepared.computed.cloud_index.take());
         let base_cycle = (prepared.source.scan_base_cycle != prepared.computed.scan_base_cycle).then(|| prepared.computed.scan_base_cycle.take());
         // Bodies the computation itself hid (Combine Scans hides the passes it fused) stay hidden;
         // the live view's own hides are kept as they are now.
@@ -4288,6 +4296,9 @@ impl Session {
         }
         if let Some(cloud_selection) = cloud_selection {
             self.cloud_selection = cloud_selection;
+        }
+        if let Some(cloud_index) = cloud_index {
+            self.cloud_index = cloud_index;
         }
         if let Some(base_cycle) = base_cycle {
             self.scan_base_cycle = base_cycle;

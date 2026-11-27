@@ -1916,6 +1916,37 @@ fn a_region_of_a_cloud_is_the_face_under_a_place() {
     }
 }
 
+/// What Region and the spacing read of a cloud is kept while its points stay where they are, and
+/// read again once the cloud is moved: the same places give the same answer either way.
+#[test]
+fn a_clouds_index_is_kept_until_the_cloud_moves() {
+    let mut points = Vec::new();
+    for i in 0..30 {
+        for j in 0..30 {
+            points.push(Vec3::new(f64::from(i), f64::from(j), 0.0));
+        }
+    }
+    let mut s = session_with_a_cloud(&points);
+    assert!(s.cloud_index.is_none());
+    let region = |s: &mut Session, at: [f64; 3]| run(s, "scan.select", json!({"cloud": 1, "region": {"point": at}}))["points"].as_u64();
+    let kept = |s: &Session| s.cloud_index.clone();
+    // Not read for a selection that needs no places.
+    run(&mut s, "scan.select", json!({"cloud": 1, "all": true}));
+    assert!(s.cloud_index.is_none());
+    let first = region(&mut s, [10.0, 10.0, 0.0]);
+    assert!(first.is_some_and(|n| n >= 28 * 28), "{first:?}");
+    let index = kept(&s).expect("kept after a region");
+    // Again, and the spacing for a ring of Grow, read nothing again.
+    assert_eq!(region(&mut s, [20.0, 5.0, 0.0]), first);
+    run(&mut s, "scan.select", json!({"cloud": 1, "box": {"min": [10, 10, -1], "max": [15, 15, 1]}}));
+    run(&mut s, "scan.select", json!({"cloud": 1, "grow": 1}));
+    assert!(std::sync::Arc::ptr_eq(&index, &kept(&s).expect("still kept")));
+    // Moved 100 mm along X: the places are others, so it is read again, and the region is there.
+    s.doc_mut().point_clouds[0].transform[3][0] = 100.0;
+    assert_eq!(region(&mut s, [110.0, 10.0, 0.0]), first);
+    assert!(!std::sync::Arc::ptr_eq(&index, &kept(&s).expect("kept again")));
+}
+
 /// The points selected on a cloud are kept in the design under a name, opened again (with a mode),
 /// replaced by name and deleted; they are the cloud's, not a scan's.
 #[test]

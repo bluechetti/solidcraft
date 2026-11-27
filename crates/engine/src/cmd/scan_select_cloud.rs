@@ -14,6 +14,34 @@ use crate::params::bad;
 use crate::schema::scan_select::{ScanDeleteSelectionResult, ScanKeepSelectionResult, ScanSelectResult};
 use crate::{EngineError, Result, Session};
 
+/// What Region and the spacing read of a point cloud's points, kept with what it was read from: the
+/// cloud's points (held, so the same buffer is the same points), where its frame sits and where
+/// the cloud is placed. The same three give the same places, so the index holds for them.
+#[derive(Debug)]
+pub struct CloudCache {
+    points: Arc<[f32]>,
+    origin: Vec3,
+    transform: solidcraft_doc::Mat,
+    index: solidcraft_scan::selection::CloudIndex,
+}
+
+/// What a cloud's places come from.
+type CloudKey = (Arc<[f32]>, Vec3, solidcraft_doc::Mat);
+
+/// The index of the cloud with this `key` and these `places`: the one kept if it is of them, else
+/// made now and kept (a cloud moved, cut down or replaced is read again).
+fn indexed(s: &mut Session, key: &CloudKey, places: &[Vec3]) -> Arc<CloudCache> {
+    let kept =
+        s.cloud_index.as_ref().filter(|c| Arc::ptr_eq(&c.points, &key.0) && c.origin == key.1 && c.transform == key.2 && c.index.is_of(places));
+    if let Some(kept) = kept {
+        return kept.clone();
+    }
+    let made =
+        Arc::new(CloudCache { points: key.0.clone(), origin: key.1, transform: key.2, index: solidcraft_scan::selection::CloudIndex::new(places) });
+    s.cloud_index = Some(made.clone());
+    made
+}
+
 /// What is selected on a point cloud.
 #[derive(Debug)]
 pub struct CloudSelected {
@@ -47,7 +75,10 @@ pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
     let cloud = super::super::mesh::find_cloud(s, p, cmd)?;
     let (id, name, count) = (cloud.id, cloud.name.clone(), cloud.len());
     let cloud_name = name.as_str();
-    let places: Vec<Vec3> = (0..count).filter_map(|i| cloud.world_point(i)).collect();
+    let key: CloudKey = (cloud.points.values().clone(), cloud.origin, cloud.transform);
+    // The ways that say what is selected whole, or that name a selection kept, need no places.
+    let places: Vec<Vec3> =
+        if matches!(way, "all" | "none" | "invert" | "saved") { Vec::new() } else { (0..count).filter_map(|i| cloud.world_point(i)).collect() };
     let before = selected(s, id, count);
     let current = || before.as_ref().map(|k| (*k.selected).clone()).unwrap_or_else(|| vec![false; count]);
     let v = &p[way];
@@ -66,7 +97,8 @@ pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
                 Some("crease") => true,
                 Some(_) => return Err(bad(cmd, "`region.until` is facing or crease")),
             };
-            solidcraft_scan::selection::points_region(&places, point, angle.to_radians(), crease)
+            let kept = indexed(s, &key, &places);
+            solidcraft_scan::selection::points_region_in(&places, &kept.index, point, angle.to_radians(), crease)
         }
         "saved" => {
             let name = v.as_str().ok_or_else(|| bad(cmd, "`saved` is the name of a kept selection"))?;
@@ -89,7 +121,7 @@ pub(super) fn select(s: &mut Session, p: &Value, cmd: &str) -> Result<Value> {
             // A ring is as wide as `step`, else twice the cloud's point spacing.
             let step = match crate::params::expr(p, "step") {
                 Some(e) => s.doc.eval(&e, solidcraft_doc::expr::Kind::Length).map_err(|e| bad(cmd, format!("step: {e}")))?,
-                None => 2.0 * solidcraft_scan::poisson::typical_spacing(&places),
+                None => 2.0 * indexed(s, &key, &places).index.spacing(),
             };
             if !(step.is_finite() && step > 0.0) {
                 return Err(bad(cmd, "`step` is how wide a ring is, a length above 0 (the cloud's points have no spacing to take it from)"));

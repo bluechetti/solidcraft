@@ -154,6 +154,13 @@ fn pack(i: i64, j: i64, k: i64) -> u64 {
 /// Points sorted into cubic cells, for the nearest few of a place and those within a reach.
 pub(crate) struct PointGrid<'a> {
     points: &'a [Vec3],
+    index: std::borrow::Cow<'a, GridIndex>,
+}
+
+/// What a [`PointGrid`] holds besides the points: the cells and which points are in each. Owned,
+/// so it can be kept (as [`crate::selection::CloudIndex`] does) while the points are lent again.
+#[derive(Clone, Debug)]
+pub struct GridIndex {
     lower: Vec3,
     cell: f64,
     keys: Vec<u64>,
@@ -190,7 +197,18 @@ impl<'a> PointGrid<'a> {
             }
         }
         starts.push(keyed.len() as u32);
-        PointGrid { points, lower, cell, keys, starts, order: keyed.into_iter().map(|(_, k)| k).collect() }
+        let index = GridIndex { lower, cell, keys, starts, order: keyed.into_iter().map(|(_, k)| k).collect() };
+        PointGrid { points, index: std::borrow::Cow::Owned(index) }
+    }
+
+    /// The grid over `points` that `index` was made for (the same points, in the same order).
+    pub(crate) fn over(points: &'a [Vec3], index: &'a GridIndex) -> Self {
+        PointGrid { points, index: std::borrow::Cow::Borrowed(index) }
+    }
+
+    /// What the grid holds of the points, to keep.
+    pub(crate) fn into_index(self) -> GridIndex {
+        self.index.into_owned()
     }
 
     /// A grid whose cells hold about `per_cell` points each, on a surface.
@@ -200,7 +218,7 @@ impl<'a> PointGrid<'a> {
         let mut cell = diagonal / (points.len().max(1) as f64).sqrt() * per_cell.sqrt();
         let mut grid = Self::new(points, cell);
         for _ in 0..4 {
-            let full = points.len() as f64 / grid.keys.len().max(1) as f64;
+            let full = points.len() as f64 / grid.index.keys.len().max(1) as f64;
             if (full / per_cell - 1.0).abs() < 0.5 {
                 break;
             }
@@ -211,7 +229,7 @@ impl<'a> PointGrid<'a> {
     }
 
     fn cell_of(&self, p: Vec3) -> (i64, i64, i64) {
-        let c = (p - self.lower) / self.cell;
+        let c = (p - self.index.lower) / self.index.cell;
         (c.x.floor() as i64, c.y.floor() as i64, c.z.floor() as i64)
     }
 
@@ -219,10 +237,10 @@ impl<'a> PointGrid<'a> {
         if i < 0 || j < 0 || k < 0 || i > AXIS_LIMIT || j > AXIS_LIMIT || k > AXIS_LIMIT {
             return &[];
         }
-        match self.keys.binary_search(&pack(i, j, k)) {
+        match self.index.keys.binary_search(&pack(i, j, k)) {
             Ok(at) => {
-                let (a, b) = (self.starts[at] as usize, self.starts.get(at + 1).copied().unwrap_or(0) as usize);
-                self.order.get(a..b).unwrap_or_default()
+                let (a, b) = (self.index.starts[at] as usize, self.index.starts.get(at + 1).copied().unwrap_or(0) as usize);
+                self.index.order.get(a..b).unwrap_or_default()
             }
             Err(_) => &[],
         }
@@ -258,7 +276,7 @@ impl<'a> PointGrid<'a> {
                     }
                 }
             }
-            let reach = r as f64 * self.cell;
+            let reach = r as f64 * self.index.cell;
             if out.len() == count && out.last().is_some_and(|w| w.0 <= reach * reach) {
                 return;
             }
@@ -268,7 +286,7 @@ impl<'a> PointGrid<'a> {
     /// Each point within `radius` of `p`, with its squared distance.
     pub(crate) fn within(&self, p: Vec3, radius: f64, mut visit: impl FnMut(u32, f64)) {
         let (ci, cj, ck) = self.cell_of(p);
-        let span = (radius / self.cell).ceil().min(64.0) as i64;
+        let span = (radius / self.index.cell).ceil().min(64.0) as i64;
         let limit = radius * radius;
         for di in -span..=span {
             for dj in -span..=span {
@@ -356,11 +374,11 @@ const LAYER_REACH: f64 = 8.0;
 /// The points thinned to one a `cell`: each cell's mean, with its normals' mean.
 fn thinned(points: &[Vec3], normals: Option<&[Vec3]>, cell: f64) -> (Vec<Vec3>, Option<Vec<Vec3>>) {
     let grid = PointGrid::new(points, cell);
-    let cells = grid.keys.len();
+    let cells = grid.index.keys.len();
     let mut out = Vec::with_capacity(cells);
     let mut out_normals = normals.map(|_| Vec::with_capacity(cells));
     for c in 0..cells {
-        let members = grid.order.get(grid.starts[c] as usize..grid.starts[c + 1] as usize).unwrap_or_default();
+        let members = grid.index.order.get(grid.index.starts[c] as usize..grid.index.starts[c + 1] as usize).unwrap_or_default();
         let sum = members.iter().fold(Vec3::ZERO, |s, &m| s + points[m as usize]);
         out.push(sum / members.len().max(1) as f64);
         if let (Some(list), Some(given)) = (out_normals.as_mut(), normals) {

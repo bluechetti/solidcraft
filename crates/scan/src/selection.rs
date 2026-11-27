@@ -1173,6 +1173,40 @@ fn spacing_scales(points: &[Vec3], grid: &crate::poisson::PointGrid) -> (f64, f6
     (median(both.iter().map(|b| b.0).collect()), median(both.iter().map(|b| b.1).collect()))
 }
 
+/// What Region reads of a point cloud before it looks at a seed: a grid over the points and how
+/// far apart they lie. Worked out once for a cloud and kept (a call on millions of points would
+/// otherwise sort them into a grid each time), for the same points in the same order.
+#[derive(Clone, Debug)]
+pub struct CloudIndex {
+    grid: crate::poisson::GridIndex,
+    points: usize,
+    spacing: f64,
+    scale: f64,
+}
+
+impl CloudIndex {
+    /// The index of `points`. Where they have no spacing (fewer than a handful, or all the same
+    /// place) `spacing` is 0 and no region comes of them.
+    pub fn new(points: &[Vec3]) -> CloudIndex {
+        if points.len() <= FACING_NEIGHBOURS {
+            return CloudIndex { grid: crate::poisson::PointGrid::sized_for(&[], 1.0).into_index(), points: points.len(), spacing: 0.0, scale: 0.0 };
+        }
+        let grid = crate::poisson::PointGrid::sized_for(points, FACING_NEIGHBOURS as f64);
+        let (spacing, scale) = spacing_scales(points, &grid);
+        CloudIndex { grid: grid.into_index(), points: points.len(), spacing, scale }
+    }
+
+    /// The typical distance from a point to its nearest neighbour (0: none).
+    pub fn spacing(&self) -> f64 {
+        self.spacing
+    }
+
+    /// Whether this is the index of `points` (as many as it was made for).
+    pub fn is_of(&self, points: &[Vec3]) -> bool {
+        self.points == points.len()
+    }
+}
+
 /// The region of a point cloud round the point nearest `seed`: grown from point to point (each to
 /// its neighbours within a hop: three spacings, or past the next line of points on a cloud of
 /// lines) while the cloud faces about the way it does at the seed (`crease` false: within `angle`
@@ -1182,15 +1216,28 @@ fn spacing_scales(points: &[Vec3], grid: &crate::poisson::PointGrid) -> (f64, f6
 /// line), either way; this is read only for the points the region reaches, so a small face of a
 /// huge cloud is quick.
 pub fn points_region(points: &[Vec3], seed: Vec3, angle: f64, crease: bool) -> Vec<bool> {
+    points_region_in(points, &CloudIndex::new(points), seed, angle, crease)
+}
+
+/// [`points_region`] with the cloud's index already made. An index of other points (not as many)
+/// is not used: the region is of the points as they are.
+pub fn points_region_in(points: &[Vec3], index: &CloudIndex, seed: Vec3, angle: f64, crease: bool) -> Vec<bool> {
     let mut taken = vec![false; points.len()];
     if points.len() <= FACING_NEIGHBOURS || !(angle > 0.0 && angle.is_finite()) || !seed.x.is_finite() {
         return taken;
     }
-    let grid = crate::poisson::PointGrid::sized_for(points, FACING_NEIGHBOURS as f64);
-    let (spacing, scale) = spacing_scales(points, &grid);
+    let made;
+    let index = if index.is_of(points) {
+        index
+    } else {
+        made = CloudIndex::new(points);
+        &made
+    };
+    let (spacing, scale) = (index.spacing, index.scale);
     if !(spacing > 0.0) {
         return taken;
     }
+    let grid = crate::poisson::PointGrid::over(points, &index.grid);
     let hop = (HOP_SPACINGS * spacing).max(1.1 * scale).powi(2);
     // Which way a point faces (zero where its neighbours are in a line) and the neighbours within a hop.
     let look = |k: u32| -> (Vec3, Vec<u32>) {
@@ -1298,6 +1345,32 @@ mod tests {
         assert!(share(&whole) > 0.9, "the whole of it: {}", share(&whole));
         assert!(points_region(&cylinder, Vec3::ZERO, 0.0, false).iter().all(|t| !t));
         assert!(points_region(&[], Vec3::ZERO, 0.5, false).is_empty());
+    }
+
+    /// A kept index gives the region the cloud gives without one, for any seed; an index of a
+    /// cloud of another size is not used, and one of a handful of points has no spacing.
+    #[test]
+    fn a_kept_index_gives_the_same_region() {
+        let mut points = Vec::new();
+        for i in 0..40 {
+            for j in 0..40 {
+                points.push(Vec3::new(f64::from(i), f64::from(j), 0.0));
+                points.push(Vec3::new(f64::from(i), f64::from(j), 20.0));
+            }
+        }
+        let index = CloudIndex::new(&points);
+        assert!((index.spacing() - 1.0).abs() < 1e-9, "{}", index.spacing());
+        for seed in [Vec3::new(5.0, 5.0, 0.0), Vec3::new(30.0, 12.0, 20.0)] {
+            let kept = points_region_in(&points, &index, seed, 30f64.to_radians(), false);
+            assert_eq!(kept, points_region(&points, seed, 30f64.to_radians(), false));
+            assert!(kept.iter().filter(|t| **t).count() >= 38 * 38);
+        }
+        let fewer = &points[..1000];
+        assert!(!index.is_of(fewer));
+        assert_eq!(points_region_in(fewer, &index, Vec3::new(5.0, 5.0, 0.0), 0.5, false), points_region(fewer, Vec3::new(5.0, 5.0, 0.0), 0.5, false));
+        let few = CloudIndex::new(&points[..5]);
+        assert_eq!(few.spacing(), 0.0);
+        assert!(points_region_in(&points[..5], &few, Vec3::ZERO, 0.5, false).iter().all(|t| !t));
     }
 
     /// A scan's lines of points, a point every 1 along and 10 between the lines: a region takes
