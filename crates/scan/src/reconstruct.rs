@@ -247,12 +247,19 @@ pub struct EdgeRound {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EdgeChamfer {
     pub face: usize,
+    /// How far it cuts back along the face that faces up most (the first face of a Chamfer's two distances); the
+    /// mean of the two legs when they are even.
     pub distance: f64,
+    /// How far it cuts back along the other face; `distance` again when the legs are even.
+    pub distance2: f64,
     pub edge: Vec3,
 }
 
-/// How unequal a chamfer's two legs may be, as a share of the longer.
+/// How unequal a chamfer's two legs may be, as a share of the longer, and still be one distance.
 const CHAMFER_LEGS_EVEN: f64 = 0.15;
+/// How much longer one leg of a chamfer may be than the other (a 2 to 1 chamfer leans 27° from one face): beyond this
+/// the face is a slope of the part, not a chamfer.
+const CHAMFER_LEGS_RATIO: f64 = 4.0;
 /// The longest leg of a chamfer and the shortest, as shares of the part's size. A flat face that
 /// cuts back further is a side of the part (an octagon's), not a chamfer.
 const CHAMFER_MOST: f64 = 0.08;
@@ -332,7 +339,7 @@ fn chamfers(faces: &[Face], middles: &[Vec3], size: f64, skip: &BTreeSet<usize>)
                 };
                 let (Some((ta, ua)), Some((tb, ub))) = (leg(across_a, across_b), leg(across_b, across_a)) else { continue };
                 let (longer, shorter) = (ta.max(tb), ta.min(tb));
-                if shorter < CHAMFER_LEAST * size || longer > CHAMFER_MOST * size || (longer - shorter) > CHAMFER_LEGS_EVEN * longer {
+                if shorter < CHAMFER_LEAST * size || longer > CHAMFER_MOST * size || longer > CHAMFER_LEGS_RATIO * shorter {
                     continue;
                 }
                 // The chamfer lies between the two cuts, not off to one side of them.
@@ -340,7 +347,17 @@ fn chamfers(faces: &[Face], middles: &[Vec3], size: f64, skip: &BTreeSet<usize>)
                 if between.dist(c) > 0.6 * longer {
                     continue;
                 }
-                let found = EdgeChamfer { face: k, distance: 0.5 * (ta + tb), edge: p0 };
+                // Even legs are one distance. Uneven ones are two: the first along the face that faces up most
+                // (a face's outward normal is square to the edge and to its leg, away from the other leg), as a
+                // Chamfer reads its two distances.
+                let (distance, distance2) = if (longer - shorter) <= CHAMFER_LEGS_EVEN * longer {
+                    (0.5 * (ta + tb), 0.5 * (ta + tb))
+                } else {
+                    let outward = |leg: Vec3, other: Vec3| e.cross(leg).normalized().map(|n| if n.dot(other) > 0.0 { -n } else { n });
+                    let up = |n: Option<Vec3>| n.map_or(0.0, |n| n.z);
+                    if up(outward(ua, ub)) >= up(outward(ub, ua)) { (ta, tb) } else { (tb, ta) }
+                };
+                let found = EdgeChamfer { face: k, distance, distance2, edge: p0 };
                 if best.as_ref().is_none_or(|(s, _)| longer - shorter < *s) {
                     best = Some((longer - shorter, found));
                 }

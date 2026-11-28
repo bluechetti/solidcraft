@@ -213,7 +213,8 @@ mod tests {
 
 /// Known Size: a size the user measured on the part (callipers across two faces, or a bore's
 /// diameter) against the scan's. It says how far the scan is off; with `apply`, it scales the scan
-/// to agree, when it is a scanner's scale error (within 5 %), not a wrong pick or unit.
+/// to agree, when it is a scanner's scale error (within 5 %), not a wrong pick or unit; with a second size (`check`) that
+/// the scaled scan agrees with, by any factor up to 1000.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[schemars(deny_unknown_fields)]
 pub struct ScanKnownSizeParams {
@@ -233,6 +234,44 @@ pub struct ScanKnownSizeParams {
     /// Scale the scan so it measures `value` there. Default: false (only say how far off it is).
     #[serde(default)]
     pub apply: Option<bool>,
+    /// A second size measured on the part, read the same way as the first. It checks the scale the first gives: the scan,
+    /// scaled so, must measure it (within `check_within`). With it the scan may be scaled by far more than 5 % (a scan
+    /// with no true scale, as a phone gives), and `apply` is refused when the two sizes disagree.
+    #[serde(default)]
+    pub check: Option<ScanKnownSizeCheckParams>,
+    /// How far the check may be off once the scan is scaled, as a share of it. Default 0.02; at most 0.1.
+    #[serde(default)]
+    pub check_within: Option<f64>,
+}
+
+/// The second size of Known Size: `between` or `diameter` as for the first, and the size measured on the part.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[schemars(deny_unknown_fields)]
+pub struct ScanKnownSizeCheckParams {
+    /// Two points on the scan, one on each of two parallel faces.
+    #[serde(default)]
+    pub between: Option<Vec<[f64; 3]>>,
+    /// A point on a round face: the size is its diameter.
+    #[serde(default)]
+    pub diameter: Option<[f64; 3]>,
+    /// The size measured on the part, in mm.
+    pub value: f64,
+}
+
+/// How the check size read, once the scan is scaled by what the first size gives.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ScanKnownSizeCheck {
+    /// between or diameter.
+    pub kind: String,
+    /// The size on the scan as it is now, and the size given, in mm.
+    pub measured: f64,
+    pub value: f64,
+    /// What the scan would measure there once scaled by `factor`, in mm.
+    pub predicted: f64,
+    /// How far `predicted` is from `value`, as a share (above 0: the scan would be large).
+    pub off: f64,
+    /// Whether it is within `check_within`.
+    pub agrees: bool,
 }
 
 /// What Known Size read.
@@ -250,6 +289,9 @@ pub struct ScanKnownSizeResult {
     pub off: f64,
     /// Whether the scan was scaled.
     pub applied: bool,
+    /// The second size, when one was given.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub check: Option<ScanKnownSizeCheck>,
     pub note: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_warnings: Vec<String>,

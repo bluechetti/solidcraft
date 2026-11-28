@@ -477,6 +477,57 @@ fn a_size_measured_on_the_part_checks_and_scales_the_scan() {
     assert!(neither.contains("give `between`"), "{neither}");
 }
 
+/// A scan with no true scale (here twice the part's size, as a phone's can be) is scaled by a size measured on the part and a
+/// second one that checks it. One size alone is refused beyond 5 %, and says to give a second. With the second, read before
+/// anything is scaled: it agrees (the end to end length scaled by the thickness's factor is the length measured), and `apply`
+/// scales the scan to an eighth of its volume. A second size that disagrees refuses it, and nothing is scaled.
+#[test]
+fn a_second_size_lets_a_scan_with_no_true_scale_be_scaled_by_more_than_five_percent() {
+    let mut part = Session::default();
+    let made = run(&mut part, "solid.box", json!({"length": 40, "width": 30, "height": 10}));
+    let body = made["created_bodies"][0].as_str().unwrap().to_owned();
+    run(&mut part, "solid.fillet", json!({"edges": [[0, 0, 5], [40, 0, 5], [40, 30, 5], [0, 30, 5]], "radius": 5}));
+    let (mut s, scan) = scanned(&part, &body, 3, "block-twice");
+    run(&mut s, "solid.scale", json!({"bodies": [scan], "factor": 2.0, "origin": [0, 0, 0]}));
+    let (thickness, ends) = (json!([[40, 30, 20], [40, 30, 0]]), json!([[0, 30, 10], [80, 30, 10]]));
+    let before = volume(&s, &scan);
+
+    let alone = run_err(&mut s, "scan.known_size", json!({"scan": scan, "between": thickness, "value": 10, "apply": true}));
+    assert!(alone.contains("more than a scanner's scale error") && alone.contains("`check`"), "{alone}");
+
+    let read = run(&mut s, "scan.known_size", json!({"scan": scan, "between": thickness, "value": 10, "check": {"between": ends, "value": 40}}));
+    assert!((read["factor"].as_f64().unwrap() - 0.5).abs() < 0.01 && read["applied"] == false, "{read}");
+    assert_eq!(read["check"]["agrees"], true, "{read}");
+    assert!((read["check"]["predicted"].as_f64().unwrap() - 40.0).abs() < 0.2, "{read}");
+
+    let disagrees = run_err(
+        &mut s,
+        "scan.known_size",
+        json!({"scan": scan, "between": thickness, "value": 10, "check": {"between": ends, "value": 50}, "apply": true}),
+    );
+    assert!(disagrees.contains("does not agree") && disagrees.contains("nothing was scaled"), "{disagrees}");
+    assert_eq!(volume(&s, &scan), before, "a refusal scales nothing");
+    // An allowance above the most (0.1) is refused: a loose check would pass a wrong reading.
+    let loose = run_err(
+        &mut s,
+        "scan.known_size",
+        json!({"scan": scan, "between": thickness, "value": 10, "check": {"between": ends, "value": 50}, "check_within": 0.25}),
+    );
+    assert!(loose.contains("`check_within`"), "{loose}");
+
+    let applied = run(
+        &mut s,
+        "scan.known_size",
+        json!({"scan": scan, "between": thickness, "value": 10, "check": {"between": ends, "value": 40}, "apply": true}),
+    );
+    assert_eq!(applied["applied"], true, "{applied}");
+    assert!((volume(&s, &scan) / before - 0.125).abs() < 0.001, "scaled by a half in each direction");
+    // About its middle, (40, 30, 10): the same faces are now 10 and 40 apart.
+    let (thickness, ends) = (json!([[40, 30, 15], [40, 30, 5]]), json!([[20, 30, 10], [60, 30, 10]]));
+    let again = run(&mut s, "scan.known_size", json!({"scan": scan, "between": thickness, "value": 10, "check": {"between": ends, "value": 40}}));
+    assert!(again["off"].as_f64().unwrap().abs() < 0.002 && again["check"]["agrees"] == true, "{again}");
+}
+
 /// Regions the user marks: a region kept from a selection with its extent; "ignore" leaves its
 /// part of the scan out of the verdict's share (a boss the model does not have, read worn), "keep"
 /// (don't touch) stops an agent rewriting the scan there, and the plan says what the model is for.
@@ -1911,4 +1962,137 @@ fn a_cut_opens_on_the_face_it_opened_on_when_the_plate_is_made_thicker() {
     let rise: Vec<f64> = moved.iter().zip(&at).map(|(a, b)| a - b).collect();
     assert!(rise.iter().any(|d| (d - 1.0).abs() < 1e-9) && rise.iter().all(|d| d.abs() < 1e-9 || (d - 1.0).abs() < 1e-9), "the mouth rose with the plate: {rise:?}");
     assert!(volume(&s, &built) > before, "a thicker plate holds more");
+}
+
+/// One of the known-answer parts in `tests/fixtures/rulercraft-known` (RulerCraft's, MIT OR Apache-2.0) as a scan,
+/// run through Scan to CAD: the design, the rebuilt body's name and the scan's own volume. Clean meshes of parts
+/// whose answers are fixed in advance.
+fn known_part_rebuilt(name: &str) -> (Session, String, f64) {
+    let (s, built, scan_volume, _) = known_part_to_cad(name, json!({}));
+    (s, built, scan_volume)
+}
+
+/// [`known_part_rebuilt`] with `params` for Scan to CAD, and its reply.
+fn known_part_to_cad(name: &str, params: Value) -> (Session, String, f64, Value) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../tests/fixtures/rulercraft-known/{name}.stl"));
+    let mut s = Session::default();
+    run(&mut s, "file.insert_mesh", json!({"path": path.to_string_lossy()}));
+    let scan = s.model.state().bodies.iter().find(|b| b.body.is_mesh()).map(|b| b.name.clone()).unwrap();
+    let scan_volume = volume(&s, &scan);
+    let reply = run(&mut s, "scan.to_cad", params);
+    (s, format!("{scan} Reconstructed"), scan_volume, reply)
+}
+
+/// How far Scan to CAD's rebuilt volume is from the scan's own, as a share of it, for a known-answer part; a part
+/// nothing was built from is infinitely far.
+fn known_part_off(name: &str) -> f64 {
+    let (s, built, scan_volume) = known_part_rebuilt(name);
+    match s.model.state().body(&built).and_then(|b| b.body.volume_at(0.01)) {
+        Some(v) => ((v - scan_volume) / scan_volume).abs(),
+        None => f64::INFINITY,
+    }
+}
+
+/// The known-answer parts of `tests/fixtures/rulercraft-known`.
+const KNOWN_PARTS: [&str; 14] = [
+    "bracket",
+    "chamfer",
+    "counterbore",
+    "countersink",
+    "fillet",
+    "hole-block",
+    "l-chamfer",
+    "l-fillet",
+    "l-plate",
+    "parallel-bracket",
+    "round-plate",
+    "sphere-seat",
+    "stepped-cylinder",
+    "window",
+];
+
+/// Scan to CAD on every known-answer part: the rebuilt volume within a quarter of a percent of the scan's. Plates with
+/// holes, pockets, bosses and a window; chamfers of one distance and of two; a plate with three holes of three sizes
+/// (a coarse CAD mesh's long triangles read as noise, and its small holes were smoothed away); a stepped cylinder.
+#[test]
+fn scan_to_cad_rebuilds_the_known_parts_to_their_volume() {
+    let wrong: Vec<(&str, f64)> = KNOWN_PARTS.into_iter().map(|name| (name, known_part_off(name))).filter(|(_, off)| *off >= 0.0025).collect();
+    assert!(wrong.is_empty(), "off by more than 0.25 % of the scan's volume: {wrong:?}");
+}
+
+/// A chamfer of two distances is cut the right way round. The known plate's four top edges are cut 2 mm along the top
+/// and 1 mm down the side: a probe 1.5 mm in from a side, straight down, meets the chamfer's slope (7.75 mm up), not
+/// the top (8), and the volume cannot tell the two ways round apart.
+#[test]
+fn a_chamfer_of_two_distances_is_cut_with_its_longer_leg_along_the_top() {
+    let (s, built, _) = known_part_rebuilt("chamfer");
+    let down = Vec3::new(0.0, 0.0, -1.0);
+    // 1.5 mm in from each of the four sides of the 50 x 30 plate.
+    for (x, y) in [(25.0, 1.5), (25.0, 28.5), (1.5, 15.0), (48.5, 15.0)] {
+        let at = super::entry_on_body(&s, &built, Vec3::new(x, y, 10.0), down, 5.0).expect("the probe meets the plate");
+        assert!((at.z - 7.75).abs() < 0.02, "at ({x}, {y}) the chamfer's slope is 7.75 mm up, not {}", at.z);
+    }
+}
+
+/// What Scan to CAD builds is edited by name: a plate's depth is `thickness`, a hole's size `hole1_diameter`. An L
+/// bracket's thickness read as 5 and then 10 mm gives exactly twice the volume; a smaller `hole1_diameter` leaves
+/// more of the counterbore plate: each name drives the feature it names.
+#[test]
+fn scan_to_cad_names_a_plates_thickness_and_a_holes_diameter() {
+    let (mut s, built, _) = known_part_rebuilt("l-plate");
+    run(&mut s, "parameters.change", json!({"name": "thickness", "expression": "5 mm"}));
+    let thin = volume(&s, &built);
+    run(&mut s, "parameters.change", json!({"name": "thickness", "expression": "10 mm"}));
+    let thick = volume(&s, &built);
+    assert!((thick / thin - 2.0).abs() < 1e-6, "{thin} then {thick}");
+
+    let (mut s, built, _) = known_part_rebuilt("counterbore");
+    let before = volume(&s, &built);
+    run(&mut s, "parameters.change", json!({"name": "hole1_diameter", "expression": "1 mm"}));
+    assert!(volume(&s, &built) > before, "a smaller hole leaves more of the plate");
+}
+
+/// Scan to CAD's loss report is built from what the steps, the rest rounds and the verdict say, each loss with a code, a
+/// severity and where, and a tolerance that is a large share of the part's size is named (a verdict read at it cannot
+/// see what it hides).
+#[test]
+fn the_loss_report_lists_steps_pieces_places_and_a_coarse_tolerance() {
+    let rest = json!({"rounds": [
+        {"piece": 0, "area": 31.5, "proposed": ["scan.cut_it"], "kept": []},
+        {"piece": 1, "area": 9.0, "proposed": [], "kept": [], "note": "the shapes make no prism"},
+        {"piece": 2, "area": 5.0, "proposed": ["scan.cut_it"], "kept": ["scan.cut_it"], "note": "built"},
+    ]});
+    let verdict = json!({
+        "issues": [{"code": "no_plan", "detail": "no plan"}, {"code": "out_of_tolerance", "detail": "78 % of the scan is within"}],
+        "places": [{"at": [1, 2, 3], "depth": 0.9, "area": 40.0, "kind": "missing"}, {"at": [4, 5, 6], "depth": 0.3, "area": 10.0, "kind": "extra"}],
+    });
+    let losses = super::rest::losses_after(Some(&rest), Some(&verdict));
+    let codes: Vec<&str> = losses.iter().map(|l| l.code.as_str()).collect();
+    assert_eq!(codes, ["rest_step_not_kept", "unexplained_piece", "out_of_tolerance", "missing_feature", "extra_material"]);
+    assert_eq!((losses[0].area, losses[0].subject.as_str()), (Some(31.5), "piece 1"));
+    assert_eq!((losses[3].at, losses[3].severity.as_str()), (Some([1.0, 2.0, 3.0]), "lost"));
+    assert_eq!(losses[4].severity, "degraded");
+    assert!(super::rest::losses_after(None, None).is_empty());
+    assert!(super::rest::coarse_tolerance(5.1, 67.0).is_some(), "5.1 mm on a 67 mm plate hides its small holes");
+    assert!(super::rest::coarse_tolerance(0.1, 67.0).is_none());
+    assert_eq!(super::rest::subject_of("scan.hole_it", &json!({"hole": 1})), "hole 2");
+    assert_eq!(super::rest::subject_of("scan.extrude_it", &json!({})), "scan.extrude_it");
+}
+
+/// A part Scan to CAD rebuilds has no losses to list. The plate with three holes read at a tolerance of 5 mm (what
+/// Survey advised before it stopped reading a CAD mesh's long triangles as noise) loses two of them, and the report
+/// says why first: the tolerance is too coarse to see them.
+#[test]
+fn scan_to_cad_reports_no_losses_on_a_clean_rebuild_and_a_coarse_tolerance_on_a_lossy_one() {
+    // Every known part: nothing lost or degraded (a step taken back that the model did not need is only a note).
+    for name in KNOWN_PARTS {
+        let (_, _, _, reply) = known_part_to_cad(name, json!({}));
+        let serious: Vec<&Value> = reply["losses"].as_array().into_iter().flatten().filter(|l| l["severity"] != "note").collect();
+        assert!(serious.is_empty(), "{name}: {serious:?}");
+    }
+    let (s, built, scan_volume, reply) = known_part_to_cad("hole-block", json!({"tolerance": 5.0}));
+    assert_eq!(reply["losses"][0]["code"], "coarse_tolerance", "{reply}");
+    assert_eq!(reply["losses"][0]["severity"], "note", "{reply}");
+    let off = (volume(&s, &built) - scan_volume).abs() / scan_volume;
+    assert!(off > 0.01, "the holes are lost at that tolerance ({off}), which the note names");
 }
